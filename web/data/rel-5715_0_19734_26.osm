@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flagstop" upload="true">
+  <relation id="-1" version="0">
+    <member type="node" ref="3756748840" role="platform"/>
+    <member type="node" ref="11504801860" role="platform"/>
+    <member type="node" ref="11504801859" role="platform"/>
+    <member type="node" ref="11504801851" role="platform"/>
+    <member type="node" ref="11504801841" role="platform"/>
+    <member type="node" ref="11504801839" role="platform"/>
+    <member type="node" ref="11504801838" role="platform"/>
+    <member type="node" ref="11504801836" role="platform"/>
+    <member type="node" ref="11504801862" role="platform"/>
+    <member type="node" ref="9285354822" role="platform"/>
+    <member type="node" ref="11504801861" role="platform"/>
+    <member type="node" ref="11507014065" role="platform"/>
+    <member type="node" ref="11507014064" role="platform"/>
+    <member type="node" ref="11507014063" role="platform"/>
+    <member type="node" ref="11507014045" role="platform"/>
+    <member type="node" ref="9216618227" role="platform"/>
+    <member type="node" ref="11507014043" role="platform"/>
+    <member type="node" ref="11504801864" role="platform"/>
+    <member type="node" ref="11504801863" role="platform"/>
+    <member type="node" ref="11504801835" role="platform"/>
+    <member type="node" ref="11504801837" role="platform"/>
+    <member type="node" ref="11504801840" role="platform"/>
+    <member type="node" ref="10965842263" role="platform"/>
+    <member type="node" ref="11504801850" role="platform"/>
+    <member type="node" ref="11504801858" role="platform"/>
+    <member type="node" ref="3756748840" role="platform"/>
+    <member type="way" ref="1238473089" role=""/>
+    <member type="way" ref="707968348" role=""/>
+    <member type="way" ref="1238729870" role=""/>
+    <member type="way" ref="372145376" role=""/>
+    <member type="way" ref="738331122" role=""/>
+    <member type="way" ref="1238473087" role=""/>
+    <member type="way" ref="1098119722" role=""/>
+    <member type="way" ref="738329671" role=""/>
+    <member type="way" ref="1050687300" role=""/>
+    <member type="way" ref="1051155472" role=""/>
+    <member type="way" ref="182952367" role=""/>
+    <member type="way" ref="186842309" role=""/>
+    <member type="way" ref="738329669" role=""/>
+    <member type="way" ref="1203970956" role=""/>
+    <member type="way" ref="10084546" role=""/>
+    <member type="way" ref="1203970953" role=""/>
+    <member type="way" ref="457947882" role=""/>
+    <member type="way" ref="738329673" role=""/>
+    <member type="way" ref="1255792921" role=""/>
+    <member type="way" ref="186842317" role=""/>
+    <member type="way" ref="1529701344" role=""/>
+    <member type="way" ref="782815730" role=""/>
+    <member type="way" ref="1203970954" role=""/>
+    <member type="way" ref="1338131547" role=""/>
+    <member type="way" ref="1338131548" role=""/>
+    <member type="way" ref="1204297003" role=""/>
+    <member type="way" ref="182952351" role=""/>
+    <member type="way" ref="10080041" role=""/>
+    <member type="way" ref="186842316" role=""/>
+    <member type="way" ref="186842309" role=""/>
+    <member type="way" ref="824632103" role=""/>
+    <member type="way" ref="824632084" role=""/>
+    <member type="way" ref="1040890812" role=""/>
+    <member type="way" ref="824632085" role=""/>
+    <member type="way" ref="1040890812" role=""/>
+    <member type="way" ref="824632084" role=""/>
+    <member type="way" ref="824632103" role=""/>
+    <member type="way" ref="186842309" role=""/>
+    <member type="way" ref="182952367" role=""/>
+    <member type="way" ref="1051155472" role=""/>
+    <member type="way" ref="1050687300" role=""/>
+    <member type="way" ref="186842304" role=""/>
+    <member type="way" ref="738329671" role=""/>
+    <member type="way" ref="1098119721" role=""/>
+    <member type="way" ref="1238473088" role=""/>
+    <member type="way" ref="1394211236" role=""/>
+    <member type="way" ref="1098119728" role=""/>
+    <member type="way" ref="1238473089" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="public_transport:version" v="2"/>
+    <tag k="ref" v="2"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="from" v="150 East 500 North - Route 2"/>
+    <tag k="to" v="150 East 500 North - Route 2"/>
+    <tag k="gtfs:route_id" v="5715"/>
+    <tag k="gtfs:shape_id" v="19734"/>
+    <tag k="name" v="Bus 2: L.R. Hospital - 800 E"/>
+    <tag k="colour" v="#F60017"/>
+    <tag k="description" v="Route 02 — MLMS, USU Stadium, Logan Hospital"/>
+  </relation>
+</osm>

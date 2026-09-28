@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flagstop" upload="true">
+  <node id="-1" lat="41.735248" lon="-111.833754" version="0">
+    <tag k="highway" v="bus_stop"/>
+    <tag k="public_transport" v="platform"/>
+    <tag k="bus" v="yes"/>
+    <tag k="name" v="55 East 200 North"/>
+    <tag k="ref" v="701"/>
+    <tag k="gtfs:stop_id" v="9837984"/>
+    <tag k="gtfs:stop_code" v="701"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="route_ref" v="7"/>
+    <tag k="description" v="Fire Station"/>
+  </node>
+  <relation id="-1" version="0">
+    <member type="node" ref="11582265885" role="platform"/>
+    <member type="node" ref="-1" role="platform"/>
+    <member type="node" ref="11504801905" role="platform"/>
+    <member type="node" ref="11503752123" role="platform"/>
+    <member type="node" ref="11503752115" role="platform"/>
+    <member type="node" ref="12097248286" role="platform"/>
+    <member type="node" ref="12097248287" role="platform"/>
+    <member type="node" ref="11503983300" role="platform"/>
+    <member type="node" ref="11503983299" role="platform"/>
+    <member type="node" ref="12097250272" role="platform"/>
+    <member type="node" ref="12097250273" role="platform"/>
+    <member type="node" ref="11503983301" role="platform"/>
+    <member type="node" ref="11503983314" role="platform"/>
+    <member type="node" ref="11503752116" role="platform"/>
+    <member type="node" ref="11503752127" role="platform"/>
+    <member type="node" ref="11503752124" role="platform"/>
+    <member type="node" ref="11504801906" role="platform"/>
+    <member type="node" ref="11504801908" role="platform"/>
+    <member type="node" ref="11582265882" role="platform"/>
+    <member type="way" ref="458118479" role=""/>
+    <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="944576294" role=""/>
+    <member type="way" ref="182543771" role=""/>
+    <member type="way" ref="1419412024" role=""/>
+    <member type="way" ref="1419412025" role=""/>
+    <member type="way" ref="182951684" role=""/>
+    <member type="way" ref="182951679" role=""/>
+    <member type="way" ref="1065570616" role=""/>
+    <member type="way" ref="1065570615" role=""/>
+    <member type="way" ref="954775439" role=""/>
+    <member type="way" ref="10085048" role=""/>
+    <member type="way" ref="954775438" role=""/>
+    <member type="way" ref="10083394" role=""/>
+    <member type="way" ref="182951690" role=""/>
+    <member type="way" ref="1238920126" role=""/>
+    <member type="way" ref="10086269" role=""/>
+    <member type="way" ref="1271559732" role=""/>
+    <member type="way" ref="1238920125" role=""/>
+    <member type="way" ref="1069081502" role=""/>
+    <member type="way" ref="1471474193" role=""/>
+    <member type="way" ref="1471474194" role=""/>
+    <member type="way" ref="1306181604" role=""/>
+    <member type="way" ref="1306181221" role=""/>
+    <member type="way" ref="1306183420" role=""/>
+    <member type="way" ref="1306181606" role=""/>
+    <member type="way" ref="476367084" role=""/>
+    <member type="way" ref="476367083" role=""/>
+    <member type="way" ref="182951676" role=""/>
+    <member type="way" ref="10083809" role=""/>
+    <member type="way" ref="10083697" role=""/>
+    <member type="way" ref="1306181598" role=""/>
+    <member type="way" ref="1306183405" role=""/>
+    <member type="way" ref="1306183406" role=""/>
+    <member type="way" ref="1306181599" role=""/>
+    <member type="way" ref="943701277" role=""/>
+    <member type="way" ref="182951678" role=""/>
+    <member type="way" ref="182951977" role=""/>
+    <member type="way" ref="182951687" role=""/>
+    <member type="way" ref="182951690" role=""/>
+    <member type="way" ref="10083394" role=""/>
+    <member type="way" ref="1095812520" role=""/>
+    <member type="way" ref="10083394" role=""/>
+    <member type="way" ref="954775438" role=""/>
+    <member type="way" ref="10085048" role=""/>
+    <member type="way" ref="954775439" role=""/>
+    <member type="way" ref="1065570615" role=""/>
+    <member type="way" ref="1065570616" role=""/>
+    <member type="way" ref="182951679" role=""/>
+    <member type="way" ref="182951684" role=""/>
+    <member type="way" ref="1419412025" role=""/>
+    <member type="way" ref="1419412024" role=""/>
+    <member type="way" ref="182543771" role=""/>
+    <member type="way" ref="944576294" role=""/>
+    <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="182543776" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="public_transport:version" v="2"/>
+    <tag k="ref" v="7"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="from" v="150 East 500 North - Route 7 (700)"/>
+    <tag k="to" v="150 East 500 North - Route 6"/>
+    <tag k="gtfs:route_id" v="5742"/>
+    <tag k="gtfs:shape_id" v="27001"/>
+    <tag k="name" v="Bus 7: Route 07"/>
+    <tag k="colour" v="#4D3F9E"/>
+    <tag k="description" v="Route 07 — Library, LHS, Willow Park"/>
+  </relation>
+</osm>

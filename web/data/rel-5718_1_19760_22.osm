@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flagstop" upload="true">
+  <relation id="-1" version="0">
+    <member type="node" ref="11582265884" role="platform"/>
+    <member type="node" ref="11504801856" role="platform"/>
+    <member type="node" ref="11504801848" role="platform"/>
+    <member type="node" ref="11504801843" role="platform"/>
+    <member type="node" ref="11504801826" role="platform"/>
+    <member type="node" ref="11504801820" role="platform"/>
+    <member type="node" ref="11504801818" role="platform"/>
+    <member type="node" ref="11504801816" role="platform"/>
+    <member type="node" ref="11504801803" role="platform"/>
+    <member type="node" ref="11504801804" role="platform"/>
+    <member type="node" ref="11504801805" role="platform"/>
+    <member type="node" ref="11504801806" role="platform"/>
+    <member type="node" ref="11504801807" role="platform"/>
+    <member type="node" ref="11504801814" role="platform"/>
+    <member type="node" ref="11504801819" role="platform"/>
+    <member type="node" ref="11504801827" role="platform"/>
+    <member type="node" ref="11504801830" role="platform"/>
+    <member type="node" ref="11504801840" role="platform"/>
+    <member type="node" ref="10965842263" role="platform"/>
+    <member type="node" ref="11504801850" role="platform"/>
+    <member type="node" ref="11504801858" role="platform"/>
+    <member type="node" ref="3756748840" role="platform"/>
+    <member type="way" ref="1238471154" role=""/>
+    <member type="way" ref="1238473089" role=""/>
+    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="182543769" role=""/>
+    <member type="way" ref="1419412026" role=""/>
+    <member type="way" ref="182543763" role=""/>
+    <member type="way" ref="1238999366" role=""/>
+    <member type="way" ref="1069409558" role=""/>
+    <member type="way" ref="1300237157" role=""/>
+    <member type="way" ref="1300237156" role=""/>
+    <member type="way" ref="943678570" role=""/>
+    <member type="way" ref="1253670907" role=""/>
+    <member type="way" ref="943688781" role=""/>
+    <member type="way" ref="37110355" role=""/>
+    <member type="way" ref="943688783" role=""/>
+    <member type="way" ref="182952364" role=""/>
+    <member type="way" ref="182952349" role=""/>
+    <member type="way" ref="954033543" role=""/>
+    <member type="way" ref="1238733373" role=""/>
+    <member type="way" ref="954033537" role=""/>
+    <member type="way" ref="182952359" role=""/>
+    <member type="way" ref="1471464476" role=""/>
+    <member type="way" ref="954033531" role=""/>
+    <member type="way" ref="943688786" role=""/>
+    <member type="way" ref="1066579132" role=""/>
+    <member type="way" ref="1066579126" role=""/>
+    <member type="way" ref="1066579133" role=""/>
+    <member type="way" ref="1066579127" role=""/>
+    <member type="way" ref="369165001" role=""/>
+    <member type="way" ref="1066579130" role=""/>
+    <member type="way" ref="1066579129" role=""/>
+    <member type="way" ref="943688787" role=""/>
+    <member type="way" ref="369164990" role=""/>
+    <member type="way" ref="943678571" role=""/>
+    <member type="way" ref="369164998" role=""/>
+    <member type="way" ref="1229542420" role=""/>
+    <member type="way" ref="182952367" role=""/>
+    <member type="way" ref="1051155472" role=""/>
+    <member type="way" ref="1050687300" role=""/>
+    <member type="way" ref="186842304" role=""/>
+    <member type="way" ref="182543785" role=""/>
+    <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="1238473089" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="public_transport:version" v="2"/>
+    <tag k="ref" v="5"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="from" v="150 East 500 North - Route 5"/>
+    <tag k="to" v="150 East 500 North - Route 2"/>
+    <tag k="gtfs:route_id" v="5718"/>
+    <tag k="gtfs:shape_id" v="19760"/>
+    <tag k="name" v="Bus 5: North Logan, CV Hospital"/>
+    <tag k="colour" v="#BA0A7A"/>
+    <tag k="description" v="Route 05 — North Logan, CV Hospital"/>
+  </relation>
+</osm>

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flagstop" upload="true">
+  <node id="-1" lat="41.735042" lon="-111.845132" version="0">
+    <tag k="highway" v="bus_stop"/>
+    <tag k="public_transport" v="platform"/>
+    <tag k="bus" v="yes"/>
+    <tag k="name" v="186 North 400 West"/>
+    <tag k="ref" v="612"/>
+    <tag k="gtfs:stop_id" v="7518701"/>
+    <tag k="gtfs:stop_code" v="612"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="route_ref" v="6"/>
+  </node>
+  <relation id="-1" version="0">
+    <member type="node" ref="11582265882" role="platform"/>
+    <member type="node" ref="11504801895" role="platform"/>
+    <member type="node" ref="11504801903" role="platform"/>
+    <member type="node" ref="11504801900" role="platform"/>
+    <member type="node" ref="11503752120" role="platform"/>
+    <member type="node" ref="11503752119" role="platform"/>
+    <member type="node" ref="12097184927" role="platform"/>
+    <member type="node" ref="12097184926" role="platform"/>
+    <member type="node" ref="11503983310" role="platform"/>
+    <member type="node" ref="11503983311" role="platform"/>
+    <member type="node" ref="11503752118" role="platform"/>
+    <member type="node" ref="11503752122" role="platform"/>
+    <member type="node" ref="-1" role="platform"/>
+    <member type="node" ref="11504801904" role="platform"/>
+    <member type="node" ref="11504801896" role="platform"/>
+    <member type="node" ref="11582265885" role="platform"/>
+    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="1238473089" role=""/>
+    <member type="way" ref="707968348" role=""/>
+    <member type="way" ref="1238729870" role=""/>
+    <member type="way" ref="1098119726" role=""/>
+    <member type="way" ref="1098119725" role=""/>
+    <member type="way" ref="943699887" role=""/>
+    <member type="way" ref="182952350" role=""/>
+    <member type="way" ref="954776984" role=""/>
+    <member type="way" ref="954776983" role=""/>
+    <member type="way" ref="182543766" role=""/>
+    <member type="way" ref="954776982" role=""/>
+    <member type="way" ref="954776981" role=""/>
+    <member type="way" ref="954776980" role=""/>
+    <member type="way" ref="11179042" role=""/>
+    <member type="way" ref="1442426816" role=""/>
+    <member type="way" ref="10082877" role=""/>
+    <member type="way" ref="182951973" role=""/>
+    <member type="way" ref="954775435" role=""/>
+    <member type="way" ref="182951955" role=""/>
+    <member type="way" ref="954775433" role=""/>
+    <member type="way" ref="954775434" role=""/>
+    <member type="way" ref="954775432" role=""/>
+    <member type="way" ref="954775431" role=""/>
+    <member type="way" ref="954775430" role=""/>
+    <member type="way" ref="182543770" role=""/>
+    <member type="way" ref="954775428" role=""/>
+    <member type="way" ref="954775429" role=""/>
+    <member type="way" ref="954775427" role=""/>
+    <member type="way" ref="954775426" role=""/>
+    <member type="way" ref="10083453" role=""/>
+    <member type="way" ref="182543777" role=""/>
+    <member type="way" ref="182543767" role=""/>
+    <member type="way" ref="182951966" role=""/>
+    <member type="way" ref="182951950" role=""/>
+    <member type="way" ref="182951959" role=""/>
+    <member type="way" ref="182951963" role=""/>
+    <member type="way" ref="10086317" role=""/>
+    <member type="way" ref="32133429" role=""/>
+    <member type="way" ref="1306182206" role=""/>
+    <member type="way" ref="1306182207" role=""/>
+    <member type="way" ref="1306182208" role=""/>
+    <member type="way" ref="1306182209" role=""/>
+    <member type="way" ref="1306182213" role=""/>
+    <member type="way" ref="1306182214" role=""/>
+    <member type="way" ref="1306182215" role=""/>
+    <member type="way" ref="1306182216" role=""/>
+    <member type="way" ref="10085147" role=""/>
+    <member type="way" ref="182951945" role=""/>
+    <member type="way" ref="10084032" role=""/>
+    <member type="way" ref="954775431" role=""/>
+    <member type="way" ref="954775432" role=""/>
+    <member type="way" ref="954775434" role=""/>
+    <member type="way" ref="954775433" role=""/>
+    <member type="way" ref="182951955" role=""/>
+    <member type="way" ref="954775435" role=""/>
+    <member type="way" ref="182951973" role=""/>
+    <member type="way" ref="10082877" role=""/>
+    <member type="way" ref="1442426816" role=""/>
+    <member type="way" ref="10082172" role=""/>
+    <member type="way" ref="11179042" role=""/>
+    <member type="way" ref="10086230" role=""/>
+    <member type="way" ref="1419412026" role=""/>
+    <member type="way" ref="182543769" role=""/>
+    <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="458118479" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="public_transport:version" v="2"/>
+    <tag k="ref" v="6"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="from" v="150 East 500 North - Route 6"/>
+    <tag k="to" v="150 East 500 North - Route 7 (700)"/>
+    <tag k="gtfs:route_id" v="5721"/>
+    <tag k="gtfs:shape_id" v="27006"/>
+    <tag k="name" v="Bus 6: Route 06"/>
+    <tag k="colour" v="#783A9B"/>
+    <tag k="description" v="Route 06 — Aquatic Center, Woodruff Elementary"/>
+  </relation>
+</osm>

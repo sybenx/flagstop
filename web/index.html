@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flagstop</title>
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="side">
+  <header id="head">
+    <div class="brand">flagstop</div>
+    <div id="agency" class="muted">loading…</div>
+  </header>
+  <nav id="tabs">
+    <button data-tab="routes" class="on">Routes</button>
+    <button data-tab="stops">Stops</button>
+    <button data-tab="extra">OSM only</button>
+    <button data-tab="about">?</button>
+  </nav>
+  <section id="panel"></section>
+</aside>
+<main id="map"></main>
+<div id="legend">
+  <span><i class="sw shape"></i>agency line</span>
+  <span><i class="sw routed"></i>bus-routable on OSM</span>
+  <span><i class="sw rel"></i>existing OSM relation</span>
+  <span><i class="dot ok"></i>stop matched</span>
+  <span><i class="dot amb"></i>ambiguous</span>
+  <span><i class="dot miss"></i>missing in OSM</span>
+  <span><i class="dot extra"></i>OSM only</span>
+  <span><i class="dot div"></i>divergence</span>
+</div>
+<div id="toast"></div>
+<script src="vendor/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

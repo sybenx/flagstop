@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="flagstop" upload="true">
+  <node id="-1" lat="41.640448" lon="-111.861182" version="0">
+    <tag k="highway" v="bus_stop"/>
+    <tag k="public_transport" v="platform"/>
+    <tag k="bus" v="yes"/>
+    <tag k="name" v="214 West 300 North (Temp Stop)"/>
+    <tag k="ref" v="6016"/>
+    <tag k="gtfs:stop_id" v="12532091"/>
+    <tag k="gtfs:stop_code" v="6016"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="route_ref" v="12"/>
+    <tag k="description" v="Temp Stop"/>
+  </node>
+  <relation id="-1" version="0">
+    <member type="node" ref="3756748839" role="platform"/>
+    <member type="node" ref="11504801897" role="platform"/>
+    <member type="node" ref="11503752125" role="platform"/>
+    <member type="node" ref="11503752112" role="platform"/>
+    <member type="node" ref="11503752110" role="platform"/>
+    <member type="node" ref="11503983297" role="platform"/>
+    <member type="node" ref="11503983294" role="platform"/>
+    <member type="node" ref="11503929864" role="platform"/>
+    <member type="node" ref="11503929863" role="platform"/>
+    <member type="node" ref="11503929860" role="platform"/>
+    <member type="node" ref="11503929858" role="platform"/>
+    <member type="node" ref="11503929856" role="platform"/>
+    <member type="node" ref="11503929840" role="platform"/>
+    <member type="node" ref="11503929838" role="platform"/>
+    <member type="node" ref="11503929818" role="platform"/>
+    <member type="node" ref="11503929819" role="platform"/>
+    <member type="node" ref="11503929820" role="platform"/>
+    <member type="node" ref="11503929828" role="platform"/>
+    <member type="node" ref="11503929827" role="platform"/>
+    <member type="node" ref="11503929826" role="platform"/>
+    <member type="node" ref="-1" role="platform"/>
+    <member type="node" ref="11503929822" role="platform"/>
+    <member type="node" ref="11503929821" role="platform"/>
+    <member type="node" ref="11503929829" role="platform"/>
+    <member type="way" ref="458118479" role=""/>
+    <member type="way" ref="1238471154" role=""/>
+    <member type="way" ref="707968348" role=""/>
+    <member type="way" ref="1238729870" role=""/>
+    <member type="way" ref="1098119726" role=""/>
+    <member type="way" ref="1098119725" role=""/>
+    <member type="way" ref="943699887" role=""/>
+    <member type="way" ref="182952350" role=""/>
+    <member type="way" ref="954776984" role=""/>
+    <member type="way" ref="954776983" role=""/>
+    <member type="way" ref="182543766" role=""/>
+    <member type="way" ref="954776982" role=""/>
+    <member type="way" ref="954776981" role=""/>
+    <member type="way" ref="954776980" role=""/>
+    <member type="way" ref="10084931" role=""/>
+    <member type="way" ref="954776979" role=""/>
+    <member type="way" ref="954776978" role=""/>
+    <member type="way" ref="954776977" role=""/>
+    <member type="way" ref="954776976" role=""/>
+    <member type="way" ref="954776975" role=""/>
+    <member type="way" ref="476147712" role=""/>
+    <member type="way" ref="1115241186" role=""/>
+    <member type="way" ref="182951689" role=""/>
+    <member type="way" ref="943701276" role=""/>
+    <member type="way" ref="1012810853" role=""/>
+    <member type="way" ref="1313577102" role=""/>
+    <member type="way" ref="1043802457" role=""/>
+    <member type="way" ref="119006822" role=""/>
+    <member type="way" ref="1339864558" role=""/>
+    <member type="way" ref="1002818970" role=""/>
+    <member type="way" ref="1100702909" role=""/>
+    <member type="way" ref="943678569" role=""/>
+    <member type="way" ref="1085936749" role=""/>
+    <member type="way" ref="1012810854" role=""/>
+    <member type="way" ref="1319964800" role=""/>
+    <member type="way" ref="1557321904" role=""/>
+    <member type="way" ref="687140398" role=""/>
+    <member type="way" ref="687140395" role=""/>
+    <member type="way" ref="943727980" role=""/>
+    <member type="way" ref="1085936745" role=""/>
+    <member type="way" ref="1085936744" role=""/>
+    <member type="way" ref="1085936746" role=""/>
+    <member type="way" ref="10085064" role=""/>
+    <member type="way" ref="1184507887" role=""/>
+    <member type="way" ref="1012818364" role=""/>
+    <member type="way" ref="1085936742" role=""/>
+    <member type="way" ref="10084841" role=""/>
+    <member type="way" ref="1085936741" role=""/>
+    <member type="way" ref="1085936740" role=""/>
+    <member type="way" ref="1012818365" role=""/>
+    <member type="way" ref="1085934853" role=""/>
+    <member type="way" ref="10084410" role=""/>
+    <member type="way" ref="1329437354" role=""/>
+    <member type="way" ref="943727981" role=""/>
+    <member type="way" ref="10085977" role=""/>
+    <member type="way" ref="10084058" role=""/>
+    <member type="way" ref="10084039" role=""/>
+    <member type="way" ref="10083176" role=""/>
+    <member type="way" ref="943727981" role=""/>
+    <tag k="type" v="route"/>
+    <tag k="route" v="bus"/>
+    <tag k="public_transport:version" v="2"/>
+    <tag k="ref" v="12"/>
+    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="from" v="150 East 500 North - Route 12"/>
+    <tag k="to" v="83 W Main St, Hyrum"/>
+    <tag k="gtfs:route_id" v="5738"/>
+    <tag k="gtfs:shape_id" v="31903"/>
+    <tag k="name" v="Bus 12: Southbound"/>
+    <tag k="colour" v="#DC5331"/>
+    <tag k="description" v="Route 12 — Hyrum, Millville, Providence"/>
+  </relation>
+</osm>
