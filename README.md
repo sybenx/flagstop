@@ -40,14 +40,27 @@ The queries are in `tool/osm.py` (`PT_QUERY`, `ROADS_QUERY`).
 
 ## Reviewing
 
-The page lists patterns worst first. Open one:
+The page lists itineraries worst first. Open one:
 
-- **dashed orange** is the agency's shape; **blue** is where a bus can drive on OSM; **purple** is what the existing OSM relation contains. Where orange and blue part, something is wrong on one side.
-- Each divergence names the ways involved. *Open in JOSM* loads and zooms there with them selected (JOSM needs Remote Control on, in preferences).
-- *Load proposed relation in JOSM* downloads the ways and platforms into the current layer and imports a new relation built from them. Compare with the existing relation, fix, validate, upload — and delete the duplicate if there was one.
-- If the proposed path takes a wrong turn (the map is right but the shape is sloppy, say), *Re-route via a point* and click the map; the path re-traces through your via points, and the relation you then load follows them.
-- Stops: filter to missing, ambiguous, or differing; *Add stop in JOSM* places a node with the proposed tags; *Apply GTFS tags* adds `ref`, `gtfs:stop_id`, `route_ref`, `description` to a matched node. The name is left to you — the agency's name is often an address, OSM's a place.
-- *OSM only*: stops in OSM near the network that no feed stop claims. Another operator's, moved, or gone.
+- **dashed orange** is the agency's shape; **blue** is where a bus can drive on OSM; **purple** is what the existing OSM relation contains. Where orange and blue part, something is wrong on one side, and the divergence says which ways are involved and why.
+- **Rings** are the agency's stop positions, **dots** are OSM nodes. Agency coordinates are routinely 10–30 m off; the node on the sign is usually right. Nothing moves unless you say so.
+- *Fix relation → changes* rewrites the existing relation (or creates one) with the matched platforms in order and the routed ways, keeping the mapper's free-text tags and adding the GTFS scheme's. A relation that holds both directions is kept for one and a new one created for the other. Duplicates ("Weekday"/"Saturday") can be marked for deletion.
+- *Re-route via a point* when the routed path takes a wrong turn: click the map, the path re-traces through your via points, and the relation you then propose follows them (needs `tool/serve.py`).
+- A way's tags — a wrong `oneway`, a missing `bus=yes` — can be edited from the divergence popup. Geometry (drawing a road, splitting a way) is not done here: *Open in RapiD* carries the agency line as an overlay, selects the objects, and pre-fills the changeset comment.
+- **Stops**: *to decide* lists what needs a human — not in OSM, probably moved (same street, further off), ambiguous (pick one). For matched stops the diff lets you tick which agency values to apply; identity (`ref`, `gtfs:stop_id`, `route_ref`) is ticked by default, name and position are not.
+- **Changes** holds everything you decided, with a before/after per object. It leaves as one changeset uploaded with your OSM login, as an osmChange file for JOSM, or as Level0 text. Before uploading, every touched object is re-read from OSM and the upload stops if someone edited it since flagstop looked.
+
+## What the agency is authoritative for
+
+Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).
+
+## Detours
+
+Map the regular route. A detour of days or weeks is not mapped: OSM can't keep up, and the churn is worse than the lag. A long one (months) is worth mapping, with a `note=*` on the relation saying it is a diversion and what the normal route is, reverted afterwards. Stops named Temp/Detour and itineraries run only by a short-dated service are marked *temporary* and left out of proposals.
+
+## Uploading from the page
+
+Once: register flagstop as an OAuth 2 application on your OSM account at <https://www.openstreetmap.org/oauth2/applications/new> — name `flagstop`, redirect URI exactly what the Changes tab shows (`http://127.0.0.1:8765/` by default), untick *Confidential application*, tick *read user preferences* and *modify the map*. Paste the client ID into the Changes tab. Sign-in is OSM's own page; the token stays in your browser.
 
 ## Before uploading much
 
@@ -61,10 +74,11 @@ tool/osm.py       Overpass queries and parsing
 tool/stops.py     stop conflation and tag diff
 tool/routes.py    road graph, bus-legal shape-guided routing, divergences
 tool/compare.py   relation ↔ pattern pairing and audit; proposed tags
-tool/review.py    runs it all → web/data/
+tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a .osm per proposed relation)
 tool/serve.py     static server + /api/trace for re-routing through via points
 tool/catalog.py   Mobility Database search and download
-web/              the page (MapLibre, vendored; OSM raster tiles)
+web/app.js        the page (MapLibre, vendored; OSM raster tiles)
+web/edits.js      the change basket: osmChange, Level0, OAuth sign-in, upload with conflict check
 ```
 
 ## Not yet
@@ -72,9 +86,9 @@ web/              the page (MapLibre, vendored; OSM raster tiles)
 - Turn restrictions aren't honoured by the router.
 - A divergence over a road OSM has as `highway=footway`/`track` etc. reads as "no road here"; the roads query only fetches classes a bus can use.
 - Stations (`location_type=1`) and `stop_position` nodes are ignored; only platforms are matched.
-- `route_master` relations are reported, not proposed as files.
-- Editing ways happens in JOSM/iD, not here.
+- Deleting a stop is never proposed; OSM-only stops are listed for you to look at.
+- The via-point re-route doesn't persist across reloads.
 
 ## Built against
 
-Cache Valley Transit District (Connect), Logan, Utah — 15 routes, 334 stops, 28 patterns. First run found OSM `ref` codes shifted onto the wrong stops across Routes 11 and 12, nine itineraries mapped twice as "Weekday" and "Saturday" relations, eleven directions with no relation at all, and no `route_master`s.
+Cache Valley Transit District (Connect), Logan, Utah — 15 routes, 334 stops, 28 patterns. First run found OSM `ref` codes shifted onto the wrong stops across Routes 11 and 12, twelve itineraries mapped twice as "Weekday" and "Saturday" relations, several relations holding both directions, no `route_master`s, and the Bear River Health Department stop 274 m from where the agency moved it.

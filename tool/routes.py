@@ -15,8 +15,9 @@ PREFER = {'motorway': 1.0, 'trunk': 1.0, 'primary': 1.0, 'secondary': 1.0, 'tert
           'residential': 1.2, 'living_street': 1.6, 'busway': 0.9, 'road': 1.3, 'service': 1.8,
           'motorway_link': 1.0, 'trunk_link': 1.0, 'primary_link': 1.0, 'secondary_link': 1.0, 'tertiary_link': 1.05}
 SERVICE_PENALTY = {'driveway': 3.0, 'parking_aisle': 2.2, 'alley': 2.5, 'emergency_access': 6.0}
-STRAY = 25       # m from the shape a road may be for free
-STRAY_COST = 0.06  # extra cost per metre of road, per metre beyond STRAY (a 100 m detour 50 m off the line ~ doubles)
+STRAY = 20       # m from the shape a road may be for free
+STRAY_COST = 0.2   # extra cost per metre of road, per metre beyond STRAY: 50 m off costs 7x, so the bus rounds a block
+                 # to stay on the line rather than cut through, but still leaves it when the map gives no choice
 SNAP = 60        # m: a stop further than this from any road is placed on no road at all
 DIVERGE = 30     # m: the routed path this far from the shape is a divergence
 
@@ -247,14 +248,16 @@ def trace(g, stops, shape):
     # Where each stop sits along the shape, so each leg only hugs its own part of the line.
     at = []
     if guide:
-        pos = 0.0
-        for p in stops:
+        prev_seg = 0
+        for k, p in enumerate(stops):
             d, i, m = guide.nearest(p)
-            if m < pos - 200:  # a loop passes the same place twice: keep moving forward
-                d2, i2, m2 = guide.nearest(p, lo=max(0, i), hi=len(guide.pts) - 2)
-                if d2 < d + 30:
+            # A loop passes the same place twice (the terminal is the first stop again): the stop is
+            # wherever on the line it is nearest *after* the previous stop, if that is nearly as close.
+            if k and i < prev_seg:
+                d2, i2, m2 = guide.nearest(p, lo=prev_seg, hi=len(guide.pts) - 2)
+                if d2 <= d + 30:
                     i, m = i2, m2
-            at.append((i, m)); pos = max(pos, m)
+            at.append((i, m)); prev_seg = max(prev_seg, i)
     snaps = [g.snap(p) for p in stops]
     legs, all_ways, geom, divs = [], [], [], []
     prev_end = None

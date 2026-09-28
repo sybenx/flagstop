@@ -1,61 +1,98 @@
-/* flagstop — review a GTFS feed against OpenStreetMap. Reads data/review.json (from tool/review.py);
-   talks to JOSM's remote control on 127.0.0.1:8111 and, when tool/serve.py is running, re-routes
-   a pattern through via points via /api/trace. */
+/* flagstop — review a GTFS feed against OpenStreetMap. Reads data/review.json (from tool/review.py).
+   Decisions go into a local change basket (edits.js) and leave as one OSM changeset, an osmChange
+   file, or Level0 text. Geometry work is handed to RapiD/iD with the agency's line overlaid. */
 'use strict';
 
 const $ = (s, el = document) => el.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
+    if (v == null) continue;
     if (k === 'class') e.className = v; else if (k === 'html') e.innerHTML = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
   }
-  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(String(k)));
   return e;
 };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-const fmtPct = x => x == null ? '—' : Math.round(x * 100) + '%';
+const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
 const m = (a, b) => Math.hypot((b[1] - a[1]) * 110540, (b[0] - a[0]) * 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-let D, map, S = {tab: 'routes', pattern: null, stop: null, vias: [], routed: null, filter: 'all', q: '', hoverStop: null};
+let D, map, S = {tab: 'routes', pattern: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
 
 function toast(msg, ms = 2500) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), ms);
 }
 
-// ---------- JOSM remote control / iD links ----------
-const JOSM = 'http://127.0.0.1:8111/';
-async function josm(cmd, params) {
-  const u = JOSM + cmd + '?' + new URLSearchParams(params).toString();
-  try { await fetch(u, {mode: 'no-cors'}); toast('Sent to JOSM: ' + cmd); }
-  catch (e) { toast('JOSM not reachable — is it running with remote control on?', 4000); }
+// ---------- editors: RapiD first, iD, JOSM ----------
+const dataUrl = p => p ? `${location.origin}/data/shape-${p.id.replace(/[^A-Za-z0-9]/g, '_')}.gpx` : null;
+function editorUrl(which, {lon, lat, zoom = 18, select = [], pattern = null, comment = ''}) {
+  const h = new URLSearchParams();
+  h.set('map', `${zoom}/${lat.toFixed(6)}/${lon.toFixed(6)}`);
+  if (select.length) h.set('id', select.join(','));
+  if (pattern) { h.set('data', dataUrl(pattern)); h.set('gpx', dataUrl(pattern)); }
+  if (comment) h.set('comment', comment);
+  h.set('source', `${D.agency.agency_name} GTFS`);
+  const hash = '#' + h.toString().replace(/%2F/g, '/').replace(/%2C/g, ',').replace(/%3A/g, ':');
+  if (which === 'rapid') return 'https://rapideditor.org/edit' + hash;
+  return 'https://www.openstreetmap.org/edit?editor=id' + hash;
 }
+const openIn = (which, opts) => window.open(editorUrl(which, opts), 'flagstop-' + which);
 const bboxOf = pts => {
   let l = 180, r = -180, b = 90, t = -90;
   for (const [x, y] of pts) { l = Math.min(l, x); r = Math.max(r, x); b = Math.min(b, y); t = Math.max(t, y); }
   return {left: l - 0.0015, right: r + 0.0015, bottom: b - 0.001, top: t + 0.001};
 };
-const josmZoom = (pts, select = []) => josm('load_and_zoom', {...bboxOf(pts), select: select.join(',')});
-const idLink = (lon, lat, obj) => `https://www.openstreetmap.org/edit?editor=id${obj ? '&' + obj.replace(/^n/, 'node=').replace(/^w/, 'way=').replace(/^r/, 'relation=') : ''}#map=19/${lat.toFixed(5)}/${lon.toFixed(5)}`;
-const osmLink = id => `https://www.openstreetmap.org/${id[0] === 'n' ? 'node' : id[0] === 'w' ? 'way' : 'relation'}/${id.slice(1)}`;
-const tagStr = t => Object.entries(t).map(([k, v]) => `${k}=${v}`).join('|');
+const centerOf = pts => { const b = bboxOf(pts); return {lon: (b.left + b.right) / 2, lat: (b.top + b.bottom) / 2}; };
+async function josm(cmd, params) {
+  try { await fetch('http://127.0.0.1:8111/' + cmd + '?' + new URLSearchParams(params).toString(), {mode: 'no-cors'}); toast('Sent to JOSM'); }
+  catch (e) { toast('JOSM not reachable', 3000); }
+}
+const osmLink = id => `https://www.openstreetmap.org/${id[0] === 'n' ? 'node' : id[0] === 'w' ? 'way' : 'relation'}/${id.replace(/^\D+/, '')}`;
+function editorButtons(opts, {primaryLabel = 'Open in RapiD', small = false} = {}) {
+  const b = el('span', {class: 'btns', style: small ? 'display:inline-flex;gap:4px;margin:0' : ''});
+  b.append(el('button', {class: 'b' + (small ? ' tiny' : ''), onclick: () => openIn('rapid', opts)}, primaryLabel));
+  b.append(el('button', {class: 'b' + (small ? ' tiny' : ''), onclick: () => openIn('id', opts)}, 'iD'));
+  b.append(el('button', {class: 'b' + (small ? ' tiny' : ''), title: 'JOSM remote control', onclick: () => josm('load_and_zoom', {...bboxOf(opts.pts || [[opts.lon, opts.lat]]), select: opts.select.map(x => x.replace(/^n/, 'node').replace(/^w/, 'way').replace(/^r/, 'relation')).join(',')})}, 'JOSM'));
+  return b;
+}
 
 // ---------- data helpers ----------
 const routeOf = p => D.routes.find(r => r.id === p.route_id);
 const patternById = id => D.patterns.find(p => p.id === id);
-const stopStatus = s => s.match ? s.match.status : 'missing';
-const matchedOsm = s => (s.match && s.match.status === 'matched' && s.match.osm[0]) ? D.osm_stops[s.match.osm[0].id] : null;
+function stopStatus(s) {
+  if (Edits.decisions[s.id]) return 'matched';
+  return s.match ? s.match.status : 'missing';
+}
+function matchedOsm(s) {
+  const dec = Edits.decisions[s.id];
+  if (dec) return dec === 'none' ? null : D.osm_stops[dec];
+  return (s.match && s.match.status === 'matched' && s.match.osm[0]) ? D.osm_stops[s.match.osm[0].id] : null;
+}
+/** The stop's OSM node, counting nodes this session created for it. */
+function stopNodeRef(s) {
+  const o = matchedOsm(s);
+  if (o) return {type: 'node', ref: o.osm_id ?? +o.id.slice(1)};
+  const key = Object.keys(Edits.ops).find(k => Edits.ops[k].kind === 'create' && Edits.ops[k].type === 'node' && Edits.ops[k].tags['gtfs:stop_id'] === s.id);
+  return key ? {key, role: 'platform'} : null;
+}
 function patternGrade(p) {
+  if (p.temporary) return {chip: 'temporary', cls: '', order: 9};
   const rels = p.relations;
   if (!rels.length) return {chip: 'no relation', cls: 'bad', order: 0};
   if (rels.some(r => r.duplicate)) return {chip: `${rels.length} relations`, cls: 'warn', order: 1};
+  if (rels.some(r => r.both_directions)) return {chip: 'both directions', cls: 'warn', order: 2};
   const r = rels[0];
-  const n = r.stops.missing.length + r.stops.extra.length + r.ways.off_shape.length + (r.stops.out_of_order ? 1 : 0);
-  if (n) return {chip: 'needs work', cls: 'warn', order: 2};
-  if (r.tag_issues.length) return {chip: 'tags', cls: 'info', order: 3};
-  return {chip: 'ok', cls: 'good', order: 4};
+  const n = r.stops.missing.length + r.stops.extra.length + r.ways.off_shape.length + r.ways.chain_breaks.length + (r.stops.out_of_order ? 1 : 0);
+  if (n) return {chip: 'needs work', cls: 'warn', order: 3};
+  if (r.tag_issues.length) return {chip: 'tags', cls: 'info', order: 4};
+  return {chip: 'ok', cls: 'good', order: 5};
 }
 const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : p.routed;
+const relBase = a => ({version: a.version, tags: a.tags, members: a.members});
+const nodeBase = o => ({version: o.version, tags: o.tags, lat: o.lat, lon: o.lon});
+const osmNumId = o => o.osm_id ?? +o.id.slice(1);
 
 // ---------- map ----------
 function initMap() {
@@ -68,41 +105,63 @@ function initMap() {
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
-    const src = id => map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
-    ['rel', 'shape', 'routed', 'div', 'divpath', 'stops', 'osmstops', 'vias', 'leg'].forEach(src);
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
     map.addLayer({id: 'leg', type: 'line', source: 'leg', paint: {'line-color': css('--accent'), 'line-width': 8, 'line-opacity': 0.3}});
     map.addLayer({id: 'divpath', type: 'line', source: 'divpath', paint: {'line-color': css('--div'), 'line-width': 5, 'line-opacity': 0.6}});
     map.addLayer({id: 'div', type: 'circle', source: 'div', paint: {'circle-radius': 11, 'circle-color': css('--div'), 'circle-opacity': 0.25, 'circle-stroke-color': css('--div'), 'circle-stroke-width': 2}});
+    map.addLayer({id: 'tether', type: 'line', source: 'tether', paint: {'line-color': css('--muted'), 'line-width': 1, 'line-dasharray': [1, 1]}});
+    // the agency's position: a soft hollow ring, deliberately not a hard dot
+    map.addLayer({id: 'gtfs', type: 'circle', source: 'gtfs', paint: {'circle-radius': ['case', ['get', 'on'], 9, 7], 'circle-color': ['get', 'color'], 'circle-opacity': 0.12, 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.7}});
     map.addLayer({id: 'osmstops', type: 'circle', source: 'osmstops', paint: {'circle-radius': 4, 'circle-color': '#fff', 'circle-stroke-color': css('--extra'), 'circle-stroke-width': 1.5}});
+    // the OSM node: solid
     map.addLayer({id: 'stops', type: 'circle', source: 'stops', paint: {'circle-radius': ['case', ['get', 'on'], 7, 5], 'circle-color': ['get', 'color'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5}});
-    map.addLayer({id: 'stoplabels', type: 'symbol', source: 'stops', minzoom: 15, layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-font': ['Open Sans Semibold']},
+    map.addLayer({id: 'stoplabels', type: 'symbol', source: 'stops', minzoom: 15, layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-font': ['Open Sans Semibold'], 'text-optional': true},
       paint: {'text-color': css('--ink'), 'text-halo-color': css('--panel'), 'text-halo-width': 1.5}});
+    map.addLayer({id: 'edits', type: 'circle', source: 'edits', paint: {'circle-radius': 10, 'circle-color': css('--edit'), 'circle-opacity': 0.2, 'circle-stroke-color': css('--edit'), 'circle-stroke-width': 2}});
     map.addLayer({id: 'vias', type: 'circle', source: 'vias', paint: {'circle-radius': 6, 'circle-color': css('--div'), 'circle-stroke-color': '#fff', 'circle-stroke-width': 2}});
-    for (const layer of ['stops', 'osmstops', 'div']) {
+    for (const layer of ['stops', 'gtfs', 'osmstops', 'div']) {
       map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
       map.on('mouseleave', layer, () => map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : '');
     }
     map.on('click', 'stops', e => { e.preventDefault(); showStop(e.features[0].properties.id); });
+    map.on('click', 'gtfs', e => { e.preventDefault(); showStop(e.features[0].properties.id); });
     map.on('click', 'osmstops', e => { e.preventDefault(); popupOsm(e.features[0].properties.id, e.lngLat); });
     map.on('click', 'div', e => { e.preventDefault(); popupDiv(JSON.parse(e.features[0].properties.d), e.lngLat); });
     map.on('click', e => { if (S.viaMode && !e.defaultPrevented) addVia([e.lngLat.lng, e.lngLat.lat]); });
     draw();
   });
 }
-const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const fc = feats => ({type: 'FeatureCollection', features: feats});
 const line = (coords, props = {}) => ({type: 'Feature', geometry: {type: 'LineString', coordinates: coords}, properties: props});
 const point = (c, props = {}) => ({type: 'Feature', geometry: {type: 'Point', coordinates: c}, properties: props});
-const set = (id, feats) => map.getSource(id) && map.getSource(id).setData(fc(feats));
+const set = (id, feats) => map && map.getSource(id) && map.getSource(id).setData(fc(feats));
+const statusColor = st => css({matched: '--ok', ambiguous: '--amb', moved: '--amb', missing: '--miss'}[st] || '--miss');
 
-function stopColor(s) { return css({matched: '--ok', ambiguous: '--amb', missing: '--miss'}[stopStatus(s)] || '--miss'); }
-
+function stopFeatures(ids) {
+  const solid = [], rings = [], tethers = [];
+  for (const id of ids) {
+    const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s), color = statusColor(st), on = S.stop === id;
+    const label = ids.length < 60 ? `${ids.indexOf(id) + 1} · ${s.name}` : s.name;
+    if (o) {
+      solid.push(point([o.lon, o.lat], {id, color, label, on}));
+      if (m([o.lon, o.lat], [s.lon, s.lat]) > 25) { rings.push(point([s.lon, s.lat], {id, color, on})); tethers.push(line([[o.lon, o.lat], [s.lon, s.lat]])); }
+    } else {
+      rings.push(point([s.lon, s.lat], {id, color, on, label}));
+      if ((st === 'moved' || st === 'ambiguous') && s.match) for (const c of s.match.osm) { const x = D.osm_stops[c.id]; if (x) { solid.push(point([x.lon, x.lat], {id, color, label: x.tags.name || '', on: false})); tethers.push(line([[x.lon, x.lat], [s.lon, s.lat]])); } }
+    }
+  }
+  return {solid, rings, tethers};
+}
+function editFeatures() {
+  return Object.values(Edits.ops).filter(op => op.type === 'node' && op.lat != null).map(op => point([op.lon, op.lat], {key: op.kind}));
+}
 function draw() {
   if (!map || !map.getSource('stops')) return;
   const p = S.pattern && patternById(S.pattern);
+  set('edits', editFeatures());
   if (p) {
     const r = routedOf(p);
     set('shape', p.shape.length ? [line(p.shape)] : []);
@@ -110,19 +169,20 @@ function draw() {
     set('rel', p.relations.flatMap(a => a.geometry.map(g => line(g, {id: a.id}))));
     set('div', r.divergences.map(d => point([d.lon, d.lat], {d: JSON.stringify({...d, shape: undefined, path: undefined})})));
     set('divpath', r.divergences.flatMap(d => [d.shape && d.shape.length > 1 ? line(d.shape) : null, d.path && d.path.length > 1 ? line(d.path) : null].filter(Boolean)));
-    set('stops', p.stops.map((id, i) => { const s = D.stops[id]; return point([s.lon, s.lat], {id, color: stopColor(s), label: `${i + 1} · ${s.name}`, on: S.stop === id}); }));
+    const f = stopFeatures(p.stops);
+    set('stops', f.solid); set('gtfs', f.rings); set('tether', f.tethers);
     const inP = new Set(p.stops.map(id => matchedOsm(D.stops[id])).filter(Boolean).map(o => o.id));
     set('osmstops', Object.values(D.osm_stops).filter(o => !inP.has(o.id) && o.tags.public_transport !== 'stop_position').map(o => point([o.lon, o.lat], {id: o.id})));
     set('vias', S.vias.map(v => point(v)));
   } else {
-    set('shape', []); set('routed', []); set('rel', []); set('div', []); set('divpath', []); set('vias', []); set('leg', []);
-    const stops = Object.values(D.stops).filter(stopFilter);
-    set('stops', stops.map(s => point([s.lon, s.lat], {id: s.id, color: stopColor(s), label: s.name, on: S.stop === s.id})));
+    for (const id of ['shape', 'routed', 'rel', 'div', 'divpath', 'vias', 'leg']) set(id, []);
+    const ids = Object.values(D.stops).filter(stopFilter).map(s => s.id);
+    const f = stopFeatures(ids);
+    set('stops', f.solid); set('gtfs', f.rings); set('tether', f.tethers);
     const claimed = new Set(Object.values(D.stops).map(s => matchedOsm(s)).filter(Boolean).map(o => o.id));
-    set('osmstops', (S.tab === 'extra' ? D.extra_stops.map(id => D.osm_stops[id]) : Object.values(D.osm_stops).filter(o => !claimed.has(o.id))).filter(o => o.tags.public_transport !== 'stop_position').map(o => point([o.lon, o.lat], {id: o.id})));
+    set('osmstops', (S.tab === 'extra' ? D.extra_stops.map(id => D.osm_stops[id]) : Object.values(D.osm_stops).filter(o => !claimed.has(o.id))).filter(o => o && o.tags.public_transport !== 'stop_position').map(o => point([o.lon, o.lat], {id: o.id})));
   }
 }
-
 function fit(pts, pad = 60) {
   if (!pts.length) return;
   const b = bboxOf(pts);
@@ -131,25 +191,52 @@ function fit(pts, pad = 60) {
 
 // ---------- popups ----------
 function popupOsm(id, ll) {
-  const o = D.osm_stops[id];
-  const t = o.tags;
-  const html = `<b>${esc(t.name || '(no name)')}</b><br><span style="color:#666">${esc(id)} · ${esc(Object.entries(t).filter(([k]) => ['ref', 'route_ref', 'highway', 'public_transport', 'operator', 'network'].includes(k)).map(([k, v]) => k + '=' + v).join(' · '))}</span><br>
-    <a href="${osmLink(id)}" target="_blank">osm.org</a> · <a href="${idLink(o.lon, o.lat, id)}" target="_blank">iD</a> · <a href="#" data-josm="${id}">JOSM</a>`;
-  const pop = new maplibregl.Popup({closeButton: false}).setLngLat(ll).setHTML(html).addTo(map);
-  pop.getElement().querySelector('[data-josm]').onclick = e => { e.preventDefault(); josmZoom([[o.lon, o.lat]], [id.replace(/^n/, 'node')]); };
+  const o = D.osm_stops[id], t = o.tags;
+  const pop = new maplibregl.Popup({closeButton: false, maxWidth: '320px'}).setLngLat(ll).setDOMContent(el('div', {},
+    el('b', {}, t.name || '(no name)'), el('div', {class: 'muted'}, `${id} · ${Object.entries(t).filter(([k]) => ['ref', 'route_ref', 'highway', 'public_transport', 'operator', 'network'].includes(k)).map(([k, v]) => k + '=' + v).join(' · ')}`),
+    el('div', {}, el('a', {href: osmLink(id), target: '_blank'}, 'osm.org'), ' · ', editorButtons({lon: o.lon, lat: o.lat, select: [id]}, {small: true})))).addTo(map);
 }
 function popupDiv(d, ll) {
-  const html = `<b>${esc(d.kind)}</b> · ${d.length} m${d.max ? ` (up to ${d.max} m off)` : ''}<br>${esc(d.why)}<br>` +
-    (d.ways.length ? `ways: ${d.ways.map(w => `<a href="https://www.openstreetmap.org/way/${w}" target="_blank">${w}</a>`).join(', ')}<br>` : '') +
-    `<a href="#" data-josm>open in JOSM</a> · <a href="${idLink(d.lon, d.lat)}" target="_blank">iD</a>`;
-  const pop = new maplibregl.Popup({closeButton: false}).setLngLat(ll).setHTML(html).addTo(map);
-  pop.getElement().querySelector('[data-josm]').onclick = e => { e.preventDefault(); josmZoom(d.shape && d.shape.length ? d.shape : [[d.lon, d.lat]], d.ways.map(w => 'way' + w)); };
+  const box = el('div', {});
+  box.append(el('b', {}, d.kind === 'no-path' ? 'no path' : d.kind === 'uncovered' ? 'line not followed' : 'detour'), ` · ${d.length} m${d.max ? ` (up to ${d.max} m off)` : ''}`, el('div', {}, d.why));
+  for (const w of d.ways) {
+    const t = (d.way_tags || {})[w] || {};
+    const row = el('div', {class: 'small', style: 'margin-top:4px'}, el('a', {href: 'https://www.openstreetmap.org/way/' + w, target: '_blank'}, 'w' + w), ' ', el('span', {class: 'muted'}, `${t.highway || ''} ${t.name || ''} ${t.oneway ? 'oneway=' + t.oneway : ''} ${t.access ? 'access=' + t.access : ''}`));
+    row.append(' ', el('a', {href: '#', onclick: e => { e.preventDefault(); wayTagEditor(w, t, [d.lon, d.lat]); }}, 'edit tags'));
+    box.append(row);
+  }
+  box.append(el('div', {style: 'margin-top:6px'}, editorButtons({lon: d.lon, lat: d.lat, zoom: 17, select: d.ways.map(w => 'w' + w), pattern: patternById(S.pattern), pts: d.shape, comment: `Bus route ${routeOf(patternById(S.pattern)).short}: ${d.why.slice(0, 80)}`}, {small: true})));
+  new maplibregl.Popup({closeButton: true, maxWidth: '360px'}).setLngLat(ll).setDOMContent(box).addTo(map);
+}
+/** A tiny tag editor for a way: enough for oneway/access/bus fixes, not for geometry. */
+function wayTagEditor(wid, tags, at) {
+  const cur = Edits.get('w' + wid);
+  const t = {...(cur ? cur.tags : tags)};
+  const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags only. Geometry (splitting, drawing) is RapiD\'s job.'));
+  const grid = el('div', {class: 'kv', style: 'grid-template-columns:max-content 1fr auto'});
+  const rows = {};
+  const addRow = (k, v) => {
+    const kin = el('input', {value: k, placeholder: 'key', style: 'width:110px'}), vin = el('input', {value: v, placeholder: 'value'});
+    const rm = el('button', {class: 'b tiny', onclick: () => { grid.removeChild(kin); grid.removeChild(vin); grid.removeChild(rm); delete rows[k]; }}, '×');
+    rows[k] = [kin, vin]; grid.append(kin, vin, rm);
+  };
+  for (const [k, v] of Object.entries(t)) addRow(k, v);
+  box.append(grid, el('div', {class: 'btns'},
+    el('button', {class: 'b tiny', onclick: () => addRow('', '')}, '+ tag'),
+    el('button', {class: 'b tiny', onclick: () => { rows.oneway ? (rows.oneway[1].value = rows.oneway[1].value === 'yes' ? '-1' : 'yes') : addRow('oneway', 'yes'); }}, 'flip oneway'),
+    el('button', {class: 'b tiny', onclick: () => { if (!rows['bus']) addRow('bus', 'yes'); else rows.bus[1].value = 'yes'; }}, 'bus=yes'),
+    el('button', {class: 'b primary tiny', onclick: () => {
+      const nt = {};
+      for (const [kin, vin] of Object.values(rows)) if (kin.value.trim()) nt[kin.value.trim()] = vin.value.trim();
+      const removed = Object.keys(tags).filter(k => !(k in nt));
+      Edits.modify('way', wid, {version: null, tags, nodes: (patternById(S.pattern) || {}).way_nodes?.[wid]}, {tags: nt, removeTags: removed}, `way ${wid}: ${(tags.name || tags.highway || '')}`);
+      toast('Way tags added to changes'); pop.remove(); render(); draw();
+    }}, 'Add to changes')));
+  const pop = new maplibregl.Popup({closeButton: true, maxWidth: '380px'}).setLngLat(at).setDOMContent(box).addTo(map);
 }
 
 // ---------- re-routing through via points ----------
-async function addVia(v) {
-  S.vias.push(v); await retrace();
-}
+async function addVia(v) { S.vias.push(v); await retrace(); }
 async function retrace() {
   const p = patternById(S.pattern);
   const q = new URLSearchParams({pattern: p.id});
@@ -163,31 +250,35 @@ async function retrace() {
   render(); draw();
 }
 
-// ---------- panel: routes ----------
+// ---------- panel ----------
 function render() {
   const P = $('#panel'); P.innerHTML = '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
+  $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
   if (S.tab === 'routes') S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
+  else if (S.tab === 'changes') renderChanges(P);
   else renderAbout(P);
 }
+const tile = (n, label, cls = '') => el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
+const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
 
 function renderRoutes(P) {
   const s = D.summary;
   P.append(el('div', {class: 'tiles'},
-    tile(D.patterns.length, 'patterns'), tile(s.patterns['no relation'] || 0, 'no OSM relation'), tile(s.patterns['duplicate relations'] || 0, 'duplicated'),
-    tile(s.stops.matched || 0, 'stops matched'), tile((s.stops.ambiguous || 0), 'ambiguous'), tile(s.stops.missing || 0, 'missing in OSM')));
-  P.append(el('h2', {}, 'Patterns, worst first'));
+    tile(D.patterns.filter(p => !p.temporary).length, 'itineraries'), tile(s.patterns['no relation'] || 0, 'no OSM relation', s.patterns['no relation'] ? 'bad' : ''), tile((s.patterns['duplicate relations'] || 0), 'mapped twice', s.patterns['duplicate relations'] ? 'warn' : ''),
+    tile(s.stops.matched || 0, 'stops matched'), tile((s.stops.ambiguous || 0) + (s.stops.moved || 0), 'to decide', 'warn'), tile(s.stops.missing || 0, 'not in OSM', s.stops.missing ? 'bad' : '')));
+  P.append(el('h2', {}, 'Itineraries, worst first'), el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
   const rows = D.patterns.map(p => ({p, g: patternGrade(p), sc: p.routed.score ? p.routed.score.shape_covered : 0}));
   rows.sort((a, b) => a.g.order - b.g.order || a.sc - b.sc || b.p.trips - a.p.trips);
   for (const {p, g, sc} of rows) {
-    const r = routeOf(p);
-    P.append(el('div', {class: 'row', onclick: () => selectPattern(p.id)},
+    const r = routeOf(p), nd = p.routed.divergences.length;
+    P.append(el('div', {class: 'row' + (p.temporary ? ' dim' : ''), onclick: () => selectPattern(p.id)},
       refBadge(r),
       el('div', {class: 'grow'}, el('div', {class: 't'}, p.headsign || p.direction_name || r.long || ('direction ' + p.direction)),
-        el('div', {class: 's'}, `${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short variants` : ''}${p.routed.divergences.length ? ` · ${p.routed.divergences.length} divergence${p.routed.divergences.length > 1 ? 's' : ''}` : ''}`)),
-      el('span', {class: 'pct', title: 'share of the agency line a bus can follow on OSM roads'}, fmtPct(sc)),
+        el('div', {class: 's'}, `${p.stops.length} stops · ${p.trips} trips${nd ? ` · ${nd} place${nd > 1 ? 's' : ''} to look at` : ''}${p.chain_ok ? '' : ' · path broken'}`)),
+      el('span', {class: 'pct' + (sc < 0.97 ? ' low' : ''), title: 'share of the agency line drivable on OSM roads'}, pct(sc)),
       el('span', {class: 'chip ' + g.cls}, g.chip)));
   }
   if (D.unpaired_relations.length) {
@@ -200,8 +291,6 @@ function renderRoutes(P) {
     }
   }
 }
-const tile = (n, label) => el('div', {class: 'tile'}, el('b', {}, n), el('span', {}, label));
-const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
 
 function selectPattern(id) {
   S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.viaMode = false; S.tab = 'routes';
@@ -212,21 +301,23 @@ function selectPattern(id) {
 
 function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
-  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all patterns'));
+  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
   const d = el('div', {class: 'detail'});
   d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
-  d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · direction ${p.direction} · ${p.stops.length} stops · ${p.trips} trips`));
+  d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · direction ${p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
+  if (p.temporary) d.append(el('div', {class: 'note warn'}, 'Only run by a short-dated service: a detour or a special. Usually not mapped; see ? for the convention.'));
   const sc = rt.score || {};
   d.append(el('div', {class: 'kv'},
-    el('span', {class: 'k'}, 'line on OSM roads'), el('span', {}, `${fmtPct(sc.shape_covered)} of the agency's line can be driven on OSM as mapped; ${fmtPct(sc.path_on_shape)} of the drivable path stays on the line`),
-    el('span', {class: 'k'}, 'routed'), el('span', {}, `${rt.ways.length} ways, ${rt.legs.filter(l => l.ok).length}/${rt.legs.length} legs connected`)));
+    el('span', {class: 'k'}, 'drivable'), el('span', {}, `${pct(sc.shape_covered)} of the agency's line can be driven on OSM as mapped (${pct(sc.path_on_shape)} of the drivable path stays on the line)`),
+    el('span', {class: 'k'}, 'path'), el('span', {}, `${rt.ways.length} ways · ${rt.legs.filter(l => l.ok).length}/${rt.legs.length} legs connect · ${p.chain_ok ? 'continuous' : 'BROKEN — a router would reject this'}`)));
 
+  const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
-  btns.append(el('button', {class: 'b primary', onclick: () => loadRelationInJosm(p)}, p.relations.length ? 'Load proposed relation in JOSM' : 'Create relation in JOSM'));
-  btns.append(el('button', {class: 'b', onclick: () => josmZoom(p.shape.length ? p.shape : rt.geometry, p.relations.map(a => 'relation' + a.id))}, 'Open area in JOSM'));
+  btns.append(el('button', {class: 'b primary', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
+  btns.append(el('button', {class: 'b', onclick: () => openIn('rapid', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p, comment: `Bus route ${r.short} ${p.headsign || ''}`.trim()})}, 'Open in RapiD with line'));
+  btns.append(el('button', {class: 'b', onclick: () => openIn('id', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p})}, 'iD'));
   btns.append(el('button', {class: 'b' + (S.viaMode ? ' on' : ''), onclick: () => { S.viaMode = !S.viaMode; map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : ''; render(); }}, S.viaMode ? 'Click the map to add a via point…' : 'Re-route via a point'));
   if (S.vias.length) btns.append(el('button', {class: 'b', onclick: () => { S.vias = []; S.routed = null; render(); draw(); }}, `Clear ${S.vias.length} via`));
-  btns.append(el('a', {href: `data/rel-${p.id.replace(/[^A-Za-z0-9]/g, '_')}.osm`, download: '', class: 'small', style: 'align-self:center'}, '.osm file'));
   d.append(btns);
 
   if (rt.divergences.length) {
@@ -242,20 +333,18 @@ function renderPattern(P, p) {
   }
 
   d.append(el('h2', {style: 'margin-left:0'}, p.relations.length ? `OSM relation${p.relations.length > 1 ? 's' : ''}` : 'OSM relation'));
-  if (!p.relations.length) d.append(el('div', {class: 'small'}, 'Nothing in OSM covers this pattern. The proposed relation above has the matched platforms in order and the routed ways; open it in JOSM, run the validator, and upload.'));
+  if (!p.relations.length) d.append(el('div', {class: 'small'}, 'Nothing in OSM covers this itinerary. "Create relation" builds one from the matched platforms in order and the routed ways.'));
   for (const a of p.relations) d.append(renderAudit(a, p));
-  if (!p.relations.length || p.relations.length) {
-    d.append(el('details', {class: 'small'}, el('summary', {}, 'Proposed relation tags'), el('div', {class: 'kv'}, ...Object.entries(p.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)]))));
-  }
-  if (r.masters.length === 0) d.append(el('div', {class: 'small muted', style: 'margin-top:6px'}, `No route_master for route ${r.short} in OSM; one should hold all its directions (tags: ${Object.entries(r.proposed_master_tags).map(([k, v]) => k + '=' + v).join(', ')}).`));
+  d.append(el('details', {class: 'small'}, el('summary', {}, 'Proposed relation tags'), el('div', {class: 'kv'}, ...Object.entries(p.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)]))));
+  if (r.masters.length === 0) d.append(el('div', {class: 'small muted', style: 'margin-top:6px'}, `No route_master for route ${r.short}. `, el('a', {href: '#', onclick: e => { e.preventDefault(); proposeMaster(r); }}, 'Create one → changes'), ' once its directions have relations.'));
 
   d.append(el('h2', {style: 'margin-left:0'}, 'Stops in order'));
   const ul = el('ul', {class: 'plain stoplist'});
   p.stops.forEach((id, i) => {
     const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s);
     const leg = rt.legs[i - 1];
-    ul.append(el('li', {class: 'item click', onclick: () => showStop(id), onmouseenter: () => { const lg = rt.legs[i]; set('leg', lg && lg.ok && i < rt.legs.length ? [line(legGeom(rt, i))] : []); }, onmouseleave: () => set('leg', [])},
-      el('span', {class: 'n'}, i + 1), el('span', {class: 'dotc ' + ({matched: 'ok', ambiguous: 'amb', missing: 'miss'}[st])}),
+    ul.append(el('li', {class: 'item click', onclick: () => showStop(id), onmouseenter: () => { const lg = rt.legs[i]; set('leg', lg && lg.ok ? [line(legGeom(rt, i))] : []); }, onmouseleave: () => set('leg', [])},
+      el('span', {class: 'n'}, i + 1), el('span', {class: 'dotc ' + st}),
       el('span', {class: 'grow'}, s.name, s.desc ? el('span', {class: 'd'}, ' · ' + s.desc) : null, o && o.tags.name && o.tags.name !== s.name ? el('span', {class: 'd', style: 'color:var(--rel)'}, ` · OSM: ${o.tags.name}`) : null),
       leg && !leg.ok ? el('span', {class: 'chip bad', title: leg.why}, 'gap before') : null));
   });
@@ -263,51 +352,92 @@ function renderPattern(P, p) {
   P.append(d);
 }
 function legGeom(rt, i) {
-  // routed geometry isn't split per leg in the JSON; approximate by the stops' projections. Cheap: highlight from stop i to i+1 along the path.
   const p = patternById(S.pattern), a = D.stops[p.stops[i]], b = D.stops[p.stops[i + 1]];
-  const g = rt.geometry; if (!g.length) return [];
+  const g = rt.geometry; if (!g.length || !b) return [];
   const near = q => { let bi = 0, bd = 1e9; g.forEach((c, k) => { const d = m(c, [q.lon, q.lat]); if (d < bd) { bd = d; bi = k; } }); return bi; };
   let ia = near(a), ib = near(b); if (ib < ia) [ia, ib] = [ib, ia];
   return g.slice(ia, ib + 1);
 }
 
 function renderAudit(a, p) {
-  const box = el('div', {class: 'small', style: 'border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0'});
+  const box = el('div', {class: 'small box'});
+  const op = Edits.get('r' + a.id);
   box.append(el('div', {}, el('b', {}, a.name || `relation ${a.id}`), ' ', el('a', {href: 'https://www.openstreetmap.org/relation/' + a.id, target: '_blank'}, `r${a.id}`),
     el('span', {class: 'muted'}, ` · v${a.version} by ${a.user} · ${(a.timestamp || '').slice(0, 10)}`),
-    a.duplicate ? el('span', {class: 'chip warn', style: 'margin-left:6px'}, 'duplicate') : null));
-  box.append(el('div', {class: 'muted'}, `covers ${fmtPct(a.cover.shape_covered)} of the line; ${fmtPct(a.cover.ways_on_shape)} of its ways are on it · ${a.ways.in_relation} ways · ${a.stops.in_relation} stop members`));
+    a.duplicate ? el('span', {class: 'chip warn', style: 'margin-left:6px'}, 'duplicate') : null, a.both_directions ? el('span', {class: 'chip warn', style: 'margin-left:6px'}, 'both directions') : null,
+    op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, op.kind === 'delete' ? 'to delete' : 'edited') : null));
+  box.append(el('div', {class: 'muted'}, `covers ${pct(a.cover.shape_covered)} of the line; ${pct(a.cover.ways_on_shape)} of its ways are on it · ${a.ways.in_relation} ways · ${a.stops.in_relation} stop members`));
   const issues = [];
-  if (a.duplicate) issues.push(el('li', {}, 'Another relation covers this same pattern — OSM has one relation per itinerary, not per service day; merge them and keep the older id.'));
+  if (a.both_directions) issues.push(el('li', {}, 'One relation holds both directions. PTv2 wants one per direction: this one is kept for one, and a new one created for the other (see "Fix relation").'));
+  if (a.duplicate) issues.push(el('li', {}, 'Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. Keep the older one; ', el('a', {href: '#', onclick: e => { e.preventDefault(); Edits.delete('relation', a.id, relBase(a), `duplicate of route ${routeOf(p).short}`); toast('Marked for deletion'); render(); }}, 'mark this one for deletion'), '.'));
+  if (a.ways.chain_breaks.length) issues.push(el('li', {}, `the way chain breaks in ${a.ways.chain_breaks.length} place${a.ways.chain_breaks.length > 1 ? 's' : ''} (routers reject it): `, ...a.ways.chain_breaks.slice(0, 6).flatMap(b => [el('a', {href: '#', onclick: e => { e.preventDefault(); map.flyTo({center: [b.lon, b.lat], zoom: 17}); }}, `#${b.i}`), ' '])));
   if (a.stops.missing.length) issues.push(el('li', {}, `${a.stops.missing.length} matched platforms are not members: `, ...a.stops.missing.slice(0, 8).flatMap(x => [el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(x.stop); }}, `#${x.i + 1}`), ' ']), a.stops.missing.length > 8 ? '…' : ''));
-  if (a.stops.extra.length) issues.push(el('li', {}, `${a.stops.extra.length} platform members are not on this pattern`, p.direction !== '' && D.patterns.some(q => q.route_id === p.route_id && q.id !== p.id) ? ' (the other direction, probably: PTv2 wants one relation per direction)' : '', ': ',
-    ...a.stops.extra.slice(0, 6).flatMap(id => [el('a', {href: osmLink(id), target: '_blank'}, id), ' ']), a.stops.extra.length > 6 ? '…' : ''));
+  const extra = a.stops.extra.length, other = a.stops.extra_other_direction.length;
+  if (extra) issues.push(el('li', {}, `${extra} platform members are not on this itinerary${other ? ` (${other} are the other direction's)` : ''}: `, ...a.stops.extra.slice(0, 6).flatMap(id => [el('a', {href: osmLink(id), target: '_blank'}, id), ' ']), extra > 6 ? '…' : ''));
   if (a.stops.out_of_order) issues.push(el('li', {}, `platform members are out of order in ${a.stops.out_of_order} place${a.stops.out_of_order > 1 ? 's' : ''}`));
-  if (a.stops.unmatched.length) issues.push(el('li', {}, `${a.stops.unmatched.length} GTFS stops have no matched OSM platform yet (see Stops)`));
-  if (a.ways.off_shape.length) issues.push(el('li', {}, `${a.ways.off_shape.length} member ways are off the line: `, ...a.ways.off_shape.slice(0, 8).flatMap(w => [el('a', {href: '#', title: w.name, onclick: e => { e.preventDefault(); map.flyTo({center: [w.lon, w.lat], zoom: 16}); josmZoom([[w.lon, w.lat]], ['way' + w.way]); }}, `w${w.way}`), ' ']), a.ways.off_shape.length > 8 ? '…' : ''));
-  if (a.ways.routed_not_in_relation.length) issues.push(el('li', {}, `${a.ways.routed_not_in_relation.length} ways the routed path uses are not members (may be fine if the relation takes a parallel way; check the map)`));
+  if (a.stops.unmatched.length) issues.push(el('li', {}, `${a.stops.unmatched.length} GTFS stops have no OSM platform yet (see Stops)`));
+  if (a.ways.off_shape.length) issues.push(el('li', {}, `${a.ways.off_shape.length} member ways are off the line: `, ...a.ways.off_shape.slice(0, 8).flatMap(w => [el('a', {href: '#', title: w.name, onclick: e => { e.preventDefault(); map.flyTo({center: [w.lon, w.lat], zoom: 16}); }}, `w${w.way}`), ' ']), a.ways.off_shape.length > 8 ? '…' : ''));
   for (const t of a.tag_issues) issues.push(el('li', {}, el('code', {}, t.key), ': ', t.osm ? el('span', {}, el('span', {style: 'color:var(--rel)'}, t.osm), ' → ') : 'add ', el('span', {style: 'color:var(--shape)'}, t.gtfs)));
   box.append(issues.length ? el('ul', {style: 'margin:6px 0 0;padding-left:18px'}, ...issues) : el('div', {style: 'color:var(--ok)'}, 'Members and tags agree with the feed.'));
   return box;
 }
 
-async function loadRelationInJosm(p) {
+/** Build the relation op(s) for a pattern from the routed ways and matched platforms. */
+function proposeRelation(p) {
   const rt = routedOf(p);
-  const objs = [...rt.ways.map(w => 'w' + w), ...p.stops.map(id => matchedOsm(D.stops[id])).filter(o => o && o.id[0] === 'n').map(o => o.id), ...p.relations.map(a => 'r' + a.id)];
-  await josm('load_object', {objects: objs.join(','), new_layer: 'false', relation_members: 'false'});
-  const url = S.vias.length ? `${location.origin}/api/relation?pattern=${encodeURIComponent(p.id)}&${S.vias.map(v => 'via=' + v.join(',')).join('&')}`
-    : `${location.origin}/data/rel-${p.id.replace(/[^A-Za-z0-9]/g, '_')}.osm`;
-  await josm('import', {url, new_layer: 'false'});
-  toast('JOSM: the proposed relation is in the current layer as a new relation. Run the validator, compare with the existing one, upload.', 6000);
+  if (!p.chain_ok && !S.routed) { if (!confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return; }
+  const members = [];
+  const missing = [];
+  for (const sid of p.stops) {
+    const ref = stopNodeRef(D.stops[sid]);
+    if (ref) members.push(ref.key ? {key: ref.key, role: 'platform'} : {type: 'node', ref: ref.ref, role: 'platform'});
+    else missing.push(D.stops[sid]);
+  }
+  for (const w of rt.ways) members.push({type: 'way', ref: w, role: ''});
+  const tags = {...p.proposed_tags};
+  // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern has claimed.
+  const claimed = new Set(Object.values(Edits.ops).filter(o => o.type === 'relation' && o.kind === 'modify' && o.note !== p.id).map(o => o.id));
+  const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
+  if (reuse) {
+    // keep name if the mapper's is fine and only add what's missing? No: the proposed tags are the GTFS scheme; keep theirs where ours is generic.
+    // The GTFS scheme's structural tags go in; the mapper's free text stays unless it names a service day,
+    // which is the very thing being merged away.
+    const merged = {...reuse.tags, ...tags};
+    for (const k of ['name', 'from', 'to', 'description', 'colour']) if (reuse.tags[k] && !/\b(weekday|saturday|sunday|weekend|mon|tue|wed|thu|fri)\b/i.test(reuse.tags[k])) merged[k] = reuse.tags[k];
+    if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
+    Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
+    toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members`);
+  } else {
+    Edits.createRelation(tags, members, p.id);
+    toast(`New relation in changes: ${members.length} members`);
+  }
+  if (missing.length) toast(`${missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
+  render(); draw();
+}
+function proposeMaster(r) {
+  const members = [];
+  for (const pid of r.patterns) {
+    const p = patternById(pid);
+    if (p.temporary) continue;
+    const key = Object.keys(Edits.ops).find(k => Edits.ops[k].type === 'relation' && Edits.ops[k].note === pid);
+    if (key) members.push(Edits.ops[key].kind === 'create' ? {key, role: ''} : {type: 'relation', ref: Edits.ops[key].id, role: ''});
+    else if (p.relations.length) members.push({type: 'relation', ref: p.relations.sort((a, b) => a.id - b.id)[0].id, role: ''});
+  }
+  if (!members.length) return toast('No relations to put in it yet');
+  Edits.createRelation(r.proposed_master_tags, members, 'master:' + r.id);
+  toast('route_master added to changes'); render();
 }
 
-// ---------- panel: stops ----------
+// ---------- stops ----------
 function stopFilter(s) {
   const st = stopStatus(s);
+  if (S.filter === 'todo' && !(st === 'missing' || st === 'ambiguous' || st === 'moved')) return false;
   if (S.filter === 'missing' && st !== 'missing') return false;
+  if (S.filter === 'moved' && st !== 'moved') return false;
   if (S.filter === 'ambiguous' && st !== 'ambiguous') return false;
-  if (S.filter === 'diff' && !(st === 'matched' && s.match.diff && Object.keys(s.match.diff).some(k => k !== 'gtfs:stop_id'))) return false;
-  if (S.filter === 'name' && !(st === 'matched' && s.match.diff && s.match.diff.name)) return false;
+  if (S.filter === 'diff' && !(st === 'matched' && s.match && s.match.diff && Object.keys(s.match.diff).some(k => k !== 'gtfs:stop_id'))) return false;
+  if (S.filter === 'name' && !(st === 'matched' && s.match && s.match.diff && s.match.diff.name)) return false;
+  if (S.filter === 'position' && !(s.match && s.match.diff && s.match.diff.position)) return false;
   if (S.filter === 'desc' && !s.desc) return false;
   if (S.q) {
     const q = S.q.toLowerCase(), o = matchedOsm(s);
@@ -318,81 +448,128 @@ function stopFilter(s) {
 function renderStops(P) {
   const f = el('div', {class: 'filters'});
   const sel = el('select', {class: 'b', onchange: e => { S.filter = e.target.value; render(); draw(); }});
-  for (const [v, l] of [['all', 'all stops'], ['missing', 'missing in OSM'], ['ambiguous', 'ambiguous'], ['diff', 'tags differ'], ['name', 'name differs'], ['desc', 'has announcement']]) sel.append(el('option', {value: v, selected: S.filter === v ? '' : null}, l));
+  for (const [v, l] of [['all', 'all stops'], ['todo', 'to decide'], ['missing', 'not in OSM'], ['moved', 'probably moved'], ['ambiguous', 'ambiguous'], ['diff', 'tags differ'], ['name', 'name differs'], ['position', 'position differs'], ['desc', 'has announcement']]) sel.append(el('option', {value: v, selected: S.filter === v ? '' : null}, l));
   f.append(sel, el('input', {placeholder: 'search name, announcement, code', value: S.q, oninput: e => { S.q = e.target.value; render(); draw(); }}));
   P.append(f);
-  const list = Object.values(D.stops).filter(stopFilter).sort((a, b) => ({missing: 0, ambiguous: 1, matched: 2}[stopStatus(a)] - {missing: 0, ambiguous: 1, matched: 2}[stopStatus(b)]) || b.trips - a.trips);
+  P.append(el('div', {class: 'hint'}, 'Rings are the agency\'s positions — usually 10–30 m off. Dots are OSM nodes. Nothing moves unless you say so.'));
+  const rank = {missing: 0, moved: 1, ambiguous: 2, matched: 3};
+  const list = Object.values(D.stops).filter(stopFilter).sort((a, b) => rank[stopStatus(a)] - rank[stopStatus(b)] || b.trips - a.trips);
   P.append(el('h2', {}, `${list.length} stops`));
   for (const s of list.slice(0, 400)) {
     const st = stopStatus(s), o = matchedOsm(s);
-    const diffs = st === 'matched' && s.match.diff ? Object.keys(s.match.diff).filter(k => k !== 'gtfs:stop_id') : [];
-    P.append(el('div', {class: 'row' + (S.stop === s.id ? ' on' : ''), onclick: () => showStop(s.id)},
-      el('span', {class: 'dotc ' + ({matched: 'ok', ambiguous: 'amb', missing: 'miss'}[st])}),
+    const diffs = st === 'matched' && s.match && s.match.diff ? Object.keys(s.match.diff).filter(k => k !== 'gtfs:stop_id') : [];
+    P.append(el('div', {class: 'row' + (S.stop === s.id ? ' on' : '') + (s.match && s.match.temporary ? ' dim' : ''), onclick: () => showStop(s.id)},
+      el('span', {class: 'dotc ' + st}),
       el('div', {class: 'grow'}, el('div', {class: 't'}, s.name), el('div', {class: 's'}, [s.ref, s.desc, o && o.tags.name && o.tags.name !== s.name ? 'OSM: ' + o.tags.name : null].filter(Boolean).join(' · '))),
-      st === 'ambiguous' ? el('span', {class: 'chip warn'}, `${s.match.osm.length} candidates`) : st === 'missing' ? el('span', {class: 'chip bad'}, 'missing') : diffs.length ? el('span', {class: 'chip'}, diffs.join(', ')) : null));
+      s.match && s.match.temporary ? el('span', {class: 'chip'}, 'temporary') : st === 'ambiguous' ? el('span', {class: 'chip warn'}, `${s.match.osm.length} candidates`) : st === 'moved' ? el('span', {class: 'chip warn'}, `moved ${s.match.osm[0].dist} m?`) : st === 'missing' ? el('span', {class: 'chip bad'}, 'not in OSM') : diffs.length ? el('span', {class: 'chip'}, diffs.join(', ')) : null));
   }
 }
 function showStop(id) {
   S.stop = id; S.tab = 'stops';
   render(); draw();
-  const s = D.stops[id];
-  map.flyTo({center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), 17), duration: 500});
+  const s = D.stops[id], o = matchedOsm(s);
+  map.flyTo({center: o ? [o.lon, o.lat] : [s.lon, s.lat], zoom: Math.max(map.getZoom(), 17), duration: 500});
 }
 function renderStop(P, s) {
-  P.append(el('button', {class: 'back', onclick: () => { S.stop = null; render(); draw(); }}, S.pattern ? '← back' : '← all stops'));
-  if (S.pattern) $('.back', P).onclick = () => { S.stop = null; S.tab = 'routes'; render(); draw(); };
-  const d = el('div', {class: 'detail'}), st = stopStatus(s);
-  d.append(el('div', {class: 'head'}, el('span', {class: 'dotc ' + ({matched: 'ok', ambiguous: 'amb', missing: 'miss'}[st])}), el('h3', {}, s.name)));
+  P.append(el('button', {class: 'back', onclick: () => { S.stop = null; if (S.pattern) S.tab = 'routes'; render(); draw(); }}, S.pattern ? '← back to the route' : '← all stops'));
+  const d = el('div', {class: 'detail'}), st = stopStatus(s), o = matchedOsm(s);
+  d.append(el('div', {class: 'head'}, el('span', {class: 'dotc ' + st}), el('h3', {}, s.name)));
+  if (s.match && s.match.temporary) d.append(el('div', {class: 'note warn'}, 'Looks temporary (detour). Convention: short detours are not mapped.'));
   d.append(el('div', {class: 'kv'},
     el('span', {class: 'k'}, 'code'), el('span', {}, `${s.ref}${s.code && s.code !== s.id ? ` (stop_id ${s.id})` : ''}`),
-    s.desc ? el('span', {class: 'k'}, 'stop_desc') : null, s.desc ? el('span', {}, s.desc) : null,
+    s.desc ? el('span', {class: 'k'}, 'announced') : null, s.desc ? el('span', {}, s.desc) : null,
     s.tts ? el('span', {class: 'k'}, 'tts name') : null, s.tts ? el('span', {}, s.tts) : null,
     el('span', {class: 'k'}, 'routes'), el('span', {}, s.routes.map(rid => (D.routes.find(r => r.id === rid) || {short: rid}).short).join(', ') + ` · ${s.trips} trips`),
     s.wheelchair && s.wheelchair !== '0' ? el('span', {class: 'k'}, 'wheelchair') : null, s.wheelchair && s.wheelchair !== '0' ? el('span', {}, {1: 'yes', 2: 'no'}[s.wheelchair]) : null,
-    s.platform_code ? el('span', {class: 'k'}, 'platform') : null, s.platform_code ? el('span', {}, s.platform_code) : null,
-    s.url ? el('span', {class: 'k'}, 'url') : null, s.url ? el('a', {href: s.url, target: '_blank'}, s.url) : null));
-  const btns = el('div', {class: 'btns'});
-  if (st === 'missing') {
-    btns.append(el('button', {class: 'b primary', onclick: () => josm('add_node', {lon: s.lon, lat: s.lat, addtags: tagStr(s.proposed_tags)})}, 'Add stop in JOSM'));
-  }
-  btns.append(el('button', {class: 'b', onclick: () => josmZoom([[s.lon, s.lat]], s.match ? s.match.osm.map(c => c.id.replace(/^n/, 'node').replace(/^w/, 'way')) : [])}, 'Open in JOSM'));
-  btns.append(el('a', {href: idLink(s.lon, s.lat, matchedOsm(s) ? matchedOsm(s).id : null), target: '_blank', class: 'small', style: 'align-self:center'}, 'open in iD'));
-  d.append(btns);
-  if (s.match && s.match.notes && s.match.notes.length) d.append(el('div', {class: 'small', style: 'color:var(--amb)'}, ...s.match.notes.map(n => el('div', {}, '⚠ ' + n))));
+    s.platform_code ? el('span', {class: 'k'}, 'platform') : null, s.platform_code ? el('span', {}, s.platform_code) : null));
+  if (s.match && s.match.notes && s.match.notes.length) d.append(el('div', {class: 'note warn'}, ...s.match.notes.map(n => el('div', {}, n))));
+  const existing = Object.keys(Edits.ops).find(k => Edits.ops[k].kind === 'create' && Edits.ops[k].tags['gtfs:stop_id'] === s.id);
 
   if (st === 'missing') {
     d.append(el('h2', {style: 'margin-left:0'}, 'Not in OSM'));
-    d.append(el('div', {class: 'small'}, 'No bus stop within 60 m of the agency\'s position. Verify it on the ground or imagery before adding; the tags below are the proposal.'));
-    d.append(el('div', {class: 'kv'}, ...Object.entries(s.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)])));
+    d.append(el('div', {class: 'small'}, 'No bus stop within 60 m of the agency\'s position, and none on the same street further off. The position is the agency\'s: drop the node, then drag it onto the sign in RapiD or here.'));
+    d.append(el('div', {class: 'btns'},
+      existing ? el('span', {class: 'chip edit'}, 'added to changes') : el('button', {class: 'b primary', onclick: () => placeNewStop(s)}, 'Add stop here → changes'),
+      editorButtons({lon: s.lon, lat: s.lat, zoom: 19, select: [], comment: `Bus stop ${s.ref} ${s.name}`}, {primaryLabel: 'Look in RapiD'})));
+    d.append(el('details', {class: 'small'}, el('summary', {}, 'Tags it would get'), el('div', {class: 'kv'}, ...Object.entries(s.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)]))));
+  } else if (st === 'moved') {
+    const c = s.match.osm[0], oo = D.osm_stops[c.id];
+    d.append(el('h2', {style: 'margin-left:0'}, 'Probably moved'));
+    d.append(el('div', {class: 'small'}, `Nothing within 60 m, but OSM has `, el('b', {}, oo.tags.name || oo.id), ` ${c.dist} m away on the same street${oo.tags.ref === s.ref ? ' with the same code' : ''}. Most likely the stop moved and OSM still has the old spot.`));
+    d.append(el('div', {class: 'btns'},
+      el('button', {class: 'b primary', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {lat: s.lat, lon: s.lon, tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`); toast('Node move added to changes'); render(); draw(); }}, `Move that node here (${c.dist} m)`),
+      el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.save(); toast('Treated as the same stop, position kept'); render(); draw(); }}, 'Same stop, keep OSM\'s position'),
+      el('button', {class: 'b', onclick: () => placeNewStop(s)}, 'Different stop — add new')));
+    d.append(osmStopBox(s, oo, c, false));
+    for (const c2 of s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
   } else {
-    d.append(el('h2', {style: 'margin-left:0'}, st === 'ambiguous' ? 'Candidates — which is it?' : 'OSM stop'));
-    for (const c of s.match.osm) {
-      const o = D.osm_stops[c.id]; if (!o) continue;
-      const box = el('div', {class: 'small', style: 'border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0'});
-      box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${c.dist} m · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`)));
-      box.append(el('div', {class: 'muted', style: 'font-family:var(--mono);font-size:11px;word-break:break-all'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
-      if (st === 'matched' && s.match.diff && Object.keys(s.match.diff).length) {
-        const g = el('div', {class: 'diff'}, el('span', {class: 'hd'}, ''), el('span', {class: 'hd'}, 'GTFS'), el('span', {class: 'hd'}, 'OSM'));
-        for (const [k, v] of Object.entries(s.match.diff)) g.append(el('span', {class: 'k'}, k), el('span', {class: 'g'}, v.gtfs || '—'), el('span', {class: 'o'}, v.osm || '—'));
-        box.append(g);
-        box.append(el('div', {class: 'btns'}, el('button', {class: 'b', onclick: () => josm('load_object', {objects: o.id.replace(/^n/, 'n'), addtags: tagStr(Object.fromEntries(Object.entries(s.match.diff).filter(([k]) => k !== 'tagging' && k !== 'name').map(([k, v]) => [k, v.gtfs])))})}, 'Apply GTFS tags in JOSM (not the name)'),
-          el('span', {class: 'muted', style: 'align-self:center'}, 'ref, gtfs:stop_id, route_ref, description')));
-      }
-      if (st === 'ambiguous') box.append(el('div', {class: 'btns'}, el('button', {class: 'b', onclick: () => josmZoom([[o.lon, o.lat]], [o.id.replace(/^n/, 'node').replace(/^w/, 'way')])}, 'This one — open in JOSM')));
-      d.append(box);
-    }
+    d.append(el('h2', {style: 'margin-left:0'}, st === 'ambiguous' ? 'Which is it?' : 'OSM stop'));
+    if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
+    const cands = Edits.decisions[s.id] ? [{id: Edits.decisions[s.id], dist: Math.round(m([o.lon, o.lat], [s.lon, s.lat])), how: 'chosen'}] : s.match.osm;
+    for (const c of cands) if (D.osm_stops[c.id]) d.append(osmStopBox(s, D.osm_stops[c.id], c, st === 'ambiguous'));
+    if (st === 'ambiguous') d.append(el('div', {class: 'btns'}, el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = 'none'; Edits.save(); render(); draw(); }}, 'None of these — it\'s missing')));
+    if (Edits.decisions[s.id]) d.append(el('div', {class: 'small muted'}, 'Your choice. ', el('a', {href: '#', onclick: e => { e.preventDefault(); delete Edits.decisions[s.id]; Edits.save(); render(); draw(); }}, 'undo')));
   }
-  const nearby = Object.values(D.osm_stops).filter(o => o.tags.public_transport !== 'stop_position' && m([o.lon, o.lat], [s.lon, s.lat]) < 150 && !(s.match && s.match.osm.some(c => c.id === o.id))).sort((a, b) => m([a.lon, a.lat], [s.lon, s.lat]) - m([b.lon, b.lat], [s.lon, s.lat]));
+  const nearby = Object.values(D.osm_stops).filter(x => x.tags.public_transport !== 'stop_position' && m([x.lon, x.lat], [s.lon, s.lat]) < 150 && !(s.match && s.match.osm.some(c => c.id === x.id))).sort((a, b) => m([a.lon, a.lat], [s.lon, s.lat]) - m([b.lon, b.lat], [s.lon, s.lat]));
   if (nearby.length) {
     d.append(el('h2', {style: 'margin-left:0'}, 'Other OSM stops within 150 m'));
-    d.append(el('ul', {class: 'plain small'}, ...nearby.slice(0, 6).map(o => el('li', {class: 'item'}, el('a', {href: osmLink(o.id), target: '_blank'}, o.tags.name || o.id), el('span', {class: 'muted'}, ` · ${Math.round(m([o.lon, o.lat], [s.lon, s.lat]))} m · ${['ref', 'route_ref', 'operator'].filter(k => o.tags[k]).map(k => k + '=' + o.tags[k]).join(' ')}`)))));
+    d.append(el('ul', {class: 'plain small'}, ...nearby.slice(0, 6).map(x => el('li', {class: 'item'}, el('a', {href: osmLink(x.id), target: '_blank'}, x.tags.name || x.id), el('span', {class: 'muted'}, ` · ${Math.round(m([x.lon, x.lat], [s.lon, s.lat]))} m · ${['ref', 'route_ref', 'operator'].filter(k => x.tags[k]).map(k => k + '=' + x.tags[k]).join(' ')}`),
+      st === 'ambiguous' || st === 'missing' ? el('a', {href: '#', style: 'margin-left:6px', onclick: e => { e.preventDefault(); Edits.decisions[s.id] = x.id; Edits.save(); render(); draw(); }}, 'this one') : null))));
   }
   P.append(d);
 }
+/** Tags GTFS is authoritative for: identity and service, not name or position. */
+function identityTags(s) {
+  const t = {};
+  for (const k of ['ref', 'gtfs:stop_id', 'gtfs:stop_code', 'route_ref']) if (s.proposed_tags[k]) t[k] = s.proposed_tags[k];
+  return t;
+}
+function osmStopBox(s, o, c, pickable) {
+  const box = el('div', {class: 'small box'});
+  const op = Edits.get('n' + osmNumId(o));
+  box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${c.dist} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'edited') : null));
+  box.append(el('div', {class: 'muted mono'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
+  const diff = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
+  if (diff && Object.keys(diff).length) {
+    const g = el('div', {class: 'diff'}, el('span', {class: 'hd'}, 'use'), el('span', {class: 'hd'}, 'key'), el('span', {class: 'hd'}, 'agency says'), el('span', {class: 'hd'}, 'OSM has'));
+    const checks = {};
+    for (const [k, v] of Object.entries(diff)) {
+      if (k === 'tagging') continue;
+      const isIdentity = ['ref', 'gtfs:stop_id', 'route_ref'].includes(k);
+      const cb = el('input', {type: 'checkbox', checked: isIdentity ? '' : null, title: isIdentity ? 'identity: the agency is the source' : 'the mapper may know better'});
+      checks[k] = cb;
+      g.append(cb, el('span', {class: 'k'}, k), el('span', {class: 'g'}, k === 'position' ? v.gtfs : (v.gtfs || '—')), el('span', {class: 'o'}, k === 'position' ? 'on the sign, probably' : (v.osm || '—')));
+    }
+    box.append(g);
+    if (diff.tagging) box.append(el('div', {class: 'muted'}, `tagging: OSM has ${diff.tagging.osm}; PTv2 wants ${diff.tagging.gtfs}`));
+    box.append(el('div', {class: 'btns'}, el('button', {class: 'b primary tiny', onclick: () => {
+      const tags = {}; let move = false;
+      for (const [k, cb] of Object.entries(checks)) { if (!cb.checked) continue; if (k === 'position') move = true; else tags[k] = diff[k].gtfs; }
+      if (diff.tagging && (o.tags.highway !== 'bus_stop' || o.tags.public_transport !== 'platform')) Object.assign(tags, {highway: 'bus_stop', public_transport: 'platform', bus: 'yes'});
+      if (!s.proposed_tags['gtfs:stop_id'] || true) tags['gtfs:stop_id'] = s.id;
+      Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
+      toast('Added to changes'); render(); draw();
+    }}, 'Apply ticked → changes'), el('span', {class: 'muted', style: 'align-self:center'}, 'gtfs:stop_id is always added')));
+  } else if (diff) box.append(el('div', {style: 'color:var(--ok)'}, 'Tags agree with the feed.'));
+  const row = el('div', {class: 'btns'});
+  if (pickable) row.append(el('button', {class: 'b primary tiny', onclick: () => { Edits.decisions[s.id] = o.id; Edits.save(); render(); draw(); }}, 'This one'));
+  row.append(editorButtons({lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}, {small: true, primaryLabel: 'RapiD'}));
+  box.append(row);
+  return box;
+}
+/** Drop a new node at the agency's position, draggable until the reviewer is happy. */
+function placeNewStop(s) {
+  const key = Edits.createNode(s.lat, s.lon, s.proposed_tags, `${s.ref} ${s.name}: new stop`);
+  const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat([s.lon, s.lat]).addTo(map);
+  mk.on('dragend', () => { const ll = mk.getLngLat(); const op = Edits.get(key); if (op) { op.lat = ll.lat; op.lon = ll.lng; Edits.save(); } });
+  S.placing = mk;
+  toast('Node added at the agency\'s position. Drag the marker onto the sign (imagery), then it\'s in Changes.', 6000);
+  render(); draw();
+}
 
-// ---------- panel: OSM-only stops ----------
+// ---------- OSM-only stops ----------
 function renderExtra(P) {
-  P.append(el('div', {class: 'about'}, el('p', {}, `${D.extra_stops.length} bus stops in OSM within 400 m of this network that no GTFS stop claims: another operator's, moved, or gone. Click to look.`)));
+  P.append(el('div', {class: 'hint'}, `${D.extra_stops.length} bus stops in OSM within 400 m of this network that no feed stop claims: another operator's, moved, or gone. Nothing here is deleted by flagstop; look, and decide in RapiD.`));
   const nearestGtfs = o => { let b = null, bd = 1e9; for (const s of Object.values(D.stops)) { const d = m([o.lon, o.lat], [s.lon, s.lat]); if (d < bd) { bd = d; b = s; } } return [b, bd]; };
   const rows = D.extra_stops.map(id => D.osm_stops[id]).filter(Boolean).map(o => ({o, ng: nearestGtfs(o)})).sort((a, b) => a.ng[1] - b.ng[1]);
   for (const {o, ng} of rows) {
@@ -403,21 +580,87 @@ function renderExtra(P) {
   }
 }
 
+// ---------- changes ----------
+function renderChanges(P) {
+  const ops = Object.entries(Edits.ops);
+  const user = Edits.auth.user();
+  const d = el('div', {class: 'detail'});
+  d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} change${ops.length > 1 ? 's' : ''} waiting` : 'No changes yet'));
+  d.append(el('div', {class: 'hint', style: 'padding-left:0'}, 'Everything you decided, as one changeset. Review each line; remove what you don\'t want. Upload sends it to OSM under your account. Or take it to JOSM as osmChange, or Level0 as text.'));
+  for (const [key, op] of ops) {
+    const box = el('div', {class: 'small box'});
+    const label = op.kind === 'create' ? 'new ' + op.type : op.kind === 'delete' ? 'delete ' + op.type + ' ' + op.id : `${op.type} ${op.id}`;
+    box.append(el('div', {}, el('b', {}, label), ' ', el('span', {class: 'muted'}, op.note || ''), el('button', {class: 'b tiny', style: 'float:right', onclick: () => { Edits.remove(key); render(); draw(); }}, 'remove')));
+    if (op.kind === 'create') {
+      box.append(el('div', {class: 'mono muted'}, Object.entries(op.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
+      if (op.type === 'relation') box.append(el('div', {class: 'muted'}, `${op.members.length} members`));
+      if (op.type === 'node') box.append(el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); map.flyTo({center: [op.lon, op.lat], zoom: 18}); }}, `${op.lat.toFixed(5)}, ${op.lon.toFixed(5)}`));
+    } else if (op.kind === 'delete') {
+      box.append(el('div', {class: 'mono muted'}, (op.tags.name || '') + ' ' + (op.tags.ref || '')));
+    } else {
+      const g = el('div', {class: 'diff', style: 'grid-template-columns:max-content 1fr 1fr'});
+      for (const x of Edits.diff(op)) g.append(el('span', {class: 'k'}, x.k), el('span', {class: 'o'}, x.before ?? '—'), el('span', {class: 'g'}, x.after ?? '(removed)'));
+      box.append(g);
+    }
+    d.append(box);
+  }
+  if (ops.length) {
+    const comment = el('input', {placeholder: 'changeset comment', value: S.comment || `${D.agency.agency_name}: bus stops and routes from the agency's GTFS, reviewed`, style: 'width:100%', oninput: e => S.comment = e.target.value});
+    d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment);
+    const status = el('div', {class: 'small muted', style: 'margin:6px 0'});
+    const btns = el('div', {class: 'btns'});
+    if (user) {
+      btns.append(el('button', {class: 'b primary', onclick: async () => {
+        if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
+        try {
+          const id = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
+          status.innerHTML = `Uploaded: <a href="https://www.openstreetmap.org/changeset/${id}" target="_blank">changeset ${id}</a>. Re-run tool/review.py to see the map with your changes.`;
+          render();
+        } catch (e) {
+          status.textContent = '';
+          if (e.conflicts) { status.append(el('div', {style: 'color:var(--miss)'}, 'Not uploaded — these changed on OSM since flagstop looked:'), el('ul', {}, ...e.conflicts.map(c => el('li', {}, `${c.key}: ${c.why}`))), el('div', {}, 'Remove those lines or refresh the OSM data (tool/review.py --refresh) and decide again.')); }
+          else status.textContent = 'Upload failed: ' + e.message;
+        }
+      }}, `Upload to OSM as ${user.display_name}`));
+      btns.append(el('button', {class: 'b', onclick: () => { Edits.auth.signOut(); render(); }}, 'sign out'));
+    } else {
+      btns.append(el('button', {class: 'b primary', onclick: () => Edits.auth.signIn().catch(e => toast(e.message))}, 'Sign in to OSM to upload'));
+    }
+    btns.append(el('button', {class: 'b', onclick: () => download('flagstop.osc', Edits.osc(), 'application/xml')}, 'Download .osc (JOSM)'));
+    btns.append(el('button', {class: 'b', onclick: () => { navigator.clipboard.writeText(Edits.level0()).then(() => toast('Level0 text copied — paste at level0.osmz.ru')); }}, 'Copy Level0 text'));
+    btns.append(el('button', {class: 'b', onclick: () => { if (confirm('Discard all changes?')) { Edits.clear(); render(); draw(); } }}, 'discard all'));
+    d.append(btns, status);
+  }
+  // OAuth setup
+  const cid = Edits.auth.clientId();
+  d.append(el('details', {class: 'small', open: (!cid && ops.length) ? '' : null}, el('summary', {}, user ? `Signed in as ${user.display_name}` : 'Set up upload (once)'),
+    el('p', {}, 'Uploading uses OSM\'s own login (OAuth 2). Register flagstop as an application on your account: ', el('a', {href: 'https://www.openstreetmap.org/oauth2/applications/new', target: '_blank'}, 'osm.org → OAuth 2 applications → Register'), '. Name: flagstop. Redirect URI: ', el('code', {}, Edits.auth.redirect()), '. Untick "Confidential application". Permissions: read user preferences, modify the map. Paste the client ID here:'),
+    el('div', {class: 'btns'}, el('input', {value: cid, placeholder: 'client id', style: 'flex:1', onchange: e => { Edits.auth.setClientId(e.target.value); toast('saved'); }}))));
+  P.append(d);
+}
+function download(name, text, type) {
+  const a = el('a', {href: URL.createObjectURL(new Blob([text], {type})), download: name}); document.body.append(a); a.click(); a.remove();
+}
+
 function renderAbout(P) {
   const f = D.feed;
   P.append(el('div', {class: 'about'},
     el('p', {}, el('b', {}, D.agency.agency_name), el('br'), `feed ${f.file} · version "${f.feed_version || '?'}" · ${f.feed_start_date || ''}–${f.feed_end_date || ''}`, el('br'), `OSM data fetched ${D.osm_fetched} · review built ${D.generated}`),
-    el('p', {}, 'The ', el('span', {style: 'color:var(--shape)'}, 'dashed orange line'), ' is the agency\'s drawn shape. The ', el('span', {style: 'color:var(--routed)'}, 'blue line'), ' is where a bus can drive on OSM\'s roads while hugging that shape (oneway, access and bus/psv tags honoured). Where they part, something is wrong on one side: a road missing or cut in OSM, a oneway the wrong way, or a sloppy shape. ', el('span', {style: 'color:var(--rel)'}, 'Purple'), ' is what OSM\'s route relation currently contains.'),
-    el('p', {}, el('b', {}, 'JOSM'), ': enable Remote Control in preferences. "Open in JOSM" loads and zooms; "Load proposed relation" downloads the ways and platforms and imports a new relation built from them into the current layer. Compare it with the existing relation (if any), fix, validate, upload. Re-route via a point when the proposed path takes a wrong turn; the imported relation then follows your vias (needs ', el('code', {}, 'tool/serve.py'), ').'),
-    el('p', {}, el('b', {}, 'Stops'), ': matched by gtfs:stop_id/ref, then by distance and name. "Apply GTFS tags" adds ref, gtfs:stop_id, route_ref and description to the matched node in JOSM; the name is left to you, since the agency\'s name is often an address and OSM\'s a place.'),
-    el('p', {}, el('b', {}, 'Before uploading many changes'), ', read ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Import/Guidelines', target: '_blank'}, 'Import/Guidelines'), ' and ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Automated_Edits_code_of_conduct', target: '_blank'}, 'the automated-edits code of conduct'), '. Reviewing route by route and uploading what you\'ve checked is mapping; uploading all of it unread is an import, and needs the licence checked and the community told first.')));
+    el('p', {}, el('b', {}, 'What the agency is good for.'), ' Which stops exist, their codes, which routes call and in what order. What it is rough on: positions (10–30 m is normal — the OSM node on the sign is usually better), names (often an address), and shapes drawn by hand. flagstop treats identity as the agency\'s and everything else as your call.'),
+    el('p', {}, 'The ', el('span', {style: 'color:var(--shape)'}, 'dashed orange line'), ' is the agency\'s drawn shape. The ', el('span', {style: 'color:var(--routed)'}, 'blue line'), ' is where a bus can drive on OSM\'s roads while hugging that shape (oneway, access and bus/psv tags honoured). Where they part, something is wrong on one side: a road missing or cut in OSM, a oneway the wrong way, or a sloppy shape. ', el('span', {style: 'color:var(--rel)'}, 'Purple'), ' is what OSM\'s route relation currently contains. Rings are agency stop positions, dots are OSM nodes.'),
+    el('p', {}, el('b', {}, 'Editing.'), ' Stop and relation decisions go into Changes and leave as one changeset (your OSM login), an osmChange file for JOSM, or Level0 text. Way tags (oneway, access) can be edited from a divergence. Geometry — drawing a road, splitting a way, moving things by eye — is RapiD\'s job: every "Open in RapiD" carries the agency line as an overlay and pre-fills the changeset comment.'),
+    el('p', {}, el('b', {}, 'Detours.'), ' Map the regular route. A detour of days or weeks isn\'t mapped; OSM can\'t keep up and the churn is worse than the lag. A long one (months) is, with a note=* on the relation saying it\'s a diversion, reverted afterwards. Stops named Temp/Detour and itineraries run only by a short-dated service are marked temporary here and left out of proposals.'),
+    el('p', {}, el('b', {}, 'Before uploading much'), ', read ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Import/Guidelines', target: '_blank'}, 'Import/Guidelines'), ' and ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Automated_Edits_code_of_conduct', target: '_blank'}, 'the automated-edits code of conduct'), '. Reviewing route by route and uploading what you\'ve checked is mapping; uploading all of it unread is an import, and needs the licence checked and the community told first.')));
 }
 
 // ---------- boot ----------
 document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; if (S.tab !== 'routes') { S.pattern = null; S.vias = []; S.routed = null; } if (S.tab !== 'stops') S.stop = null; render(); draw(); });
-fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
+  Edits.load(d.agency.agency_name);
+  Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; });
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.slice(0, 10)}`;
+  try { if (await Edits.auth.complete()) { S.tab = 'changes'; toast('Signed in to OSM'); } } catch (e) { toast('Sign-in failed: ' + e.message, 8000); }
   render();
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }
 }).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });

@@ -24,8 +24,7 @@
     <member type="node" ref="11504801858" role="platform"/>
     <member type="node" ref="11582265884" role="platform"/>
     <member type="way" ref="1238471154" role=""/>
-    <member type="way" ref="1238473089" role=""/>
-    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="458118479" role=""/>
     <member type="way" ref="707968346" role=""/>
     <member type="way" ref="182543769" role=""/>
     <member type="way" ref="1419412026" role=""/>
@@ -64,22 +63,22 @@
     <member type="way" ref="1051155472" role=""/>
     <member type="way" ref="1050687300" role=""/>
     <member type="way" ref="186842304" role=""/>
-    <member type="way" ref="186842311" role=""/>
-    <member type="way" ref="182543763" role=""/>
-    <member type="way" ref="1419412026" role=""/>
-    <member type="way" ref="182543769" role=""/>
+    <member type="way" ref="182543785" role=""/>
     <member type="way" ref="707968346" role=""/>
-    <member type="way" ref="458118479" role=""/>
+    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="1238473089" role=""/>
     <member type="way" ref="1238471154" role=""/>
     <tag k="type" v="route"/>
     <tag k="route" v="bus"/>
     <tag k="public_transport:version" v="2"/>
     <tag k="ref" v="5"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
-    <tag k="from" v="150 East 500 North - Route 5"/>
-    <tag k="to" v="150 East 500 North - Route 5"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="from" v="Intermodal Transit Center"/>
+    <tag k="to" v="Intermodal Transit Center"/>
     <tag k="gtfs:route_id" v="5718"/>
     <tag k="gtfs:shape_id" v="19738"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="name" v="Bus 5: North Logan, CV Hospital"/>
     <tag k="colour" v="#BA0A7A"/>
     <tag k="description" v="Route 05 — North Logan, CV Hospital"/>

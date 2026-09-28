@@ -37,6 +37,8 @@ def main():
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 
     match, extra = stopmatch.match(feed, osm_stops)
+    conv = stopmatch.conventions(feed, match, osm_stops)
+    print(f'local conventions: {conv}', file=sys.stderr)
     g = routing.Graph(roads_raw)
     print(f'road graph: {len(g.ways)} ways, {len(g.coord)} nodes', file=sys.stderr)
 
@@ -44,7 +46,7 @@ def main():
     for p in feed.patterns:
         traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
     # Which relation is which pattern.
-    best, chosen, scores = compare.pair(feed, traced, rels, rel_ways, coords)
+    best, chosen, scores = compare.pair(feed, traced, rels, rel_ways, coords, match)
     masters_by_ref = {}
     for m in masters.values():
         masters_by_ref.setdefault((m['tags'].get('ref') or '').strip(), []).append(m['id'])
@@ -52,21 +54,30 @@ def main():
     patterns_out = []
     for p in feed.patterns:
         tr = traced[p.id]
-        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, tr) for rid in best.get(p.id, []) if chosen.get(rid) == p.id]
+        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, tr, conv) for rid in best.get(p.id, []) if p.id in chosen.get(rid, [])]
         for au in audits:
             au['duplicate'] = len(audits) > 1
+            au['both_directions'] = len(chosen.get(au['id'], [])) > 1
+            au['also_covers'] = [x for x in chosen.get(au['id'], []) if x != p.id]
+        routed_breaks = compare.chain_breaks(tr['ways'], g.ways)
         patterns_out.append({
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
-            'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants,
+            'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
+            'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops,
+            'chain_ok': all(l['ok'] for l in tr['legs']) and not routed_breaks,
+            'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
+            'way_nodes': {w: g.ways[w].get('nodes', []) for w in tr['ways'] if w in g.ways},
             'shape': [[round(x, 6), round(y, 6)] for x, y in feed.shapes.get(p.shape_id, [])],
             'routed': {'ways': tr['ways'], 'geometry': [[round(x, 6), round(y, 6)] for x, y in tr['geometry']],
                        'legs': [{'from': l['from'], 'to': l['to'], 'ok': l['ok'], 'why': l['why'], 'ways': l['ways']} for l in tr['legs']],
-                       'divergences': [{k: (round_pts(v) if k in ('shape', 'path') else v) for k, v in d.items()} for d in tr['divergences']],
+                       'divergences': [{**{k: (round_pts(v) if k in ('shape', 'path') else v) for k, v in d.items()},
+                                        'way_tags': {w: g.ways[w].get('tags', {}) for w in d['ways'] if w in g.ways}} for d in tr['divergences']],
                        'score': tr['score']},
             'relations': audits,
-            'proposed_tags': compare.proposed_relation_tags(feed, p, match),
+            'proposed_tags': compare.proposed_relation_tags(feed, p, match, conv),
         })
-        write_relation_osm(os.path.join(a.out, f'rel-{safe(p.id)}.osm'), feed, p, tr, match, osm_stops)
+        write_relation_osm(os.path.join(a.out, f'rel-{safe(p.id)}.osm'), feed, p, tr, match, osm_stops, conv)
+        write_gpx(os.path.join(a.out, f'shape-{safe(p.id)}.gpx'), feed, p)
 
     routes_out = []
     for r in sorted(feed.routes.values(), key=lambda r: (len(r.short), r.short)):
@@ -74,15 +85,15 @@ def main():
         if not pids:
             continue
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
-                           'patterns': pids, 'masters': masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id)})
+                           'patterns': pids, 'masters': masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
     stops_out = {}
     for s in feed.stops.values():
         stops_out[s.id] = {'id': s.id, 'code': s.code, 'ref': s.ref, 'name': s.name, 'lat': s.lat, 'lon': s.lon, 'desc': s.desc, 'tts': s.tts, 'url': s.url,
                            'wheelchair': s.wheelchair, 'platform_code': s.platform_code, 'parent': s.parent, 'location_type': s.location_type,
-                           'routes': sorted(s.routes), 'trips': s.trips, 'match': match.get(s.id), 'proposed_tags': stopmatch.proposed_tags(feed, s)}
+                           'routes': sorted(s.routes), 'trips': s.trips, 'match': match.get(s.id), 'proposed_tags': stopmatch.proposed_tags(feed, s, conv)}
 
-    unpaired = [compare_lite(rels[rid], rel_ways, coords) for rid, pid in chosen.items() if pid is None]
+    unpaired = [compare_lite(rels[rid], rel_ways, coords) for rid, pids in chosen.items() if not pids]
 
     out = {
         'generated': datetime.datetime.now().isoformat(timespec='minutes'),
@@ -92,12 +103,22 @@ def main():
         'extra_stops': extra,
         'unpaired_relations': unpaired,
         'masters': [{'id': m['id'], 'tags': m['tags'], 'routes': [x['ref'] for x in m['members'] if x['type'] == 'relation']} for m in masters.values()],
+        'conventions': conv,
         'summary': summary(feed, match, extra, patterns_out, unpaired),
     }
     os.makedirs(a.out, exist_ok=True)
     json.dump(out, open(os.path.join(a.out, 'review.json'), 'w'), separators=(',', ':'))
     s = out['summary']
     print(f"stops: {s['stops']}  patterns: {s['patterns']}  → {os.path.join(a.out, 'review.json')}", file=sys.stderr)
+
+
+def write_gpx(path, feed, p):
+    """The agency's shape as a GPX track, for iD/RapiD's custom data layer."""
+    r = feed.routes[p.route_id]
+    pts = ''.join(f'      <trkpt lat="{lat:.6f}" lon="{lon:.6f}"/>\n' for lon, lat in feed.shapes.get(p.shape_id, []))
+    with open(path, 'w') as f:
+        f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="flagstop" xmlns="http://www.topografix.com/GPX/1/1">\n'
+                f'  <trk><name>{r.short} {p.headsign or p.direction_name}</name><desc>GTFS shape {p.shape_id}</desc><trkseg>\n{pts}    </trkseg></trk>\n</gpx>\n')
 
 
 def round_pts(pts):
@@ -119,6 +140,9 @@ def summary(feed, match, extra, patterns, unpaired):
     diffs = Counter(k for m in match.values() if m.get('diff') for k in m['diff'])
     pat = Counter()
     for p in patterns:
+        if p['temporary']:
+            pat['temporary'] += 1
+            continue
         if not p['relations']:
             pat['no relation'] += 1
         elif any(r['duplicate'] for r in p['relations']):
@@ -132,11 +156,11 @@ def summary(feed, match, extra, patterns, unpaired):
     return {'stops': dict(st), 'stop_diffs': dict(diffs), 'extra_osm_stops': len(extra), 'patterns': dict(pat), 'unpaired_relations': len(unpaired)}
 
 
-def write_relation_osm(path, feed, p, tr, match, osm_stops):
+def write_relation_osm(path, feed, p, tr, match, osm_stops, conv=None):
     """A PTv2 route relation for JOSM: platforms (existing OSM nodes where matched, new nodes otherwise)
     then the routed ways in order. Existing objects are referenced by id; JOSM fetches them when the
     page loads them first (remote control load_object), or on 'download incomplete members'."""
-    tags = compare.proposed_relation_tags(feed, p, match)
+    tags = compare.proposed_relation_tags(feed, p, match, conv)
     nid = -1
     nodes, members = [], []
     for sid in p.stops:
@@ -145,7 +169,7 @@ def write_relation_osm(path, feed, p, tr, match, osm_stops):
         if m and m['status'] == 'matched' and m['osm'] and m['osm'][0]['id'].startswith('n'):
             members.append(('node', int(m['osm'][0]['id'][1:]), 'platform'))
         else:
-            t = stopmatch.proposed_tags(feed, s)
+            t = stopmatch.proposed_tags(feed, s, conv)
             nodes.append(f'  <node id="{nid}" lat="{s.lat:.6f}" lon="{s.lon:.6f}" version="0">\n' + ''.join(f'    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>\n' for k, v in t.items()) + '  </node>\n')
             members.append(('node', nid, 'platform')); nid -= 1
     for w in tr['ways']:

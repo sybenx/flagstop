@@ -62,6 +62,11 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=WEB, **k)
 
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Cache-Control', 'no-cache')
+        super().end_headers()
+
     def log_message(self, fmt, *args):
         if '/api/' in (args[0] if args else ''):
             super().log_message(fmt, *args)

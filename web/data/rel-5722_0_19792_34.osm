@@ -8,7 +8,9 @@
     <tag k="ref" v="2050"/>
     <tag k="gtfs:stop_id" v="7573958"/>
     <tag k="gtfs:stop_code" v="2050"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="route_ref" v="G"/>
     <tag k="description" v="Intermodal Transit Center"/>
   </node>
@@ -20,7 +22,9 @@
     <tag k="ref" v="2059"/>
     <tag k="gtfs:stop_id" v="7606950"/>
     <tag k="gtfs:stop_code" v="2059"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="route_ref" v="G"/>
     <tag k="description" v="Fine Arts Building"/>
   </node>
@@ -32,7 +36,9 @@
     <tag k="ref" v="2060"/>
     <tag k="gtfs:stop_id" v="7606951"/>
     <tag k="gtfs:stop_code" v="2060"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="route_ref" v="G"/>
     <tag k="description" v="USU Family Life Building"/>
   </node>
@@ -44,7 +50,9 @@
     <tag k="ref" v="1243"/>
     <tag k="gtfs:stop_id" v="7547688"/>
     <tag k="gtfs:stop_code" v="1243"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="route_ref" v="B;G;12"/>
     <tag k="description" v="The Riverwoods"/>
   </node>
@@ -202,11 +210,13 @@
     <tag k="route" v="bus"/>
     <tag k="public_transport:version" v="2"/>
     <tag k="ref" v="G"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
-    <tag k="from" v="750 North Main St"/>
-    <tag k="to" v="750 North Main St"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="from" v="Smiths Marketplace"/>
+    <tag k="to" v="Smiths Marketplace"/>
     <tag k="gtfs:route_id" v="5722"/>
     <tag k="gtfs:shape_id" v="19792"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="name" v="Bus G: GREEN LOOP"/>
     <tag k="colour" v="#94CB49"/>
     <tag k="description" v="LOOP - Green — Green Loop - USU, Main St"/>

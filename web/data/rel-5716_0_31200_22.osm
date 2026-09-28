@@ -8,7 +8,9 @@
     <tag k="ref" v="6013"/>
     <tag k="gtfs:stop_id" v="12239355"/>
     <tag k="gtfs:stop_code" v="6013"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="route_ref" v="3"/>
     <tag k="description" v="Temp Stop"/>
   </node>
@@ -75,29 +77,23 @@
     <member type="way" ref="1419412030" role=""/>
     <member type="way" ref="738331121" role=""/>
     <member type="way" ref="182951684" role=""/>
-    <member type="way" ref="182953050" role=""/>
-    <member type="way" ref="182953056" role=""/>
-    <member type="way" ref="943699887" role=""/>
-    <member type="way" ref="1098119725" role=""/>
-    <member type="way" ref="944576293" role=""/>
-    <member type="way" ref="372145376" role=""/>
-    <member type="way" ref="738331122" role=""/>
-    <member type="way" ref="1238473087" role=""/>
-    <member type="way" ref="707968350" role=""/>
-    <member type="way" ref="1238473088" role=""/>
-    <member type="way" ref="1394211236" role=""/>
-    <member type="way" ref="1098119728" role=""/>
-    <member type="way" ref="1238473089" role=""/>
+    <member type="way" ref="1419412025" role=""/>
+    <member type="way" ref="1419412024" role=""/>
+    <member type="way" ref="182543771" role=""/>
+    <member type="way" ref="944576294" role=""/>
+    <member type="way" ref="707968346" role=""/>
     <member type="way" ref="182543776" role=""/>
     <tag k="type" v="route"/>
     <tag k="route" v="bus"/>
     <tag k="public_transport:version" v="2"/>
     <tag k="ref" v="3"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
-    <tag k="from" v="150 East 500 North - Route 3"/>
-    <tag k="to" v="150 East 500 North - Route 3"/>
+    <tag k="operator" v="Connect Public Transit"/>
+    <tag k="from" v="Intermodal Transit Center"/>
+    <tag k="to" v="Intermodal Transit Center"/>
     <tag k="gtfs:route_id" v="5716"/>
     <tag k="gtfs:shape_id" v="31200"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="name" v="Bus 3: Route 03"/>
     <tag k="colour" v="#FA0561"/>
     <tag k="description" v="Route 03 — Island, Wilson, Tabernacle"/>

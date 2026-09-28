@@ -74,11 +74,13 @@
     <tag k="route" v="bus"/>
     <tag k="public_transport:version" v="2"/>
     <tag k="ref" v="11"/>
-    <tag k="operator" v="CVTD Cache Valley Transit District"/>
+    <tag k="operator" v="Connect Public Transit"/>
     <tag k="from" v="3155 South 500 West"/>
-    <tag k="to" v="150 East 500 North - Route 11 &amp; 16"/>
+    <tag k="to" v="Intermodal Transit Center"/>
     <tag k="gtfs:route_id" v="5731"/>
     <tag k="gtfs:shape_id" v="31365"/>
+    <tag k="network" v="Connect Public Transit"/>
+    <tag k="network:wikidata" v="Q129798316"/>
     <tag k="name" v="Bus 11: Northbound"/>
     <tag k="colour" v="#066A40"/>
     <tag k="description" v="Route 11 — Nibley, SW Logan, DLD"/>

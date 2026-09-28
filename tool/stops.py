@@ -15,9 +15,12 @@ and OSM stops nobody claimed, inside the feed's footprint, are 'extra' (another 
 import math, re
 
 NEAR = 60      # m: a stop across the street is ~20-30 m away, so beyond this the name has to carry it
-CLOSE = 18     # m: this near, it is the same stop even with no name to go on
+CLOSE = 40     # m: this near and nobody else's, it is the same stop even with no name to go on
 FOOTPRINT = 400  # m from any GTFS stop: an OSM stop further out is not this agency's business
 REF_FAR = 300    # m: a matching ref further than this is a stale code, not the stop
+MOVED = 300      # m: nothing near, but a stop of the same name/ref this far away has probably moved
+FAR = 25         # m: closer than this, GTFS and OSM positions are the same stop placed by two hands
+TEMP = re.compile(r'\b(temp(orary)?|detour|closed)\b', re.I)
 
 
 def dist(lat1, lon1, lat2, lon2):
@@ -35,6 +38,16 @@ def words(x):
 
 def numbers(x):
     return set(re.findall(r'\d+', x or ''))
+
+
+def street(x):
+    """'649 North 200 West' -> 'north 200 west'; '781 S Main, Smithfield' -> 's main'. The address without its house number."""
+    x = re.sub(r'\(.*?\)', ' ', x or '').split(',')[0].split(' - ')[0]
+    x = re.sub(r"[^\w\s]", ' ', x.lower()).strip()
+    x = re.sub(r'^\d+\s+', '', x)
+    x = re.sub(r'\b(street|st|avenue|ave|drive|dr|road|rd|lane|ln|highway|hwy)\b', '', x)
+    x = re.sub(r'\b(north|n)\b', 'n', x); x = re.sub(r'\b(south|s)\b', 's', x); x = re.sub(r'\b(east|e)\b', 'e', x); x = re.sub(r'\b(west|w)\b', 'w', x)
+    return ' '.join(x.split())
 
 
 def alike(a, b):
@@ -119,14 +132,37 @@ def match(feed, osm_stops):
         cands = uniq
         if not cands:
             status = 'missing'
+        elif cands[0]['how'] == 'moved':
+            status = 'moved'
         elif len(cands) > 1 and cands[1]['score'] >= cands[0]['score'] - 0.12:
             status = 'ambiguous'
         else:
             status = 'matched'
-        results[s.id] = {'status': status, 'osm': cands[:4], 'diff': None, 'notes': notes}
+        results[s.id] = {'status': status, 'osm': cands[:4], 'diff': None, 'notes': notes, 'temporary': bool(TEMP.search(s.name) or TEMP.search(s.desc))}
         if status == 'matched':
             claimed.setdefault(cands[0]['id'], []).append(s.id)
             results[s.id]['diff'] = diff(feed, s, osm_stops[cands[0]['id']])
+
+    # Second pass: a stop with nothing near it, but an unclaimed OSM stop on the same street within MOVED
+    # metres (or with its ref), has probably been moved along the street.
+    for s in feed.stops.values():
+        r = results.get(s.id)
+        if not r or r['status'] != 'missing':
+            continue
+        cands = []
+        for d, o in near(s.lat, s.lon, MOVED):
+            if o['id'] in claimed or o['type'] != 'node':
+                continue
+            t = o['tags']
+            byref = bool(s.ref) and (t.get('ref') == s.ref or s.id in (t.get('gtfs:stop_id') or ''))
+            sim = alike(_gtfs_text(s), _osm_text(o))
+            same_street = street(s.name) and street(s.name) == street(t.get('name', ''))
+            if byref or sim >= 0.5 or same_street:
+                cands.append({'id': o['id'], 'dist': round(d), 'score': round(0.4 * sim + (0.5 if byref else 0) + (0.3 if same_street else 0) - d / 2000, 3), 'how': 'moved'})
+        if cands:
+            cands.sort(key=lambda c: -c['score'])
+            r['status'] = 'moved'; r['osm'] = cands[:3]
+            r['diff'] = diff(feed, s, osm_stops[cands[0]['id']])
 
     # An OSM stop claimed twice is really ambiguous for both.
     for oid, sids in claimed.items():
@@ -151,14 +187,33 @@ def match(feed, osm_stops):
     return results, extra
 
 
-def proposed_tags(feed, s):
+def conventions(feed, results, osm_stops):
+    """What the local mappers already write for operator/network on this agency's stops: the value most
+    of the matched stops carry, if a clear majority does. Proposals follow the mappers, not the feed."""
+    from collections import Counter
+    out = {}
+    matched = [osm_stops[r['osm'][0]['id']] for r in results.values() if r['status'] == 'matched' and r['osm']]
+    for k in ('operator', 'network', 'network:wikidata', 'operator:wikidata'):
+        c = Counter(o['tags'][k] for o in matched if o['tags'].get(k))
+        if c:
+            v, n = c.most_common(1)[0]
+            if n >= 0.4 * len(matched) and n >= 5:
+                out[k] = v
+    return out
+
+
+def proposed_tags(feed, s, conv=None):
     """The tags a fresh platform node for this GTFS stop would carry (the GTFS tagging scheme, 2024)."""
+    conv = conv or {}
     agency = feed.agency.get('agency_name', '')
     t = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes',
          'name': s.name, 'ref': s.ref, 'gtfs:stop_id': s.id}
     if s.code:
         t['gtfs:stop_code'] = s.code
-    if agency:
+    for k in ('operator', 'network', 'network:wikidata', 'operator:wikidata'):
+        if conv.get(k):
+            t[k] = conv[k]
+    if 'operator' not in t and agency:
         t['operator'] = agency
     routes = sorted({feed.routes[r].short for r in s.routes if r in feed.routes}, key=lambda x: (len(x), x))
     if routes:
@@ -191,6 +246,17 @@ def diff(feed, s, o):
         out['wheelchair'] = {'gtfs': w, 'osm': t.get('wheelchair', '')}
     if s.desc and (t.get('description') or '') != s.desc:
         out['description'] = {'gtfs': s.desc, 'osm': t.get('description', '')}
+    d = dist(s.lat, s.lon, o['lat'], o['lon'])
+    if d > FAR:
+        out['position'] = {'gtfs': f'{round(d)} m {bearing(o["lat"], o["lon"], s.lat, s.lon)} of the OSM node', 'osm': 'kept'}
     if t.get('highway') != 'bus_stop' or t.get('public_transport') != 'platform':
         out['tagging'] = {'gtfs': 'highway=bus_stop + public_transport=platform', 'osm': ' '.join(f'{k}={t[k]}' for k in ('highway', 'public_transport', 'bus', 'amenity') if k in t)}
     return out
+
+
+def bearing(lat1, lon1, lat2, lon2):
+    """Compass word from point 1 to point 2."""
+    dy = (lat2 - lat1) * 110540
+    dx = (lon2 - lon1) * 111320 * math.cos(math.radians(lat1))
+    a = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+    return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][int((a + 22.5) // 45) % 8]

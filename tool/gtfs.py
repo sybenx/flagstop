@@ -7,7 +7,7 @@ trip patterns (an ordered stop sequence with the shape drawn for it).
     feed.patterns                  -> [Pattern], one per (route, direction, shape, stop sequence)
     feed.shapes[shape_id]          -> [(lon, lat), ...]
 """
-import csv, io, zipfile
+import csv, datetime, io, zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -60,6 +60,9 @@ class Pattern:
     service_ids: set
     direction_name: str = ''    # directions.txt, if the feed has it
     variants: int = 0           # shorter runs folded into this one
+    temporary: bool = False     # only run by a short-dated service: a detour or a special
+    alt_shapes: list = field(default_factory=list)   # shapes of runs folded into this pattern
+    alt_stops: list = field(default_factory=list)    # stops only those runs call at (a different terminal bay)
 
 
 @dataclass
@@ -162,8 +165,64 @@ def load(path):
         by_shape[(rid, d, sid)].append(p)
         patterns.append(p)
     patterns.sort(key=lambda p: (-p.trips, p.route_id, p.direction))
+    # Two patterns of one route that differ by a stop or two at the ends (the last run of the day parks
+    # at another bay) and whose shapes cover each other are one itinerary for the map's purposes.
+    kept = []
+    for p in patterns:
+        parent = None
+        for q in kept:
+            if q.route_id != p.route_id:
+                continue
+            common = len(set(p.stops) & set(q.stops))
+            if common >= max(len(p.stops), len(q.stops)) - 2 and _mutual_cover(shapes.get(p.shape_id), shapes.get(q.shape_id)) >= 0.9:
+                parent = q; break
+        if parent:
+            parent.trips += p.trips; parent.service_ids |= p.service_ids; parent.variants += 1 + p.variants
+            parent.alt_shapes.append(p.shape_id)
+            parent.alt_stops.extend(x for x in p.stops if x not in parent.stops)
+        else:
+            kept.append(p)
+    patterns = kept
+    # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
+    def days(sid):
+        c = calendar.get(sid)
+        if not c:
+            return 9999
+        try:
+            a, b = (datetime.date(int(x[:4]), int(x[4:6]), int(x[6:8])) for x in (c['start_date'], c['end_date']))
+            return (b - a).days
+        except (KeyError, ValueError):
+            return 9999
+    for p in patterns:
+        p.temporary = all(days(sid) < 45 for sid in p.service_ids) if p.service_ids else False
 
     return Feed(agency=agency, info=info, stops=stops, routes=routes, patterns=patterns, shapes=dict(shapes), calendar=calendar)
+
+
+def _mutual_cover(a, b, tol=30.0, step=25.0):
+    """How much two polylines overlap, 0..1 (the smaller of each covering the other)."""
+    if not a or not b or len(a) < 2 or len(b) < 2:
+        return 0.0
+    import math
+
+    def near(p, line):
+        best = 1e9
+        for i in range(len(line) - 1):
+            (ax, ay), (bx, by) = line[i], line[i + 1]
+            kx = 111320 * math.cos(math.radians(ay)); ky = 110540
+            dx, dy = (bx - ax) * kx, (by - ay) * ky
+            L2 = dx * dx + dy * dy
+            t = 0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - ax) * kx * dx + (p[1] - ay) * ky * dy) / L2))
+            qx, qy = ax + (bx - ax) * t, ay + (by - ay) * t
+            d = math.hypot((p[0] - qx) * kx, (p[1] - qy) * ky)
+            if d < best:
+                best = d
+        return best
+
+    def frac(x, y):
+        pts = x[::max(1, len(x) // 150)]
+        return sum(1 for p in pts if near(p, y) <= tol) / len(pts)
+    return min(frac(a, b), frac(b, a))
 
 
 def bbox(feed, margin=0.01):

@@ -55,7 +55,7 @@ def _ref_of(tags):
     return (tags.get('ref') or '').strip()
 
 
-def pair(feed, patterns_traced, rels, ways, coords):
+def pair(feed, patterns_traced, rels, ways, coords, stop_match):
     """-> {pattern_id: [relation ids best-first]}, {relation id: pattern_id or None}, scores"""
     shapes = {p.id: Polyline(feed.shapes[p.shape_id]) for p in feed.patterns if p.shape_id in feed.shapes and len(feed.shapes[p.shape_id]) > 1}
     geoms = {rid: relation_geometry(r, ways, coords) for rid, r in rels.items()}
@@ -70,27 +70,107 @@ def pair(feed, patterns_traced, rels, ways, coords):
                 continue  # 'ref' disagrees outright: not this route
             a, b = cover(shapes[p.id], geoms[rid])
             if a > 0.3:
-                scores[(rid, p.id)] = (round(a, 3), round(b, 3))
+                # Which way do the relation's ways run along this shape? Same direction counts for it.
+                d = _direction_agreement(shapes[p.id], geoms[rid])
+                # And do its platform members, in order, follow this pattern's stops?
+                o = _order_agreement(p, r, stop_match)
+                scores[(rid, p.id)] = (round(a, 3), round(b, 3), round(d, 2), round(o, 2))
     # Direction: which pattern's stop order the relation's platforms follow.
+    total = lambda sc: sc[0] + sc[1] + 0.3 * sc[2] + 0.3 * sc[3]
     best_for_pattern, chosen = {}, {}
-    for (rid, pid), (a, b) in sorted(scores.items(), key=lambda kv: -(kv[1][0] + kv[1][1])):
+    for (rid, pid), sc in sorted(scores.items(), key=lambda kv: -total(kv[1])):
         best_for_pattern.setdefault(pid, []).append(rid)
+    # A relation belongs to the pattern it covers best — and to a second pattern of the same route as well
+    # when it covers that one nearly as fully: one relation drawn for both directions.
     for rid in rels:
-        cands = [(pid, s) for (r, pid), s in scores.items() if r == rid]
-        chosen[rid] = max(cands, key=lambda c: c[1][0] + c[1][1])[0] if cands else None
+        cands = sorted([(pid, s) for (r, pid), s in scores.items() if r == rid], key=lambda c: -total(c[1]))
+        if not cands:
+            chosen[rid] = []
+            continue
+        top = cands[0]
+        both = [top[0]]
+        for pid, sc in cands[1:]:
+            # The same relation is also the other direction's when it covers that shape too, and either
+            # runs both ways (no direction signal) or holds that direction's stops as members.
+            if (sc[0] >= 0.85 and _route(feed, pid) == _route(feed, top[0]) and _direction(feed, pid) != _direction(feed, top[0])
+                    and (abs(sc[2]) < 0.5 or sc[3] >= 0.5)):
+                both.append(pid)
+        chosen[rid] = both
     return best_for_pattern, chosen, scores
 
 
-def audit(feed, p, rel, ways, coords, stop_match, traced):
+def _direction_agreement(shape, pieces):
+    """-1..1: do the relation's member ways, taken in order, run from the shape's start to its end?"""
+    if len(pieces) < 2:
+        return 0.0
+    pos = []
+    for _, pts in pieces:
+        mid = pts[len(pts) // 2]
+        d, _, m = shape.nearest(mid)
+        if d <= DIVERGE:
+            pos.append(m)
+    if len(pos) < 4:
+        return 0.0
+    up = sum(1 for i in range(len(pos) - 1) if pos[i + 1] > pos[i])
+    down = sum(1 for i in range(len(pos) - 1) if pos[i + 1] < pos[i])
+    return (up - down) / max(1, up + down)
+
+
+def _order_agreement(p, rel, stop_match):
+    """0..1: share of the relation's platform members that are this pattern's stops, in its order."""
+    have = relation_platforms(rel)
+    if not have:
+        return 0.0
+    idx = {}
+    for i, sid in enumerate(p.stops):
+        mm = stop_match.get(sid)
+        if mm and mm['status'] == 'matched' and mm['osm']:
+            idx[mm['osm'][0]['id']] = i
+    seq = [idx[o] for o in have if o in idx]
+    if not seq:
+        return 0.0
+    inorder = sum(1 for i in range(len(seq) - 1) if seq[i + 1] > seq[i])
+    return (len(seq) / len(have)) * ((inorder + 1) / len(seq))
+
+
+def _route(feed, pid):
+    return next(p.route_id for p in feed.patterns if p.id == pid)
+
+
+def _direction(feed, pid):
+    return next(p.direction for p in feed.patterns if p.id == pid)
+
+
+def chain_breaks(way_ids, ways):
+    """Places where consecutive member ways don't touch. -> [(index, way a, way b)]"""
+    out = []
+    prev = None
+    for i, w in enumerate(way_ids):
+        nodes = ways.get(w, {}).get('nodes', [])
+        if not nodes:
+            prev = None
+            continue
+        ends = {nodes[0], nodes[-1]}
+        if prev is not None and not (ends & prev['ends']) and not (set(nodes) & prev['ends']) and not (ends & prev['all']):
+            out.append((i, prev['id'], w))
+        prev = {'id': w, 'ends': ends, 'all': set(nodes)}
+    return out
+
+
+def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
     """Everything about one relation that a reviewer should know, against its GTFS pattern."""
     t = rel['tags']
     route = feed.routes[p.route_id]
     issues = []
     # --- tags
-    want = proposed_relation_tags(feed, p, stop_match)
-    for k in ('type', 'route', 'ref', 'public_transport:version', 'network', 'operator', 'from', 'to', 'gtfs:route_id', 'gtfs:shape_id'):
+    want = proposed_relation_tags(feed, p, stop_match, conv)
+    # Structural tags must agree; free-text ones (name, from, to, operator, network) only need to exist.
+    for k in ('type', 'route', 'ref', 'public_transport:version', 'gtfs:route_id', 'gtfs:shape_id'):
         if k in want and t.get(k) != want[k]:
             issues.append({'kind': 'tag', 'key': k, 'osm': t.get(k, ''), 'gtfs': want[k]})
+    for k in ('network', 'operator', 'from', 'to', 'name'):
+        if k in want and not t.get(k):
+            issues.append({'kind': 'tag', 'key': k, 'osm': '', 'gtfs': want[k]})
     # --- stops
     have = relation_platforms(rel)
     wanted = []
@@ -118,26 +198,42 @@ def audit(feed, p, rel, ways, coords, stop_match, traced):
     rel_ways = relation_way_ids(rel)
     routed = traced['ways'] if traced else []
     missing_ways = [w for w in routed if w not in set(rel_ways)]
+    breaks = chain_breaks(rel_ways, ways)
+    # Stops on the sibling pattern (the other direction) explain 'extra' members of a two-direction relation.
+    sibling_stops = set()
+    for q in feed.patterns:
+        if q.route_id == p.route_id and q.id != p.id:
+            for sid in q.stops:
+                mm = stop_match.get(sid)
+                if mm and mm['status'] == 'matched' and mm['osm']:
+                    sibling_stops.add(mm['osm'][0]['id'])
+    extra_other_dir = [oid for oid in extra if oid in sibling_stops]
     a, b = cover(shape, relation_geometry(rel, ways, coords)) if shape else (0, 0)
     return {
         'id': rel['id'], 'name': t.get('name', ''), 'ref': t.get('ref', ''), 'tags': t, 'version': rel.get('version'), 'timestamp': rel.get('timestamp'), 'user': rel.get('user'),
         'cover': {'shape_covered': round(a, 3), 'ways_on_shape': round(b, 3)},
         'tag_issues': issues,
         'stops': {'in_relation': len(have), 'wanted': len([w for w in wanted if w]), 'missing': [{'i': i, 'stop': sid} for i, sid in missing],
-                  'extra': extra, 'unmatched': [{'i': i, 'stop': sid} for i, sid in unmatched], 'out_of_order': out_of_order},
-        'ways': {'in_relation': len(rel_ways), 'off_shape': off_ways, 'routed_not_in_relation': missing_ways, 'ids': rel_ways},
+                  'extra': extra, 'extra_other_direction': extra_other_dir, 'unmatched': [{'i': i, 'stop': sid} for i, sid in unmatched], 'out_of_order': out_of_order},
+        'ways': {'in_relation': len(rel_ways), 'off_shape': off_ways, 'routed_not_in_relation': missing_ways, 'ids': rel_ways,
+                 'chain_breaks': [{'i': i, 'a': a, 'b': b, 'lon': coords[ways[b]['nodes'][0]][0], 'lat': coords[ways[b]['nodes'][0]][1]} for i, a, b in breaks if ways[b]['nodes'] and ways[b]['nodes'][0] in coords]},
+        'members': [{'type': m['type'], 'ref': m['ref'], 'role': m['role']} for m in rel['members']],
         'geometry': [pts for _, pts in relation_geometry(rel, ways, coords)],
     }
 
 
-def proposed_relation_tags(feed, p, stop_match):
+def proposed_relation_tags(feed, p, stop_match, conv=None):
+    conv = conv or {}
     route = feed.routes[p.route_id]
     agency = feed.agency.get('agency_name', '')
     first, last = feed.stops[p.stops[0]], feed.stops[p.stops[-1]]
     t = {'type': 'route', 'route': {'0': 'tram', '1': 'subway', '2': 'train', '3': 'bus', '11': 'trolleybus'}.get(route.type, 'bus'),
-         'public_transport:version': '2', 'ref': route.short, 'operator': agency,
-         'from': first.name, 'to': last.name,
+         'public_transport:version': '2', 'ref': route.short, 'operator': conv.get('operator') or agency,
+         'from': first.desc or first.name, 'to': last.desc or last.name,
          'gtfs:route_id': p.route_id, 'gtfs:shape_id': p.shape_id}
+    for k in ('network', 'network:wikidata', 'operator:wikidata'):
+        if conv.get(k):
+            t[k] = conv[k]
     name = f"{'Bus' if t['route'] == 'bus' else t['route'].title()} {route.short}"
     if p.headsign:
         name += f': {p.headsign}'
@@ -155,10 +251,14 @@ def proposed_relation_tags(feed, p, stop_match):
     return t
 
 
-def proposed_master_tags(feed, route_id):
+def proposed_master_tags(feed, route_id, conv=None):
+    conv = conv or {}
     route = feed.routes[route_id]
     t = {'type': 'route_master', 'route_master': 'bus', 'ref': route.short, 'name': f'Bus {route.short}' + (f': {route.long}' if route.long else ''),
-         'operator': feed.agency.get('agency_name', ''), 'gtfs:route_id': route_id}
+         'operator': conv.get('operator') or feed.agency.get('agency_name', ''), 'gtfs:route_id': route_id}
+    for k in ('network', 'network:wikidata'):
+        if conv.get(k):
+            t[k] = conv[k]
     if route.color:
         t['colour'] = '#' + route.color.upper()
     return t
