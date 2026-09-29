@@ -142,19 +142,54 @@ def _direction(feed, pid):
 
 
 def chain_breaks(way_ids, ways):
-    """Places where consecutive member ways don't touch. -> [(index, way a, way b)]"""
+    """Places where the member ways don't run end to end, walked in travel direction, as PTv2 wants.
+    -> [{'i', 'a', 'b', 'kind', 'node', 'split'}]
+    kind 'gap': a and b share no node. kind 'split': they meet at `node`, but partway along way `split`,
+    which has to be split there (JOSM, RapiD) before the relation is valid. A dead-end spur driven in and
+    out again shows up here too: the way after it touches the spur's entry, not its far end.
+    Closed ways (roundabouts) may be entered and left anywhere."""
     out = []
-    prev = None
+    prev, at = None, None   # previous way id, and the node the vehicle stands on at its far end
     for i, w in enumerate(way_ids):
         nodes = ways.get(w, {}).get('nodes', [])
         if not nodes:
-            prev = None
+            prev, at = None, None
             continue
-        ends = {nodes[0], nodes[-1]}
-        if prev is not None and not (ends & prev['ends']) and not (set(nodes) & prev['ends']) and not (ends & prev['all']):
-            out.append((i, prev['id'], w))
-        prev = {'id': w, 'ends': ends, 'all': set(nodes)}
-    return out
+        closed = nodes[0] == nodes[-1]
+        if prev is None:
+            at = None
+        elif closed or (at is None and set(nodes) & set(ways[prev]['nodes'])):
+            pass
+        elif at in (nodes[0], nodes[-1]):
+            pass
+        elif at is not None and at in nodes:
+            out.append({'i': i, 'a': prev, 'b': w, 'kind': 'split', 'node': at, 'split': w})
+        else:
+            shared = [n for n in nodes if n in set(ways[prev]['nodes'])]
+            if shared:
+                n = shared[0]
+                out.append({'i': i, 'a': prev, 'b': w, 'kind': 'split', 'node': n, 'split': prev if n in (nodes[0], nodes[-1]) else w})
+            else:
+                out.append({'i': i, 'a': prev, 'b': w, 'kind': 'gap', 'node': nodes[0], 'split': None})
+        # Leave by the far end from where we came in; with no entry known, by the end that meets the next way.
+        if closed:
+            at = None
+        elif at == nodes[0]:
+            at = nodes[-1]
+        elif at == nodes[-1]:
+            at = nodes[0]
+        else:
+            nxt = ways.get(way_ids[i + 1], {}).get('nodes', []) if i + 1 < len(way_ids) else []
+            at = nodes[0] if nodes[0] in set(nxt) and nodes[-1] not in set(nxt) else nodes[-1]
+        prev = w
+    # a, b, a: into b and straight back out. A bus doesn't do that; usually a stop was placed on the wrong way.
+    for i in range(1, len(way_ids) - 1):
+        a, b = way_ids[i - 1], way_ids[i]
+        if a == way_ids[i + 1] and a != b and ways.get(b, {}).get('nodes') and ways[b]['nodes'][0] != ways[b]['nodes'][-1]:
+            shared = [n for n in ways[b]['nodes'] if n in set(ways.get(a, {}).get('nodes', []))]
+            out = [x for x in out if x['i'] not in (i, i + 1)]
+            out.append({'i': i, 'a': a, 'b': b, 'kind': 'spur', 'node': shared[0] if shared else ways[b]['nodes'][0], 'split': None})
+    return sorted(out, key=lambda x: x['i'])
 
 
 def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
@@ -182,8 +217,15 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
     unmatched = [(i, sid) for i, (sid, oid) in enumerate(zip(p.stops, wanted)) if not oid]
     extra = [oid for oid in have if oid not in set(w for w in wanted if w)]
     # Order: the relation's platforms that are wanted, in relation order, vs their pattern order.
-    idx = {oid: i for i, oid in enumerate(wanted) if oid}
-    seq = [idx[o] for o in have if o in idx]
+    # A loop calls at its terminal first and last: take each platform's next place in the pattern, not its last.
+    idx = {}
+    for i, oid in enumerate(wanted):
+        if oid:
+            idx.setdefault(oid, []).append(i)
+    seq = []
+    for o in have:
+        if o in idx:
+            seq.append(next((i for i in idx[o] if not seq or i >= seq[-1]), idx[o][0]))
     out_of_order = sum(1 for i in range(len(seq) - 1) if seq[i + 1] < seq[i])
     # --- ways
     shape = Polyline(feed.shapes[p.shape_id]) if p.shape_id in feed.shapes else None
@@ -216,7 +258,7 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
         'stops': {'in_relation': len(have), 'wanted': len([w for w in wanted if w]), 'missing': [{'i': i, 'stop': sid} for i, sid in missing],
                   'extra': extra, 'extra_other_direction': extra_other_dir, 'unmatched': [{'i': i, 'stop': sid} for i, sid in unmatched], 'out_of_order': out_of_order},
         'ways': {'in_relation': len(rel_ways), 'off_shape': off_ways, 'routed_not_in_relation': missing_ways, 'ids': rel_ways,
-                 'chain_breaks': [{'i': i, 'a': a, 'b': b, 'lon': coords[ways[b]['nodes'][0]][0], 'lat': coords[ways[b]['nodes'][0]][1]} for i, a, b in breaks if ways[b]['nodes'] and ways[b]['nodes'][0] in coords]},
+                 'chain_breaks': [{**x, 'lon': coords[x['node']][0], 'lat': coords[x['node']][1]} for x in breaks if x['node'] in coords]},
         'members': [{'type': m['type'], 'ref': m['ref'], 'role': m['role']} for m in rel['members']],
         'geometry': [pts for _, pts in relation_geometry(rel, ways, coords)],
     }

@@ -91,6 +91,25 @@ function patternGrade(p) {
 }
 const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : p.routed;
 const relBase = a => ({version: a.version, tags: a.tags, members: a.members});
+// Of an itinerary's relations, the one to keep: the oldest not marked for deletion (it carries the history).
+const keptRelation = p => p.relations.filter(a => (Edits.get('r' + a.id) || {}).kind !== 'delete').sort((a, b) => a.id - b.id)[0];
+const sameMember = (x, y) => (x.key && x.key === y.key) || (!x.key && !y.key && x.type === y.type && x.ref === y.ref);
+/** Change the route_masters that list relation `drop` (by id) and/or route `r`: drop it, add `add` ({type, ref} or {key}). */
+function editMasters(ids, drop, add) {
+  for (const m of (D.masters || []).filter(m => ids.includes(m.id) || (drop && m.routes.includes(drop)))) {
+    const cur = (Edits.get('r' + m.id) || {}).members || m.members;
+    let members = drop ? cur.filter(x => !(x.type === 'relation' && x.ref === drop)) : cur;
+    if (add && !members.some(x => sameMember(x, add))) members = [...members, {...add, role: ''}];
+    if (JSON.stringify(members) !== JSON.stringify(cur)) Edits.modify('relation', m.id, relBase(m), {members}, 'master:' + m.id);
+  }
+}
+function markDuplicate(a, p) {
+  const keep = keptRelation({...p, relations: p.relations.filter(x => x.id !== a.id)});
+  Edits.delete('relation', a.id, relBase(a), `duplicate of route ${routeOf(p).short}`);
+  // A relation still in a route_master is not deleted by OSM (the upload uses if-unused): take it out, put the kept one in.
+  editMasters([], a.id, keep ? {type: 'relation', ref: keep.id} : null);
+  toast('Marked for deletion' + ((D.masters || []).some(m => m.routes.includes(a.id)) ? ', and swapped in its route_master' : '')); render();
+}
 const nodeBase = o => ({version: o.version, tags: o.tags, lat: o.lat, lon: o.lon});
 const osmNumId = o => o.osm_id ?? +o.id.slice(1);
 
@@ -309,7 +328,9 @@ function renderPattern(P, p) {
   const sc = rt.score || {};
   d.append(el('div', {class: 'kv'},
     el('span', {class: 'k'}, 'drivable'), el('span', {}, `${pct(sc.shape_covered)} of the agency's line can be driven on OSM as mapped (${pct(sc.path_on_shape)} of the drivable path stays on the line)`),
-    el('span', {class: 'k'}, 'path'), el('span', {}, `${rt.ways.length} ways · ${rt.legs.filter(l => l.ok).length}/${rt.legs.length} legs connect · ${p.chain_ok ? 'continuous' : 'BROKEN — a router would reject this'}`)));
+    el('span', {class: 'k'}, 'path'), el('span', {}, `${rt.ways.length} ways · ${rt.legs.filter(l => l.ok).length}/${rt.legs.length} legs connect · ${p.chain_ok ? 'continuous' : 'BROKEN — a router would reject this'}`),
+    (!S.routed && (p.chain_breaks || []).length) ? el('span', {class: 'k'}, 'chain') : null,
+    (!S.routed && (p.chain_breaks || []).length) ? el('span', {}, `${p.chain_breaks.filter(b => b.kind === 'split').length} ways to split in JOSM/RapiD before the relation validates `, ...chainLinks(p.chain_breaks.filter(b => b.kind !== 'split')), el('details', {style: 'display:inline'}, el('summary', {style: 'display:inline;cursor:pointer'}, 'where'), ' ', ...chainLinks(p.chain_breaks.filter(b => b.kind === 'split')))) : null));
 
   const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
@@ -351,6 +372,11 @@ function renderPattern(P, p) {
   d.append(ul);
   P.append(d);
 }
+const BREAK = {gap: 'gap', spur: 'in and out of a dead end', split: 'needs a split'};
+const breakLabel = b => b.turnaround ? 'turnaround' : BREAK[b.kind] || '';
+function chainLinks(breaks) {
+  return [...breaks.slice(0, 6).flatMap(b => [el('a', {href: '#', title: b.split ? `split way ${b.split} at node ${b.node}` : `w${b.a} → w${b.b}`, onclick: e => { e.preventDefault(); map.flyTo({center: [b.lon, b.lat], zoom: 17}); }}, `#${b.i} ${breakLabel(b)}`.trim()), ' ']), breaks.length > 6 ? '…' : ''];
+}
 function legGeom(rt, i) {
   const p = patternById(S.pattern), a = D.stops[p.stops[i]], b = D.stops[p.stops[i + 1]];
   const g = rt.geometry; if (!g.length || !b) return [];
@@ -369,8 +395,10 @@ function renderAudit(a, p) {
   box.append(el('div', {class: 'muted'}, `covers ${pct(a.cover.shape_covered)} of the line; ${pct(a.cover.ways_on_shape)} of its ways are on it · ${a.ways.in_relation} ways · ${a.stops.in_relation} stop members`));
   const issues = [];
   if (a.both_directions) issues.push(el('li', {}, 'One relation holds both directions. PTv2 wants one per direction: this one is kept for one, and a new one created for the other (see "Fix relation").'));
-  if (a.duplicate) issues.push(el('li', {}, 'Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. Keep the older one; ', el('a', {href: '#', onclick: e => { e.preventDefault(); Edits.delete('relation', a.id, relBase(a), `duplicate of route ${routeOf(p).short}`); toast('Marked for deletion'); render(); }}, 'mark this one for deletion'), '.'));
-  if (a.ways.chain_breaks.length) issues.push(el('li', {}, `the way chain breaks in ${a.ways.chain_breaks.length} place${a.ways.chain_breaks.length > 1 ? 's' : ''} (routers reject it): `, ...a.ways.chain_breaks.slice(0, 6).flatMap(b => [el('a', {href: '#', onclick: e => { e.preventDefault(); map.flyTo({center: [b.lon, b.lat], zoom: 17}); }}, `#${b.i}`), ' '])));
+  const kept = keptRelation(p);
+  if (a.duplicate && kept && kept.id === a.id) issues.push(el('li', {}, 'Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. This one is the oldest: it is kept, and "Fix relation" rewrites it.'));
+  else if (a.duplicate && (!op || op.kind !== 'delete')) issues.push(el('li', {}, `Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. r${kept ? kept.id : '?'} is kept; `, el('a', {href: '#', onclick: e => { e.preventDefault(); markDuplicate(a, p); }}, 'mark this one for deletion'), '.'));
+  if (a.ways.chain_breaks.length) issues.push(el('li', {}, `the way chain breaks in ${a.ways.chain_breaks.length} place${a.ways.chain_breaks.length > 1 ? 's' : ''} (routers and validators reject it): `, ...chainLinks(a.ways.chain_breaks)));
   if (a.stops.missing.length) issues.push(el('li', {}, `${a.stops.missing.length} matched platforms are not members: `, ...a.stops.missing.slice(0, 8).flatMap(x => [el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(x.stop); }}, `#${x.i + 1}`), ' ']), a.stops.missing.length > 8 ? '…' : ''));
   const extra = a.stops.extra.length, other = a.stops.extra_other_direction.length;
   if (extra) issues.push(el('li', {}, `${extra} platform members are not on this itinerary${other ? ` (${other} are the other direction's)` : ''}: `, ...a.stops.extra.slice(0, 6).flatMap(id => [el('a', {href: osmLink(id), target: '_blank'}, id), ' ']), extra > 6 ? '…' : ''));
@@ -393,11 +421,16 @@ function proposeRelation(p) {
     if (ref) members.push(ref.key ? {key: ref.key, role: 'platform'} : {type: 'node', ref: ref.ref, role: 'platform'});
     else missing.push(D.stops[sid]);
   }
-  for (const w of rt.ways) members.push({type: 'way', ref: w, role: ''});
   const tags = {...p.proposed_tags};
   // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern has claimed.
   const claimed = new Set(Object.values(Edits.ops).filter(o => o.type === 'relation' && o.kind === 'modify' && o.note !== p.id).map(o => o.id));
   const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
+  // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
+  // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.
+  const keepWays = reuse && !S.vias.length && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
+    reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0);
+  if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
+  else for (const w of rt.ways) members.push({type: 'way', ref: w, role: ''});
   if (reuse) {
     // keep name if the mapper's is fine and only add what's missing? No: the proposed tags are the GTFS scheme; keep theirs where ours is generic.
     // The GTFS scheme's structural tags go in; the mapper's free text stays unless it names a service day,
@@ -406,10 +439,12 @@ function proposeRelation(p) {
     for (const k of ['name', 'from', 'to', 'description', 'colour']) if (reuse.tags[k] && !/\b(weekday|saturday|sunday|weekend|mon|tue|wed|thu|fri)\b/i.test(reuse.tags[k])) merged[k] = reuse.tags[k];
     if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
     Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
-    toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members`);
+    editMasters(routeOf(p).masters, null, {type: 'relation', ref: reuse.id});
+    toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}`);
   } else {
-    Edits.createRelation(tags, members, p.id);
-    toast(`New relation in changes: ${members.length} members`);
+    const key = Edits.createRelation(tags, members, p.id);
+    editMasters(routeOf(p).masters, null, {key});
+    toast(`New relation in changes: ${members.length} members${routeOf(p).masters.length ? ', added to its route_master' : ''}`);
   }
   if (missing.length) toast(`${missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
   render(); draw();
@@ -613,8 +648,9 @@ function renderChanges(P) {
       btns.append(el('button', {class: 'b primary', onclick: async () => {
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
         try {
-          const id = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
+          const {id, skipped} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
           status.innerHTML = `Uploaded: <a href="https://www.openstreetmap.org/changeset/${id}" target="_blank">changeset ${id}</a>. Re-run tool/review.py to see the map with your changes.`;
+          if (skipped.length) status.append(el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${skipped.join(', ')}: something still uses ${skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). ${skipped.length > 1 ? 'They stay' : 'It stays'} in Changes; remove the parent's reference, then upload again.`));
           render();
         } catch (e) {
           status.textContent = '';

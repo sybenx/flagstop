@@ -97,6 +97,7 @@ const Edits = {
     // creations: nodes before relations, so relation members resolve
     const order = op => (op.type === 'node' ? 0 : op.type === 'way' ? 1 : 2);
     for (const [key, op] of Object.entries(this.ops).sort((a, b) => order(a[1]) - order(b[1]))) {
+      if (op.kind === 'modify' && !this.diff(op).length) continue;   // nothing changed: don't bump its version
       const v = versions[key] ?? (op.base && op.base.version);
       by[op.kind].push(this.elementXml(op, changeset, op.kind === 'create' ? null : v));
     }
@@ -197,14 +198,20 @@ const Edits = {
     const csXml = `<osm><changeset>${Object.entries(tags).map(([k, v]) => `<tag k="${this.xmlEsc(k)}" v="${this.xmlEsc(v)}"/>`).join('')}</changeset></osm>`;
     const id = (await (await this.api('/api/0.6/changeset/create', {method: 'PUT', headers: {'Content-Type': 'text/xml'}, body: csXml})).text()).trim();
     onStatus(`uploading to changeset ${id}…`);
+    let diff;
     try {
       const res = await this.api(`/api/0.6/changeset/${id}/upload`, {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: this.osc(id, versions)});
-      await res.text();
+      diff = new DOMParser().parseFromString(await res.text(), 'text/xml');
     } finally {
       onStatus('closing changeset…');
       await this.api(`/api/0.6/changeset/${id}/close`, {method: 'PUT'});
     }
-    this.clear();
-    return id;
+    // <delete if-unused> quietly keeps an object something still uses (a route in a route_master, a node
+    // in a way): the diffResult then gives it a new_id instead of none. Those stay in the basket.
+    const skipped = Object.entries(this.ops).filter(([, op]) => op.kind === 'delete' &&
+      [...diff.getElementsByTagName(op.type)].some(e => e.getAttribute('old_id') === String(op.id) && e.hasAttribute('new_id'))).map(([key]) => key);
+    for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
+    this.save();
+    return {id, skipped};
   },
 };

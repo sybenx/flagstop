@@ -27,6 +27,7 @@
     <member type="node" ref="11504801850" role="platform"/>
     <member type="node" ref="11504801858" role="platform"/>
     <member type="node" ref="3756748840" role="platform"/>
+    <member type="way" ref="182543776" role=""/>
     <member type="way" ref="1238473089" role=""/>
     <member type="way" ref="707968348" role=""/>
     <member type="way" ref="1238729870" role=""/>
@@ -56,14 +57,6 @@
     <member type="way" ref="182952351" role=""/>
     <member type="way" ref="10080041" role=""/>
     <member type="way" ref="186842316" role=""/>
-    <member type="way" ref="186842309" role=""/>
-    <member type="way" ref="824632103" role=""/>
-    <member type="way" ref="824632084" role=""/>
-    <member type="way" ref="1040890812" role=""/>
-    <member type="way" ref="824632085" role=""/>
-    <member type="way" ref="1040890812" role=""/>
-    <member type="way" ref="824632084" role=""/>
-    <member type="way" ref="824632103" role=""/>
     <member type="way" ref="186842309" role=""/>
     <member type="way" ref="182952367" role=""/>
     <member type="way" ref="1051155472" role=""/>

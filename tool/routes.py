@@ -19,6 +19,9 @@ STRAY = 20       # m from the shape a road may be for free
 STRAY_COST = 0.2   # extra cost per metre of road, per metre beyond STRAY: 50 m off costs 7x, so the bus rounds a block
                  # to stay on the line rather than cut through, but still leaves it when the map gives no choice
 SNAP = 60        # m: a stop further than this from any road is placed on no road at all
+SNAP_HANDICAP = {'parking_aisle': 15, 'driveway': 15, 'drive-through': 15}   # m: a stop by the kerb is on the street,
+                 # not on the parking aisle that happens to run a few metres closer to its sign
+SNAP_CROSS = 12  # m: a stop at a corner belongs to the street the line runs along, not the one crossing it
 DIVERGE = 30     # m: the routed path this far from the shape is a divergence
 
 
@@ -155,17 +158,33 @@ class Graph:
                 return f'{k}={t[k]}'
         return 'not drivable'
 
-    def snap(self, p, r=SNAP):
-        """Nearest drivable segment to a point: (dist, way, node a, node b, fraction along) or None."""
+    def snap(self, p, r=SNAP, along=None):
+        """Nearest drivable segment to a point: (dist, way, node a, node b, fraction along) or None.
+        along: the agency line's direction at the stop, as two points; segments across it count as further off."""
+        kx = 111320 * math.cos(math.radians(p[1]))
+        ux = uy = None
+        if along:
+            ux, uy = (along[1][0] - along[0][0]) * kx, (along[1][1] - along[0][1]) * 110540
+            n = math.hypot(ux, uy)
+            ux, uy = (ux / n, uy / n) if n > 5 else (None, None)
         ci, cj = int(p[1] / self.cell), int(p[0] / self.cell)
         best = None
         for i in (ci - 1, ci, ci + 1):
             for j in (cj - 1, cj, cj + 1):
                 for wid, k, a, b in self.sgrid.get((i, j), []):
                     _, d, t = project(p, self.coord[a], self.coord[b])
-                    if d <= r and (best is None or d < best[0]):
-                        best = (d, wid, a, b, t)
-        return best
+                    if d > r:
+                        continue
+                    e = d + SNAP_HANDICAP.get(self.ways[wid].get('tags', {}).get('service', ''), 0)
+                    if ux is not None:
+                        (ax, ay), (bx, by) = self.coord[a], self.coord[b]
+                        sx, sy = (bx - ax) * kx, (by - ay) * 110540
+                        L = math.hypot(sx, sy)
+                        if L:
+                            e += SNAP_CROSS * abs(ux * sy - uy * sx) / L   # |sin| of the angle between them
+                    if best is None or e < best[0]:
+                        best = (e, wid, a, b, t, d)
+        return best and (best[5], *best[1:5])
 
     def nearby_ways(self, p, r):
         """Every way (drivable or not) with a segment within r metres of p -> {way: dist}."""
@@ -258,7 +277,11 @@ def trace(g, stops, shape):
                 if d2 <= d + 30:
                     i, m = i2, m2
             at.append((i, m)); prev_seg = max(prev_seg, i)
-    snaps = [g.snap(p) for p in stops]
+    # Snap each stop onto the street the line runs along there (30 m of line around the stop).
+    def along(k):
+        sl = guide.slice(at[k][1] - 15, at[k][1] + 15) if guide else []
+        return (sl[0], sl[-1]) if len(sl) > 1 else None
+    snaps = [g.snap(p, along=along(k)) for k, p in enumerate(stops)]
     legs, all_ways, geom, divs = [], [], [], []
     prev_end = None
     for k in range(len(stops) - 1):

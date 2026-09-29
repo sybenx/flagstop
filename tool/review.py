@@ -60,11 +60,19 @@ def main():
             au['both_directions'] = len(chosen.get(au['id'], [])) > 1
             au['also_covers'] = [x for x in chosen.get(au['id'], []) if x != p.id]
         routed_breaks = compare.chain_breaks(tr['ways'], g.ways)
+        # In and out of a dead end is a turnaround when the agency's line goes there too; when it doesn't,
+        # a stop was put on the wrong way (the parking aisle beside the street), and the path is wrong.
+        guide = routing.Polyline(feed.shapes[p.shape_id]) if len(feed.shapes.get(p.shape_id) or []) > 1 else None
+        for b in routed_breaks:
+            if b['kind'] == 'spur':
+                far = [n for n in (g.ways[b['b']]['nodes'][0], g.ways[b['b']]['nodes'][-1]) if n != b['node'] and n in g.coord]
+                b['turnaround'] = bool(guide and far and guide.nearest(g.coord[far[0]])[0] <= routing.DIVERGE)
         patterns_out.append({
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
             'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops,
-            'chain_ok': all(l['ok'] for l in tr['legs']) and not routed_breaks,
+            'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
+            'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
             'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
             'way_nodes': {w: g.ways[w].get('nodes', []) for w in tr['ways'] if w in g.ways},
             'shape': [[round(x, 6), round(y, 6)] for x, y in feed.shapes.get(p.shape_id, [])],
@@ -102,7 +110,8 @@ def main():
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user']} for k, v in osm_stops.items()},
         'extra_stops': extra,
         'unpaired_relations': unpaired,
-        'masters': [{'id': m['id'], 'tags': m['tags'], 'routes': [x['ref'] for x in m['members'] if x['type'] == 'relation']} for m in masters.values()],
+        'masters': [{'id': m['id'], 'tags': m['tags'], 'version': m['version'], 'members': [{'type': x['type'], 'ref': x['ref'], 'role': x['role']} for x in m['members']],
+                     'routes': [x['ref'] for x in m['members'] if x['type'] == 'relation']} for m in masters.values()],
         'conventions': conv,
         'summary': summary(feed, match, extra, patterns_out, unpaired),
     }

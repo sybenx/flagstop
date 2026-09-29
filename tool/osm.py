@@ -12,9 +12,11 @@ OVERPASS = os.environ.get('OVERPASS_URL', 'https://overpass-api.de/api/interpret
 
 # Stops and routes, with every member way's geometry so an existing relation can be drawn and scored.
 PT_QUERY = """[out:json][timeout:180];
+relation["type"="route"]["route"~"^(bus|trolleybus|share_taxi)$"]({bbox})->.routes;
 (
-  relation["type"="route"]["route"~"^(bus|trolleybus|share_taxi)$"]({bbox});
-  relation["type"="route_master"]["route_master"~"^(bus|trolleybus)$"]({bbox});
+  .routes;
+  // A route_master holds only relations, so it has no geometry for a bbox to find: reach it from its routes.
+  relation(br.routes)["type"="route_master"];
   nwr["highway"="bus_stop"]({bbox});
   nwr["public_transport"="platform"]["bus"="yes"]({bbox});
   nwr["public_transport"="platform"]["highway"="bus_stop"]({bbox});

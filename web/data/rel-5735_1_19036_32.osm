@@ -172,6 +172,7 @@
     <member type="way" ref="1394211236" role=""/>
     <member type="way" ref="1098119728" role=""/>
     <member type="way" ref="1238471154" role=""/>
+    <member type="way" ref="458118479" role=""/>
     <tag k="type" v="route"/>
     <tag k="route" v="bus"/>
     <tag k="public_transport:version" v="2"/>
