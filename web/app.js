@@ -150,18 +150,18 @@ function initMap() {
     map.addLayer({id: 'edits', type: 'circle', source: 'edits', paint: {'circle-radius': 10, 'circle-color': css('--edit'), 'circle-opacity': 0.2, 'circle-stroke-color': css('--edit'), 'circle-stroke-width': 2}});
     // a stop being looked at before deciding: where OSM has it (red), where the agency has it (green), the move between
     map.addLayer({id: 'lookline', type: 'line', source: 'look', filter: ['==', ['geometry-type'], 'LineString'], layout: {'line-cap': 'round'},
-      paint: {'line-color': '#1c1b18', 'line-width': 3, 'line-dasharray': [2, 1.5]}});
+      paint: {'line-color': '#1c1b18', 'line-width': 2, 'line-dasharray': [2, 1.5], 'line-opacity': 0.8}});
     map.addLayer({id: 'lookarrows', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'LineString'],
-      layout: {'symbol-placement': 'line', 'symbol-spacing': 40, 'text-field': '›', 'text-size': 22, 'text-font': ['Open Sans Semibold'], 'text-keep-upright': false, 'text-allow-overlap': true},
+      layout: {'symbol-placement': 'line', 'symbol-spacing': 90, 'text-field': '›', 'text-size': 16, 'text-font': ['Open Sans Semibold'], 'text-keep-upright': false, 'text-allow-overlap': true},
       paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
     map.addLayer({id: 'looklen', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'LineString'],
       layout: {'symbol-placement': 'line-center', 'text-field': ['get', 'label'], 'text-size': 12, 'text-font': ['Open Sans Semibold'], 'text-offset': [0, -1], 'text-allow-overlap': true},
       paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
     map.addLayer({id: 'lookpts', type: 'circle', source: 'look', filter: ['==', ['geometry-type'], 'Point'],
-      paint: {'circle-radius': ['case', ['==', ['get', 'kind'], 'other'], 10, 14], 'circle-color': 'rgba(255,255,255,0.35)',
-        'circle-stroke-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', css('--ok'), '#8a857b'], 'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'other'], 3, 5]}});
+      paint: {'circle-radius': ['case', ['==', ['get', 'kind'], 'other'], 8, 10], 'circle-color': 'rgba(255,255,255,0.25)',
+        'circle-stroke-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', css('--ok'), '#8a857b'], 'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'other'], 2, 3]}});
     map.addLayer({id: 'looklabels', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'Point'],
-      layout: {'text-field': ['get', 'label'], 'text-size': 12.5, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1.6, 0], 'text-allow-overlap': true, 'text-max-width': 14},
+      layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1.2, 0], 'text-allow-overlap': true, 'text-max-width': 14},
       paint: {'text-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', '#1f6b38', '#6f6a60'], 'text-halo-color': '#fff', 'text-halo-width': 2.5}});
     map.addLayer({id: 'vias', type: 'circle', source: 'vias', paint: {'circle-radius': 6, 'circle-color': css('--div'), 'circle-stroke-color': '#fff', 'circle-stroke-width': 2}});
     for (const layer of ['stops', 'gtfs', 'osmstops', 'div']) {
@@ -1009,6 +1009,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   if (S.tab !== 'stops' || again) S.stop = null;
   document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
   render(); draw();
+  $('#panel').scrollTop = 0; $('#side').scrollTop = 0;   // a list starts at its top
 });
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
