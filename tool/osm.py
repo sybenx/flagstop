@@ -82,6 +82,27 @@ def cached(path, fetcher, bbox, refresh=False):
     return obj
 
 
+NSI_BUS = 'https://raw.githubusercontent.com/osmlab/name-suggestion-index/main/data/transit/route/bus.json'
+
+
+def nsi_aliases(network, path, refresh=False):
+    """Other names the name-suggestion-index (what iD suggests from) knows for a bus network: its matchNames,
+    e.g. 'cvtd' for Connect Public Transit. Lower case. Empty if NSI can't be reached and nothing is cached."""
+    if refresh or not os.path.exists(path):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(NSI_BUS, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=60) as r:
+                save(json.load(r), path)
+        except Exception as e:
+            print(f'name-suggestion-index: {e}; network aliases from the feed only', file=sys.stderr)
+    if not os.path.exists(path):
+        return set()
+    out = set()
+    for it in load(path).get('items', []):
+        if it.get('tags', {}).get('network') == network:
+            out |= {n.lower() for n in it.get('matchNames', [])} | {it['tags']['network'].lower()}
+    return out
+
+
 STOP_TAGS = ('highway', 'public_transport', 'bus', 'amenity')
 
 

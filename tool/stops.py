@@ -218,6 +218,29 @@ def conventions(feed, results, osm_stops):
     return out
 
 
+def network_diff(feed, o, conv, aliases=()):
+    """network / network:wikidata against what this agency's stops in OSM carry (conv). An old name of the same
+    network (one the feed's agency_name contains, or one iD's name-suggestion-index lists) is swapped for the
+    current one; anything else is a question (a route name typed as the network, or another network sharing
+    the stop, which then wants both: a;b). operator is left alone: it's who runs the
+    buses, which a rebrand doesn't change."""
+    t, out, net = o['tags'], {}, conv.get('network')
+    agency = feed.agency.get('agency_name', '').lower()
+    if net:
+        parts = [x.strip() for x in (t.get('network') or '').split(';') if x.strip()]
+        old = lambda x: x.lower() in aliases or (len(x) > 2 and x.lower() in agency)
+        new = list(dict.fromkeys(net if old(x) else x for x in parts)) or [net]
+        if net not in new:   # something else only: the question is whether to replace it
+            new = [net]
+        if ';'.join(new) != (t.get('network') or ''):
+            out['network'] = {'gtfs': ';'.join(new), 'osm': t.get('network', ''),
+                              'old': [x for x in parts if old(x)], 'other': [x for x in parts if not old(x) and x != net]}
+    wd = conv.get('network:wikidata')
+    if wd and t.get('network:wikidata') != wd and wd not in (t.get('network:wikidata') or '').split(';'):
+        out['network:wikidata'] = {'gtfs': wd, 'osm': t.get('network:wikidata', '')}
+    return out
+
+
 def proposed_tags(feed, s, conv=None):
     """The tags a fresh platform node for this GTFS stop would carry (the GTFS tagging scheme, 2024)."""
     conv = conv or {}
@@ -319,6 +342,15 @@ def decide(s, o, diff, side=None, others=None):
         if k in ('ref', 'gtfs:stop_id', 'route_ref'):
             out[k] = {'pick': 'agency', 'why': {'ref': "the agency's stop code", 'gtfs:stop_id': "the agency's id for the stop",
                                                  'route_ref': 'which routes call here, per the timetable'}[k]}
+        elif k == 'network':
+            if not v['osm']:
+                out[k] = {'pick': 'agency', 'why': "what this agency's other stops in OSM carry; OSM has none"}
+            elif v['other']:
+                out[k] = {'pick': 'ask', 'why': f"OSM says '{v['osm']}', not this agency's network. A route name in the wrong tag? If another network's buses stop here too, it wants both ('{v['osm']};{v['gtfs']}'): edit that by hand"}
+            else:
+                out[k] = {'pick': 'agency', 'why': f"'{v['osm']}' is the old name: this agency's other stops in OSM, and iD's name suggestions, say '{v['gtfs']}'"}
+        elif k == 'network:wikidata':
+            out[k] = {'pick': 'agency' if not v['osm'] else 'ask', 'why': "the network's Wikidata item, as its other stops have it" + (f"; OSM says {v['osm']}" if v['osm'] else '')}
         elif k == 'tagging':
             out[k] = {'pick': 'agency', 'why': 'public transport tagging (PTv2) is incomplete'}
         elif k == 'description' and NOTE.search(v['gtfs']):

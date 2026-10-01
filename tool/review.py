@@ -97,6 +97,10 @@ def main():
     match, extra = stopmatch.match(feed, osm_stops)
     conv = stopmatch.conventions(feed, match, osm_stops)
     print(f'local conventions: {conv}', file=sys.stderr)
+    aliases = osm.nsi_aliases(conv.get('network'), os.path.join(a.cache, 'nsi-bus.json'), a.refresh) if conv.get('network') else set()
+    for sid, m in match.items():
+        if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
+            m['diff'].update(stopmatch.network_diff(feed, osm_stops[m['osm'][0]['id']], conv, aliases))
     g = routing.Graph(roads_raw)
     print(f'road graph: {len(g.ways)} ways, {len(g.coord)} nodes', file=sys.stderr)
 
