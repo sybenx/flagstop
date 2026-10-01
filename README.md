@@ -84,7 +84,7 @@ Changes and stop decisions are kept in the browser and, while `tool/serve.py` ru
 
 ## Uploading from the page
 
-Once: register flagstop as an OAuth 2 application on your OSM account at <https://www.openstreetmap.org/oauth2/applications/new> — name `flagstop`, redirect URI exactly what the Changes tab shows (`http://127.0.0.1:8765/` by default), untick *Confidential application*, tick *read user preferences* and *modify the map*. Paste the client ID into the Changes tab. Sign-in is OSM's own page; the token stays in your browser.
+Sign in with OSM from the Changes tab. flagstop signs in through one OSM app (a public OAuth 2 client, no secret, like iD's), set in `web/config.js` with the addresses it's registered for. Until that's filled in, or at an address it doesn't cover, register your own once at <https://www.openstreetmap.org/oauth2/applications/new> — name `flagstop`, redirect URI exactly what the Changes tab shows, untick *Confidential application*, tick *read user preferences* and *modify the map* — and paste its client ID there. The token stays in your browser.
 
 ## Before uploading much
 

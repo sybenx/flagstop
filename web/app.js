@@ -1183,8 +1183,15 @@ function renderChanges(P) {
 
     d.append(btns, status);
   }
-  // OAuth setup
+  // sign-in: flagstop's own app where it covers this address (one click); else your own app, set up once
   const cid = Edits.auth.clientId();
+  if (Edits.auth.builtIn() && !localStorage.getItem('flagstop.osm.client_id')) {
+    d.append(el('div', {class: 'small', style: 'margin-top:8px'}, user ? `Signed in to OSM as ${user.display_name}. ` : '',
+      user ? el('a', {href: '#', onclick: e => { e.preventDefault(); Edits.auth.signOut(); render(); }}, 'sign out')
+        : el('button', {class: 'b primary tiny', onclick: () => Edits.auth.signIn()}, 'Sign in with OSM')));
+    P.append(d);
+    return;
+  }
   d.append(el('details', {class: 'small', open: ((!cid || Edits.auth.lost) && ops.length) ? '' : null}, el('summary', {}, user ? `Signed in as ${user.display_name}` : 'Set up upload (once)'),
     el('p', {}, 'Uploading uses OSM\'s own login (OAuth 2). Register flagstop as an application on your account: ', el('a', {href: 'https://www.openstreetmap.org/oauth2/applications/new', target: '_blank'}, 'osm.org → OAuth 2 applications → Register'), '. Name: flagstop. Redirect URI: ', el('code', {}, Edits.auth.redirect()), '. Untick "Confidential application". Permissions: read user preferences, modify the map. Paste the client ID here:'),
     el('div', {class: 'btns'}, el('input', {value: cid, placeholder: 'client id', style: 'flex:1', onchange: e => { Edits.auth.setClientId(e.target.value); toast('saved'); }}))));

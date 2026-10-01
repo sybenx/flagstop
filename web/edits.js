@@ -210,7 +210,9 @@ const Edits = {
 
   // --- OSM sign-in (OAuth 2, PKCE, no secret) ------------------------------
   auth: {
-    clientId() { return localStorage.getItem('flagstop.osm.client_id') || ''; },
+    // your own app's ID if you set one; else flagstop's (config.js), where its registration covers this address
+    clientId() { return localStorage.getItem('flagstop.osm.client_id') || (this.builtIn() ? FLAGSTOP_OSM.clientId : ''); },
+    builtIn() { return typeof FLAGSTOP_OSM !== 'undefined' && !!FLAGSTOP_OSM.clientId && FLAGSTOP_OSM.redirects.includes(this.redirect()); },
     setClientId(v) { localStorage.setItem('flagstop.osm.client_id', v.trim()); },
     token() { return localStorage.getItem('flagstop.osm.token') || ''; },
     user() { try { return JSON.parse(localStorage.getItem('flagstop.osm.user') || 'null'); } catch (e) { return null; } },
