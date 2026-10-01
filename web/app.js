@@ -20,7 +20,7 @@ const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
 const m = (a, b) => Math.hypot((b[1] - a[1]) * 110540, (b[0] - a[0]) * 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180));
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-let D, map, S = {tab: 'routes', pattern: null, div: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
+let D, map, S = {looked: new Set(), lookStop: null, tab: 'routes', pattern: null, div: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
 
 function toast(msg, ms = 2500) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -194,7 +194,7 @@ const statusColor = st => css({matched: '--ok', ambiguous: '--amb', moved: '--am
 function stopFeatures(ids) {
   const solid = [], rings = [], tethers = [];
   for (const id of ids) {
-    const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s), color = statusColor(st), on = S.stop === id || S.reviewStop === id;
+    const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s), color = statusColor(st), on = S.stop === id || S.reviewStop === id || S.lookStop === id;
     const label = ids.length < 60 ? `${ids.indexOf(id) + 1} · ${s.name}` : s.name;
     if (o) {
       const at = on && S.stopDrag ? S.stopDrag : osmPos(o);
@@ -395,6 +395,28 @@ async function refreshOSM() {
   } catch (e) { toast('Refreshing needs tool/serve.py running (' + e.message + ')', 6000); }
 }
 
+// ---------- looking before deciding: a stop's move is decided on the map, not from text ----------
+/** Show a stop on the map: the agency's point and OSM's stop, both in view, with the line between them.
+    Deciding to move it (or not) waits until this has been done for it. */
+function lookAt(sid) {
+  const s = D.stops[sid], c = s.match && s.match.osm || [];
+  const o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
+  S.looked.add(sid); S.lookStop = sid;
+  render(); draw();
+  const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat])];
+  fit(pts, 110);
+}
+const looked = sid => S.looked.has(sid);
+/** 'Look at it' until it has been looked at; then where it is, and the imagery to judge by. */
+function lookButtons(s, o) {
+  if (!looked(s.id)) return el('button', {class: 'b tiny primary', onclick: () => lookAt(s.id)}, 'Look at it on the map');
+  const at = o ? osmPos(o) : [s.lon, s.lat];
+  return el('span', {class: 'btns', style: 'display:inline-flex;margin:0'},
+    el('button', {class: 'b tiny', onclick: () => lookAt(s.id)}, 'Show again'),
+    el('button', {class: 'b tiny', title: 'Aerial imagery shows where the shelter or sign is', onclick: () => openIn('rapid', {lon: (at[0] + s.lon) / 2, lat: (at[1] + s.lat) / 2, zoom: 19, select: o ? [o.id] : []})}, 'Imagery (RapiD)'),
+    el('button', {class: 'b tiny', onclick: () => showStop(s.id)}, 'Stop page'));
+}
+
 // ---------- undo / redo: every change to the basket, stop tags to road edits ----------
 function undoRedo(which) {
   const what = which === 'undo' ? Edits.undo() : Edits.redo();
@@ -455,7 +477,7 @@ function showDivergence(dv) {
 }
 
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null;
+  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null; S.lookStop = null;
   liveRoute();   // with road edits waiting in Changes, show the route as it would run
   render(); draw();
   const p = patternById(id);

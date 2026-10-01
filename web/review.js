@@ -109,12 +109,15 @@ const Review = {
         const dk = st.decide[k], v = pk[k], what = KEY_WORDS[k] || k;
         const from = k === 'position' ? '' : (diff[k] && diff[k].osm) || '—', to = k === 'position' ? '' : (diff[k] && diff[k].gtfs) || '';
         if (dk.pick === 'ask') {
+          // where a stop goes is decided looking at it on the map, not from the text
+          const wait = k === 'position' && !looked(s.id), off = wait ? {disabled: '', title: 'Look at it on the map first'} : {};
           body.append(el('div', {class: 'ask' + (v ? ' answered' : '')},
             el('div', {}, el('b', {}, `? ${what}`), k === 'position' ? '' : ` ${from} → ${to}`), el('div', {class: 'why'}, dk.why),
+            k === 'position' ? el('div', {style: 'margin:4px 0'}, lookButtons(s, o)) : null,
             el('span', {class: 'btns'},
-              el('button', {class: 'b tiny' + (v === 'agency' ? ' primary' : ''), onclick: () => { pk[k] = 'agency'; render(); draw(); }}, k === 'position' ? "move to the agency's point" : "agency's"),
-              el('button', {class: 'b tiny' + (v === 'keep' ? ' primary' : ''), onclick: () => { pk[k] = 'keep'; render(); draw(); }}, k === 'position' ? 'leave it' : "keep OSM's"),
-              k === 'position' ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
+              el('button', {class: 'b tiny' + (v === 'agency' ? ' primary' : ''), ...off, onclick: () => { pk[k] = 'agency'; render(); draw(); }}, k === 'position' ? "move to the agency's point" : "agency's"),
+              el('button', {class: 'b tiny' + (v === 'keep' ? ' primary' : ''), ...off, onclick: () => { pk[k] = 'keep'; render(); draw(); }}, k === 'position' ? 'leave it' : "keep OSM's"),
+              k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
         } else {
           // one chip per difference: filled = the agency's value goes in, outlined = OSM's stays. Click flips it;
           // the reason is on hover.

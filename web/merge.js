@@ -54,9 +54,11 @@ const Merge = {
     const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, `Decide first: ${x.decide.length} stop${x.decide.length > 1 ? 's' : ''}`));
     const set = (sid, choice, pick) => { S.merge.answers = {...(S.merge.answers || {}), [sid]: {choice, pick}}; render(); draw(); };
     for (const q of x.decide) {
-      const name = el('a', {href: '#', onclick: e => { e.preventDefault(); const at = q.o ? osmPos(q.o) : [q.s.lon, q.s.lat]; map.flyTo({center: at, zoom: 17.5}); }}, q.s.name);
-      const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''), onclick: () => set(q.s.id, choice, pick)}, label);
-      const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, name));
+      // the choice waits until the stop has been looked at on the map: a move isn't decided from text
+      const seen = looked(q.s.id);
+      const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''),
+        disabled: seen ? null : '', title: seen ? '' : 'Look at it on the map first', onclick: () => set(q.s.id, choice, pick)}, label);
+      const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, el('b', {}, q.s.name), ' ', lookButtons(q.s, q.o || (q.cands && q.cands[0] && q.cands[0].o))));
       if (q.kind === 'where') {
         // what's different, in one go: where OSM has it, what it calls it, and the agency's, then the question
         const on = q.o.tags.name, nameQ = ((q.s.match.decide || {}).name || {});
