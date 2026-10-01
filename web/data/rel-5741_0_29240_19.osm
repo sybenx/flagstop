@@ -70,6 +70,9 @@
     <member type="way" ref="1419412026" role=""/>
     <member type="way" ref="182543769" role=""/>
     <member type="way" ref="707968346" role=""/>
+    <member type="way" ref="182543776" role=""/>
+    <member type="way" ref="1238473089" role=""/>
+    <member type="way" ref="1238471154" role=""/>
     <member type="way" ref="458118479" role=""/>
     <tag k="type" v="route"/>
     <tag k="route" v="bus"/>

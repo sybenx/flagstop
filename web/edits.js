@@ -13,28 +13,81 @@ const Edits = {
   ops: {},          // key -> op ; key is 'n123' / 'w123' / 'r123' for existing, 'new:n-1' for new
   nextId: -1,
   decisions: {},    // stop id -> osm id chosen for an ambiguous match
+  roads: [],        // road edits, oldest first: {what, before: {key: op as it was, or null}} — so their parts can't be removed singly
   listeners: [],
+  // Undo/redo: every save() records the basket as it was before, one entry per user action (all the saves a
+  // single action makes in one go — a road edit's node, ways and relations — land in the same entry).
+  history: [], future: [], committed: null, batching: false, nextLabel: null,
 
   load(agency) {
     this.key = 'flagstop.edits.' + (agency || '').replace(/\W+/g, '_');
     try {
       const s = JSON.parse(localStorage.getItem(this.key) || '{}');
-      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {};
+      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.roads = s.roads || [];
     } catch (e) { this.ops = {}; }
+    this.history = []; this.future = []; this.committed = this.state();
   },
+  state() { return JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions, roads: this.roads}); },
   save() {
-    try { localStorage.setItem(this.key, JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions})); } catch (e) {}
+    const now = this.state();
+    if (this.committed != null && now !== this.committed) {
+      if (!this.batching) {
+        this.history.push({state: this.committed, label: this.nextLabel});
+        if (this.history.length > 200) this.history.shift();
+        this.future = [];
+        this.batching = true;
+        queueMicrotask(() => { this.batching = false; this.nextLabel = null; });
+      }
+      this.committed = now;
+    }
+    this.persist(now);
+  },
+  persist(now = this.state()) {
+    try { localStorage.setItem(this.key, now); } catch (e) {}
     this.listeners.forEach(f => f());
+  },
+  /** Name the action about to be saved, for the undo toast ("Undone: split 500 North"). */
+  label(text) { this.nextLabel = text; },
+  restore(json) { const s = JSON.parse(json); this.ops = s.ops; this.nextId = s.nextId; this.decisions = s.decisions; this.roads = s.roads || []; this.committed = json; this.persist(json); },
+  /** What changed between two states, in a few words, when the action had no name. */
+  describe(a, b) {
+    const x = JSON.parse(a).ops, y = JSON.parse(b).ops, keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].filter(k => JSON.stringify(x[k]) !== JSON.stringify(y[k]));
+    const name = k => { const op = y[k] || x[k]; return op.note && !String(op.note).includes(':') ? op.note : (k.startsWith('new:') ? 'new ' : '') + k.replace(/^new:/, ''); };
+    return keys.length === 1 ? name(keys[0]) : keys.length <= 3 ? keys.map(name).join(', ') : `${keys.length} changes`;
+  },
+  undo() {
+    const e = this.history.pop();
+    if (!e) return null;
+    const now = this.state();
+    this.future.push({state: now, label: e.label});
+    this.restore(e.state);
+    return e.label || this.describe(e.state, now);
+  },
+  redo() {
+    const e = this.future.pop();
+    if (!e) return null;
+    const now = this.state();
+    this.history.push({state: now, label: e.label});
+    this.restore(e.state);
+    return e.label || this.describe(now, e.state);
   },
   count() { return Object.keys(this.ops).length; },
   get(key) { return this.ops[key]; },
   remove(key) { delete this.ops[key]; this.save(); },
-  clear() { this.ops = {}; this.save(); },
+  clear() { this.ops = {}; this.roads = []; this.save(); },
+  /** A road edit is many ops that only make sense together (a new node, the way using it, the relations
+      repaired around it): record what each key was before, so it can be taken back as one. */
+  roadBegin(what) { return {what, before: {}}; },
+  roadTouch(g, key) { if (!(key in g.before)) g.before[key] = this.ops[key] ? JSON.parse(JSON.stringify(this.ops[key])) : null; },
+  roadEnd(g) { this.roads.push(g); this.save(); },
+  /** The road edit a key belongs to (it can only go with it), or null. */
+  roadOf(key) { return this.roads.find(g => key in g.before) || null; },
 
   // --- ops -------------------------------------------------------------
+  /** A fresh negative id, for building several new objects that refer to each other before saving. */
+  newId() { return this.nextId--; },
   /** A new node. base is null. Returns the op key. */
-  createNode(lat, lon, tags, note) {
-    const id = this.nextId--;
+  createNode(lat, lon, tags, note, id = this.nextId--) {
     const key = 'new:n' + id;
     this.ops[key] = {kind: 'create', type: 'node', id, tags: {...tags}, lat, lon, note};
     this.save();
@@ -48,8 +101,16 @@ const Edits = {
     for (const k of changes.removeTags || []) delete op.tags[k];
     if (changes.lat != null) { op.lat = changes.lat; op.lon = changes.lon; }
     if (changes.members) op.members = changes.members;
+    if (changes.nodes) op.nodes = changes.nodes;
     if (note) op.note = note;
     this.ops[key] = op;
+    this.save();
+    return key;
+  },
+  /** A new way (a piece split off another, or a drawn segment). nodes may include new nodes' negative ids. */
+  createWay(tags, nodes, note, id = this.nextId--) {
+    const key = 'new:w' + id;
+    this.ops[key] = {kind: 'create', type: 'way', id, tags: {...tags}, nodes: [...nodes], note};
     this.save();
     return key;
   },
@@ -78,6 +139,7 @@ const Edits = {
     for (const k of new Set([...Object.keys(b), ...Object.keys(op.tags)])) if ((b[k] || '') !== (op.tags[k] || '')) out.push({k, before: b[k], after: op.tags[k]});
     if (op.base && op.lat != null && (op.lat !== op.base.lat || op.lon !== op.base.lon)) out.push({k: 'position', before: `${op.base.lat.toFixed(6)}, ${op.base.lon.toFixed(6)}`, after: `${op.lat.toFixed(6)}, ${op.lon.toFixed(6)}`});
     if (op.base && op.members && JSON.stringify(op.members) !== JSON.stringify(op.base.members)) out.push({k: 'members', before: `${(op.base.members || []).length} members`, after: `${op.members.length} members`});
+    if (op.base && op.nodes && op.base.nodes && JSON.stringify(op.nodes) !== JSON.stringify(op.base.nodes)) out.push({k: 'nodes', before: `${op.base.nodes.length} nodes`, after: `${op.nodes.length} nodes`});
     return out;
   },
 
@@ -177,11 +239,15 @@ const Edits = {
       const base = op.base ? op.base.tags : {};
       const changed = [...new Set([...Object.keys(cur), ...Object.keys(base)])].filter(k => (cur[k] || '') !== (base[k] || ''));
       const moves = op.type === 'node' && op.base && op.lat != null && (op.lat !== op.base.lat || op.lon !== op.base.lon);
-      if (op.base && op.base.version != null && el.version !== op.base.version && (changed.length || moves)) conflicts.push({key, why: `edited on OSM since flagstop looked (v${op.base.version} → v${el.version}${changed.length ? ': ' + changed.join(', ') : ''})`, current: el});
+      // A change to a way's nodes or a relation's members was worked out from the version flagstop read:
+      // any newer version, even one that left the tags alone, may have moved what it depends on.
+      const topo = (op.type === 'way' && op.base && op.base.nodes && JSON.stringify(op.nodes) !== JSON.stringify(op.base.nodes)) ||
+        (op.type === 'relation' && op.base && op.base.members && op.members && JSON.stringify(op.members) !== JSON.stringify(op.base.members));
+      if (op.base && op.base.version != null && el.version !== op.base.version && (changed.length || moves || topo)) conflicts.push({key, why: `edited on OSM since flagstop looked (v${op.base.version} → v${el.version}${changed.length ? ': ' + changed.join(', ') : ''})`, current: el});
       else if (op.base && op.base.version == null) {
         // ways from the roads snapshot carry no version; accept if the tags we saw are still the tags
         if (changed.length) conflicts.push({key, why: `tags differ from what flagstop saw: ${changed.join(', ')}`, current: el});
-        else { op.base.version = el.version; if (op.type === 'way') op.nodes = el.nodes; }
+        else { op.base.version = el.version; if (op.type === 'way' && !op.nodes) op.nodes = el.nodes; }
       }
       if (op.type === 'way' && !op.nodes) op.nodes = el.nodes;
       if (op.type === 'node' && op.lat == null) { op.lat = el.lat; op.lon = el.lon; }
@@ -211,7 +277,9 @@ const Edits = {
     const skipped = Object.entries(this.ops).filter(([, op]) => op.kind === 'delete' &&
       [...diff.getElementsByTagName(op.type)].some(e => e.getAttribute('old_id') === String(op.id) && e.hasAttribute('new_id'))).map(([key]) => key);
     for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
+    this.roads = [];
     this.save();
+    this.history = []; this.future = [];   // what went to OSM isn't taken back from here
     return {id, skipped};
   },
 };

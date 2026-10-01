@@ -260,3 +260,80 @@ def bearing(lat1, lon1, lat2, lon2):
     dx = (lon2 - lon1) * 111320 * math.cos(math.radians(lat1))
     a = (math.degrees(math.atan2(dx, dy)) + 360) % 360
     return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][int((a + 22.5) // 45) % 8]
+
+
+# ---------- what to do about each difference, and why: the reviewer checks these, flagstop doesn't apply them ----------
+ABBR = {'st': 'street', 'ave': 'avenue', 'av': 'avenue', 'dr': 'drive', 'rd': 'road', 'hwy': 'highway', 'ln': 'lane', 'blvd': 'boulevard',
+        'pkwy': 'parkway', 'ctr': 'center', 'cir': 'circle', 'ct': 'court', 'pl': 'place', 'n': 'north', 's': 'south', 'e': 'east', 'w': 'west'}
+
+
+SUFFIX = {'street', 'avenue', 'drive', 'road', 'lane', 'boulevard', 'parkway', 'circle', 'court', 'place'}
+
+
+def address(x):
+    """A stop name reduced to its address: abbreviations spelled out, the street type dropped ('Main' and
+    'Main Street' are one road), and what follows the address dropped — a landmark in brackets or after a
+    dash, a town after a comma ('2470 North Main St, N Logan')."""
+    x = re.sub(r'\(.*?\)', ' ', x or '')
+    x = re.split(r'\s+-\s+|,', x)[0]
+    return ' '.join(w for w in (ABBR.get(w, w) for w in re.sub(r"[^\w\s]", ' ', x.lower()).split()) if w not in SUFFIX)
+
+
+def extra(x):
+    """What a name says beyond its address: '(Blue Square)', ' - Zootah - TIMEPOINT'."""
+    m = re.search(r'\((.*?)\)', x or '') or re.search(r'\s+-\s+(.*)$', x or '')
+    return m.group(1).strip() if m else ''
+
+
+def same_address(a, b):
+    a, b = address(a), address(b)
+    return a.replace(' ', '') == b.replace(' ', '') or sorted(a.split()) == sorted(b.split())
+
+
+def decide(s, o, diff, side=None, others=None):
+    """For each difference: {'pick': 'agency' | 'keep' | 'ask', 'why': ...}.
+    'agency' and 'keep' are suggestions the reviewer sees and can flip; 'ask' has no default.
+    side: {'osm': 'right'|'left'|None, 'gtfs': ...} — where each point is relative to the buses' direction.
+    others: {address: (stop_id, name)} of every stop in the feed, to notice a name that belongs to another stop."""
+    t, out = o['tags'], {}
+    d = dist(s.lat, s.lon, o['lat'], o['lon'])
+    for k, v in (diff or {}).items():
+        if k in ('ref', 'gtfs:stop_id', 'route_ref'):
+            out[k] = {'pick': 'agency', 'why': {'ref': "the agency's stop code", 'gtfs:stop_id': "the agency's id for the stop",
+                                                 'route_ref': 'which routes call here, per the timetable'}[k]}
+        elif k == 'tagging':
+            out[k] = {'pick': 'agency', 'why': 'public transport tagging (PTv2) is incomplete'}
+        elif k in ('description', 'wheelchair'):
+            if v['osm']:
+                out[k] = {'pick': 'ask', 'why': f"OSM says something else: {v['osm']}"}
+            else:
+                out[k] = {'pick': 'agency', 'why': "what the bus announces here; OSM has none" if k == 'description' else 'OSM has none'}
+        elif k == 'name':
+            g, m = v['gtfs'], v['osm']
+            if not m:
+                out[k] = {'pick': 'agency', 'why': 'OSM has no name'}
+            elif same_address(g, m):
+                out[k] = {'pick': 'keep', 'why': 'same address, written differently' + (f" (OSM adds '{extra(m)}')" if extra(m) else '')}
+            elif set(re.sub(r"[^\w\s]", ' ', m.lower()).split()) <= set(re.sub(r"[^\w\s]", ' ', g.lower()).split()) | {'and'}:
+                out[k] = {'pick': 'keep', 'why': "OSM's name is part of the agency's: it names the bay, the agency adds the address"}
+            elif others and address(m) in others and others[address(m)][0] != s.id:
+                sid, nm = others[address(m)]
+                out[k] = {'pick': 'ask', 'why': f"OSM's name is the agency's name for another stop ({nm}, code {sid}): swapped?"}
+            elif street(address(g)) == street(address(m)) and numbers(address(g)) != numbers(address(m)):
+                hn = lambda x: re.match(r'\d+', address(x)).group(0) if re.match(r'\d+', address(x)) else '?'
+                if d <= FAR:
+                    lost = f"; OSM's '{extra(m)}' goes" + (f" (the agency announces '{s.desc}')" if s.desc else '') if extra(m) else ''
+                    out[k] = {'pick': 'agency', 'why': f"same spot ({round(d)} m), so not a move: the agency's current name ({hn(m)} → {hn(g)}){lost}"}
+                else:
+                    out[k] = {'pick': 'ask', 'why': f"house number {hn(m)} → {hn(g)} and {round(d)} m apart: has the stop moved?"}
+            else:
+                out[k] = {'pick': 'ask', 'why': f"they name different streets: is OSM's '{m}' the same place as the agency's '{g}'?"}
+    # position: within FAR it's the same stop placed by two hands, unless OSM has it across the street
+    wrong = side and side.get('osm') == 'left' and side.get('gtfs') == 'right'
+    if wrong:
+        out['position'] = {'pick': 'ask', 'why': f"OSM has it across the street from where buses going this way stop; the agency's point is on their side ({round(d)} m)"}
+    elif d > FAR:
+        out['position'] = {'pick': 'ask', 'why': f"{round(d)} m apart: the agency's points are often 10–30 m off, but this is more"}
+    elif d >= 2:
+        out['position'] = {'pick': 'keep', 'why': f'{round(d)} m apart: the same spot, placed by two hands'}
+    return out

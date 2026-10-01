@@ -1,6 +1,8 @@
 /* flagstop — review a GTFS feed against OpenStreetMap. Reads data/review.json (from tool/review.py).
    Decisions go into a local change basket (edits.js) and leave as one OSM changeset, an osmChange
-   file, or Level0 text. Geometry work is handed to RapiD/iD with the agency's line overlaid. */
+   file, or Level0 text. Road edits that routes depend on (split, reconnect, move, add) are made here
+   with the routes repaired (roads.js); drawing and shaping roads is handed to RapiD/iD with the
+   agency's line overlaid. */
 'use strict';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -18,7 +20,7 @@ const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
 const m = (a, b) => Math.hypot((b[1] - a[1]) * 110540, (b[0] - a[0]) * 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180));
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-let D, map, S = {tab: 'routes', pattern: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
+let D, map, S = {tab: 'routes', pattern: null, div: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
 
 function toast(msg, ms = 2500) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -124,6 +126,7 @@ function initMap() {
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
+    setTimeout(applyHash);   // after the layers below exist
     for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
@@ -145,11 +148,35 @@ function initMap() {
       map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
       map.on('mouseleave', layer, () => map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : '');
     }
-    map.on('click', 'stops', e => { e.preventDefault(); showStop(e.features[0].properties.id); });
+    map.on('click', 'stops', e => { e.preventDefault(); if (S.stopDragged) { S.stopDragged = false; return; } showStop(e.features[0].properties.id); });
+    // the selected stop's OSM node can be dragged to where the sign is
+    map.on('mousedown', 'stops', e => {
+      const id = e.features[0].properties.id, s = D.stops[id], o = s && matchedOsm(s);
+      if (Roads.on || S.tab !== 'stops' || S.stop !== id || !o) return;
+      e.preventDefault();
+      const start = e.point; let moved = false;
+      map.getCanvas().style.cursor = 'grabbing';
+      const move = ev => {
+        if (!moved && Math.hypot(ev.point.x - start.x, ev.point.y - start.y) < 4) return;
+        moved = true; S.stopDrag = [ev.lngLat.lng, ev.lngLat.lat]; draw();
+      };
+      map.on('mousemove', move);
+      map.once('mouseup', () => {
+        map.off('mousemove', move); map.getCanvas().style.cursor = '';
+        const at = S.stopDrag; S.stopDrag = null;
+        if (!moved || !at) return draw();
+        S.stopDragged = true; setTimeout(() => { S.stopDragged = false; }, 0);
+        Edits.label(`move stop ${s.ref} ${s.name}`);
+        Edits.modify('node', osmNumId(o), nodeBase(o), {lat: at[1], lon: at[0]}, `${s.ref} ${s.name}`);
+        toast(`Stop moved ${Math.round(m([o.lon, o.lat], at))} m (in Changes)`); render(); draw();
+      });
+    });
+    map.on('mouseenter', 'stops', e => { const id = e.features[0].properties.id; if (!Roads.on && S.tab === 'stops' && S.stop === id) map.getCanvas().style.cursor = 'grab'; });
     map.on('click', 'gtfs', e => { e.preventDefault(); showStop(e.features[0].properties.id); });
     map.on('click', 'osmstops', e => { e.preventDefault(); popupOsm(e.features[0].properties.id, e.lngLat); });
     map.on('click', 'div', e => { e.preventDefault(); popupDiv(JSON.parse(e.features[0].properties.d), e.lngLat); });
     map.on('click', e => { if (S.viaMode && !e.defaultPrevented) addVia([e.lngLat.lng, e.lngLat.lat]); });
+    Roads.init();
     draw();
   });
 }
@@ -162,11 +189,13 @@ const statusColor = st => css({matched: '--ok', ambiguous: '--amb', moved: '--am
 function stopFeatures(ids) {
   const solid = [], rings = [], tethers = [];
   for (const id of ids) {
-    const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s), color = statusColor(st), on = S.stop === id;
+    const s = D.stops[id], st = stopStatus(s), o = matchedOsm(s), color = statusColor(st), on = S.stop === id || S.reviewStop === id;
     const label = ids.length < 60 ? `${ids.indexOf(id) + 1} · ${s.name}` : s.name;
     if (o) {
-      solid.push(point([o.lon, o.lat], {id, color, label, on}));
-      if (m([o.lon, o.lat], [s.lon, s.lat]) > 25) { rings.push(point([s.lon, s.lat], {id, color, on})); tethers.push(line([[o.lon, o.lat], [s.lon, s.lat]])); }
+      const at = on && S.stopDrag ? S.stopDrag : osmPos(o);
+      solid.push(point(at, {id, color, label, on}));
+      // the selected stop always shows the agency's point too, so there's something to drag towards
+      if (on || m(at, [s.lon, s.lat]) > 25) { rings.push(point([s.lon, s.lat], {id, color, on})); tethers.push(line([at, [s.lon, s.lat]])); }
     } else {
       rings.push(point([s.lon, s.lat], {id, color, on, label}));
       if ((st === 'moved' || st === 'ambiguous') && s.match) for (const c of s.match.osm) { const x = D.osm_stops[c.id]; if (x) { solid.push(point([x.lon, x.lat], {id, color, label: x.tags.name || '', on: false})); tethers.push(line([[x.lon, x.lat], [s.lon, s.lat]])); } }
@@ -181,6 +210,7 @@ function draw() {
   if (!map || !map.getSource('stops')) return;
   const p = S.pattern && patternById(S.pattern);
   set('edits', editFeatures());
+  Roads.drawAll();
   if (p) {
     const r = routedOf(p);
     set('shape', p.shape.length ? [line(p.shape)] : []);
@@ -224,14 +254,15 @@ function popupDiv(d, ll) {
     row.append(' ', el('a', {href: '#', onclick: e => { e.preventDefault(); wayTagEditor(w, t, [d.lon, d.lat]); }}, 'edit tags'));
     box.append(row);
   }
-  box.append(el('div', {style: 'margin-top:6px'}, editorButtons({lon: d.lon, lat: d.lat, zoom: 17, select: d.ways.map(w => 'w' + w), pattern: patternById(S.pattern), pts: d.shape, comment: `Bus route ${routeOf(patternById(S.pattern)).short}: ${d.why.slice(0, 80)}`}, {small: true})));
+  box.append(el('div', {style: 'margin-top:6px'}, el('button', {class: 'b primary tiny', style: 'margin-right:4px', onclick: () => { document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); Roads.editAt([d.lon, d.lat]); }}, 'Edit roads here'),
+    editorButtons({lon: d.lon, lat: d.lat, zoom: 17, select: d.ways.map(w => 'w' + w), pattern: patternById(S.pattern), pts: d.shape, comment: `Bus route ${routeOf(patternById(S.pattern)).short}: ${d.why.slice(0, 80)}`}, {small: true})));
   new maplibregl.Popup({closeButton: true, maxWidth: '360px'}).setLngLat(ll).setDOMContent(box).addTo(map);
 }
-/** A tiny tag editor for a way: enough for oneway/access/bus fixes, not for geometry. */
-function wayTagEditor(wid, tags, at) {
+/** A tiny tag editor for a way: enough for oneway/access/bus fixes. base: the live way, when the road editor has it. */
+function wayTagEditor(wid, tags, at, base) {
   const cur = Edits.get('w' + wid);
   const t = {...(cur ? cur.tags : tags)};
-  const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags only. Geometry (splitting, drawing) is RapiD\'s job.'));
+  const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags. To split or reconnect it, turn on Roads (map, top right).'));
   const grid = el('div', {class: 'kv', style: 'grid-template-columns:max-content 1fr auto'});
   const rows = {};
   const addRow = (k, v) => {
@@ -248,7 +279,8 @@ function wayTagEditor(wid, tags, at) {
       const nt = {};
       for (const [kin, vin] of Object.values(rows)) if (kin.value.trim()) nt[kin.value.trim()] = vin.value.trim();
       const removed = Object.keys(tags).filter(k => !(k in nt));
-      Edits.modify('way', wid, {version: null, tags, nodes: (patternById(S.pattern) || {}).way_nodes?.[wid]}, {tags: nt, removeTags: removed}, `way ${wid}: ${(tags.name || tags.highway || '')}`);
+      if (base) Roads.modifyWay(wid, {tags: nt, removeTags: removed}, `way ${wid}: ${(tags.name || tags.highway || '')}`);
+      else Edits.modify('way', wid, {version: null, tags, nodes: (patternById(S.pattern) || {}).way_nodes?.[wid]}, {tags: nt, removeTags: removed}, `way ${wid}: ${(tags.name || tags.highway || '')}`);
       toast('Way tags added to changes'); pop.remove(); render(); draw();
     }}, 'Add to changes')));
   const pop = new maplibregl.Popup({closeButton: true, maxWidth: '380px'}).setLngLat(at).setDOMContent(box).addTo(map);
@@ -274,11 +306,12 @@ function render() {
   const P = $('#panel'); P.innerHTML = '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
-  if (S.tab === 'routes') S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
+  if (S.tab === 'routes') S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
   else if (S.tab === 'changes') renderChanges(P);
   else renderAbout(P);
+  syncHash();
 }
 const tile = (n, label, cls = '') => el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
 const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
@@ -311,8 +344,62 @@ function renderRoutes(P) {
   }
 }
 
+// ---------- undo / redo: every change to the basket, stop tags to road edits ----------
+function undoRedo(which) {
+  const what = which === 'undo' ? Edits.undo() : Edits.redo();
+  if (!what) return toast(which === 'undo' ? 'Nothing to undo' : 'Nothing to redo');
+  toast(`${which === 'undo' ? 'Undone' : 'Redone'}: ${what}`);
+  if (Roads.sel) Roads.deselect();   // what was selected may be gone (a new node) or somewhere else now
+  render(); draw(); Roads.status();
+}
+function undoBar() {
+  const b = $('#undobar'); if (!b) return;
+  b.innerHTML = '';
+  const last = Edits.history[Edits.history.length - 1], next = Edits.future[Edits.future.length - 1];
+  b.append(el('button', {class: 'b tiny', disabled: last ? null : '', title: last ? `Undo${last.label ? ': ' + last.label : ''} (⌘Z / Ctrl+Z)` : 'Nothing to undo', onclick: () => undoRedo('undo')}, '↶'),
+           el('button', {class: 'b tiny', disabled: next ? null : '', title: next ? `Redo${next.label ? ': ' + next.label : ''} (⇧⌘Z / Ctrl+Y)` : 'Nothing to redo', onclick: () => undoRedo('redo')}, '↷'));
+}
+document.addEventListener('keydown', e => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  // typing in a field keeps the field's own undo
+  const t = e.target;
+  if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+  if (!D) return;
+  e.preventDefault();
+  undoRedo(k === 'y' || e.shiftKey ? 'redo' : 'undo');
+});
+
+// ---------- links: the address says what is open, so a place can be shared or bookmarked ----------
+// #pattern=5741:0:29240:19&div=0 · #stop=9837984 · #tab=changes
+function linkTo(o) { return '#' + new URLSearchParams(Object.entries(o).filter(([, v]) => v != null && v !== '')).toString().replace(/%3A/g, ':'); }
+function copyLink(o) {
+  const url = location.origin + location.pathname + linkTo(o);
+  history.replaceState(null, '', linkTo(o));
+  navigator.clipboard.writeText(url).then(() => toast('Link copied'), () => toast(url, 8000));
+}
+let hashRead = false;   // until the address has been read on load, it is not ours to overwrite
+function syncHash() {
+  if (!hashRead) return;
+  const h = S.tab === 'stops' && S.stop ? linkTo({stop: S.stop}) : S.tab === 'routes' && S.review ? linkTo({review: S.review}) : S.tab === 'routes' && S.pattern ? linkTo({pattern: S.pattern, div: S.div}) : S.tab !== 'routes' ? linkTo({tab: S.tab}) : '';
+  if (h !== location.hash && !(h === '' && !location.hash)) history.replaceState(null, '', h || location.pathname);
+}
+function applyHash() {
+  hashRead = true;
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }
+  else if (q.get('pattern') && patternById(q.get('pattern'))) {
+    selectPattern(q.get('pattern'));
+    const dv = patternById(q.get('pattern')).routed.divergences[+q.get('div')];
+    if (q.get('div') != null && dv) { S.div = +q.get('div'); render(); showDivergence(dv); }
+  } else if (q.get('stop') && D.stops[q.get('stop')]) showStop(q.get('stop'));
+  else if (['stops', 'extra', 'changes', 'about'].includes(q.get('tab'))) { S.tab = q.get('tab'); render(); draw(); }
+}
+function showDivergence(dv) { fit(dv.shape && dv.shape.length ? dv.shape : [[dv.lon, dv.lat]], 120); popupDiv(dv, [dv.lon, dv.lat]); }
+
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.viaMode = false; S.tab = 'routes';
+  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null;
   render(); draw();
   const p = patternById(id);
   fit(p.shape.length ? p.shape : p.stops.map(s => [D.stops[s].lon, D.stops[s].lat]));
@@ -320,7 +407,7 @@ function selectPattern(id) {
 
 function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
-  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
+  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
   const d = el('div', {class: 'detail'});
   d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
   d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · direction ${p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
@@ -330,11 +417,17 @@ function renderPattern(P, p) {
     el('span', {class: 'k'}, 'drivable'), el('span', {}, `${pct(sc.shape_covered)} of the agency's line can be driven on OSM as mapped (${pct(sc.path_on_shape)} of the drivable path stays on the line)`),
     el('span', {class: 'k'}, 'path'), el('span', {}, `${rt.ways.length} ways · ${rt.legs.filter(l => l.ok).length}/${rt.legs.length} legs connect · ${p.chain_ok ? 'continuous' : 'BROKEN — a router would reject this'}`),
     (!S.routed && (p.chain_breaks || []).length) ? el('span', {class: 'k'}, 'chain') : null,
-    (!S.routed && (p.chain_breaks || []).length) ? el('span', {}, `${p.chain_breaks.filter(b => b.kind === 'split').length} ways to split in JOSM/RapiD before the relation validates `, ...chainLinks(p.chain_breaks.filter(b => b.kind !== 'split')), el('details', {style: 'display:inline'}, el('summary', {style: 'display:inline;cursor:pointer'}, 'where'), ' ', ...chainLinks(p.chain_breaks.filter(b => b.kind === 'split')))) : null));
+    (!S.routed && (p.chain_breaks || []).length) ? el('span', {}, `${p.chain_breaks.filter(b => b.kind === 'split').length} ways to split (Roads, on the map) before the relation validates `, ...chainLinks(p.chain_breaks.filter(b => b.kind !== 'split')), el('details', {style: 'display:inline'}, el('summary', {style: 'display:inline;cursor:pointer'}, 'where'), ' ', ...chainLinks(p.chain_breaks.filter(b => b.kind === 'split')))) : null));
 
   const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
   btns.append(el('button', {class: 'b primary', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
+  {
+    const sts = Review.stops(p).filter(st => st.o && !st.inChanges && (st.status === 'matched' || st.status === 'moved'));
+    const asks = sts.reduce((n, st) => n + Object.values(st.decide).filter(d => d.pick === 'ask').length, 0);
+    btns.append(el('button', {class: 'b primary', title: "flagstop's suggestion for every difference between the agency and OSM on this route's stops, for you to check", onclick: () => Review.open(p.id)},
+      `Check stops${asks ? ` (${asks} question${asks > 1 ? 's' : ''})` : ''}`));
+  }
   btns.append(el('button', {class: 'b', onclick: () => openIn('rapid', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p, comment: `Bus route ${r.short} ${p.headsign || ''}`.trim()})}, 'Open in RapiD with line'));
   btns.append(el('button', {class: 'b', onclick: () => openIn('id', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p})}, 'iD'));
   btns.append(el('button', {class: 'b' + (S.viaMode ? ' on' : ''), onclick: () => { S.viaMode = !S.viaMode; map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : ''; render(); }}, S.viaMode ? 'Click the map to add a via point…' : 'Re-route via a point'));
@@ -344,12 +437,13 @@ function renderPattern(P, p) {
   if (rt.divergences.length) {
     d.append(el('h2', {style: 'margin-left:0'}, `Where the map and the line disagree (${rt.divergences.length})`));
     const ul = el('ul', {class: 'plain'});
-    for (const dv of rt.divergences) {
-      ul.append(el('li', {class: 'item click', onclick: () => { fit(dv.shape && dv.shape.length ? dv.shape : [[dv.lon, dv.lat]], 120); popupDiv(dv, [dv.lon, dv.lat]); }},
+    rt.divergences.forEach((dv, i) => {
+      ul.append(el('li', {class: 'item click' + (S.div === i && !S.routed ? ' on' : ''), onclick: () => { if (!S.routed) { S.div = i; syncHash(); } showDivergence(dv); }},
         el('div', {}, el('b', {}, dv.kind === 'no-path' ? 'no path' : dv.kind === 'uncovered' ? 'line not followed' : 'detour'), ` · ${dv.length} m`, dv.max ? el('span', {class: 'muted'}, ` · up to ${dv.max} m off`) : null,
-          dv.leg != null ? el('span', {class: 'muted'}, ` · after stop ${dv.leg + 1}`) : null),
+          dv.leg != null ? el('span', {class: 'muted'}, ` · after stop ${dv.leg + 1}`) : null,
+          S.routed ? null : el('a', {href: linkTo({pattern: p.id, div: i}), class: 'muted', style: 'float:right', title: 'link to this place', onclick: e => { e.stopPropagation(); e.preventDefault(); copyLink({pattern: p.id, div: i}); }}, 'link')),
         el('div', {class: 'why'}, dv.why)));
-    }
+    });
     d.append(ul);
   }
 
@@ -414,6 +508,11 @@ function renderAudit(a, p) {
 function proposeRelation(p) {
   const rt = routedOf(p);
   if (!p.chain_ok && !S.routed) { if (!confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return; }
+  // The routed path and the relations here were read before any road edit in Changes: building from them
+  // would put back ways that were split or reconnected, and undo the repair made to the relation.
+  const reshaped = new Set(Object.values(Edits.ops).filter(o => o.type === 'way' && String(o.note || '').startsWith('road: ')).map(o => o.id));
+  const hit = [...rt.ways, ...p.relations.flatMap(a => a.members.filter(x => x.type === 'way').map(x => x.ref))].filter(w => reshaped.has(w));
+  if (hit.length && !confirm(`Road edits in Changes reshape ${[...new Set(hit)].map(w => 'w' + w).join(', ')}, which this itinerary uses. The relations on them were already repaired; this proposal is from before those edits and would undo that.\n\nUpload the road edits and re-run tool/review.py --refresh first. Propose anyway?`)) return;
   const members = [];
   const missing = [];
   for (const sid of p.stops) {
@@ -559,12 +658,22 @@ function identityTags(s) {
   for (const k of ['ref', 'gtfs:stop_id', 'gtfs:stop_code', 'route_ref']) if (s.proposed_tags[k]) t[k] = s.proposed_tags[k];
   return t;
 }
+const compass = (a, b) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(((Math.atan2((b[0] - a[0]) * Math.cos(a[1] * Math.PI / 180), b[1] - a[1]) * 180 / Math.PI) + 360) % 360 / 45) % 8];
+/** Where an OSM stop is now: moved in Changes, or as OSM has it. */
+function osmPos(o) { const op = Edits.get('n' + osmNumId(o)); return op && op.lat != null ? [op.lon, op.lat] : [o.lon, o.lat]; }
 function osmStopBox(s, o, c, pickable) {
   const box = el('div', {class: 'small box'});
   const op = Edits.get('n' + osmNumId(o));
-  box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${c.dist} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'edited') : null));
+  box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${Math.round(m(osmPos(o), [s.lon, s.lat]))} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'edited') : null));
   box.append(el('div', {class: 'muted mono'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
-  const diff = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
+  const base = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
+  const diff = base && {...base};
+  // The review only calls a position different past 25 m (closer is the same stop placed by two hands), but
+  // moving it to the agency's point is always on offer, as long as there's a distance to speak of.
+  // Measured from where the stop is now: moved in Changes (by hand, say), or as OSM has it.
+  const cur = osmPos(o), d = m(cur, [s.lon, s.lat]), placed = cur[0] !== o.lon || cur[1] !== o.lat;
+  if (diff) delete diff.position;
+  if (diff && d >= 2) diff.position = {gtfs: `${Math.round(d)} m ${compass(cur, [s.lon, s.lat])} of the OSM stop${placed ? ' as you placed it' : ''}`, osm: 'kept', near: d <= 25};
   if (diff && Object.keys(diff).length) {
     const g = el('div', {class: 'diff'}, el('span', {class: 'hd'}, 'use'), el('span', {class: 'hd'}, 'key'), el('span', {class: 'hd'}, 'agency says'), el('span', {class: 'hd'}, 'OSM has'));
     const checks = {};
@@ -573,7 +682,8 @@ function osmStopBox(s, o, c, pickable) {
       const isIdentity = ['ref', 'gtfs:stop_id', 'route_ref'].includes(k);
       const cb = el('input', {type: 'checkbox', checked: isIdentity ? '' : null, title: isIdentity ? 'identity: the agency is the source' : 'the mapper may know better'});
       checks[k] = cb;
-      g.append(cb, el('span', {class: 'k'}, k), el('span', {class: 'g'}, k === 'position' ? v.gtfs : (v.gtfs || '—')), el('span', {class: 'o'}, k === 'position' ? 'on the sign, probably' : (v.osm || '—')));
+      g.append(cb, el('span', {class: 'k'}, k), el('span', {class: 'g'}, k === 'position' ? v.gtfs : (v.gtfs || '—')),
+        el('span', {class: 'o'}, k === 'position' ? (v.near ? 'close enough to be the same spot' : 'on the sign, probably') : (v.osm || '—')));
     }
     box.append(g);
     if (diff.tagging) box.append(el('div', {class: 'muted'}, `tagging: OSM has ${diff.tagging.osm}; PTv2 wants ${diff.tagging.gtfs}`));
@@ -586,6 +696,7 @@ function osmStopBox(s, o, c, pickable) {
       toast('Added to changes'); render(); draw();
     }}, 'Apply ticked → changes'), el('span', {class: 'muted', style: 'align-self:center'}, 'gtfs:stop_id is always added')));
   } else if (diff) box.append(el('div', {style: 'color:var(--ok)'}, 'Tags agree with the feed.'));
+  if (S.stop === s.id && diff) box.append(el('div', {class: 'muted'}, 'Or put it exactly where the sign is: drag its solid dot on the map.'));
   const row = el('div', {class: 'btns'});
   if (pickable) row.append(el('button', {class: 'b primary tiny', onclick: () => { Edits.decisions[s.id] = o.id; Edits.save(); render(); draw(); }}, 'This one'));
   row.append(editorButtons({lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}, {small: true, primaryLabel: 'RapiD'}));
@@ -616,19 +727,89 @@ function renderExtra(P) {
 }
 
 // ---------- changes ----------
+/** A changeset comment that says what this basket does: which routes, which relations, which stop tags. */
+function changesetComment() {
+  const ops = Object.values(Edits.ops).filter(o => o.kind !== 'modify' || Edits.diff(o).length);
+  const shortOf = p => p && (routeOf(p) || {}).short;
+  const list = (xs, n = 3) => xs.length > n ? `${xs.slice(0, n).join(', ')} and ${xs.length - n} more` : xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs.join('');
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  // [{k, before, after}] -> 'add a and b, change c, remove d' (a rename is just 'rename')
+  const tagWords = diffs => {
+    const by = {add: [], change: [], remove: []};
+    for (const x of diffs) if (x.k !== 'members' && x.k !== 'position' && !Object.values(by).flat().includes(x.k)) by[x.before == null || x.before === '' ? 'add' : x.after == null || x.after === '' ? 'remove' : 'change'].push(x.k);
+    const renamed = by.change.includes('name');
+    by.change = by.change.filter(k => k !== 'name');
+    return [renamed ? 'rename' : null, ...Object.entries(by).filter(([, ks]) => ks.length).map(([w, ks]) => `${w} ${list(ks, 4)}`)].filter(Boolean).join(', ');
+  };
+  const routes = new Set(), parts = [];
+  // Route relations, per route: merged duplicates, rebuilt members, added tags, new ones.
+  const byRoute = {};
+  const isRoad = o => String(o.note || '').startsWith('road: ');
+  for (const o of ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o))) {
+    const r = o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : shortOf(patternById(o.note));
+    (byRoute[r || '?'] = byRoute[r || '?'] || []).push(o);
+  }
+  for (const [r, os] of Object.entries(byRoute)) {
+    routes.add(r);
+    const del = os.filter(o => o.kind === 'delete').map(o => 'r' + o.id), kept = os.filter(o => o.kind === 'modify'), made = os.filter(o => o.kind === 'create');
+    if (del.length && kept.length) parts.push(`merge duplicate route relations into ${kept.map(o => 'r' + o.id).join(', ')} (delete ${list(del)})`);
+    else if (del.length) parts.push(`delete duplicate route relation${del.length > 1 ? 's' : ''} ${list(del)}`);
+    for (const o of kept) {
+      const diff = Edits.diff(o), words = tagWords(diff);
+      if (diff.some(x => x.k === 'members')) parts.push(`rebuild r${o.id} platforms and ways from the GTFS pattern`);
+      if (words) parts.push(`r${o.id}: ${words}`);
+    }
+    if (made.length) parts.push(`new route relation${made.length > 1 ? 's' : ''} for ${list(made.map(o => (patternById(o.note) || {}).headsign || 'its pattern'))}`);
+  }
+  const masters = ops.filter(o => o.type === 'relation' && String(o.note || '').startsWith('master:'));
+  if (masters.length) parts.push(`update route_master ${list(masters.map(o => o.kind === 'create' ? 'new' : 'r' + o.id))}`);
+  // Stops: what happened to them, and the tags touched.
+  const nodes = ops.filter(o => o.type === 'node' && !isRoad(o));
+  const added = nodes.filter(o => o.kind === 'create'), moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position'));
+  const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position'));
+  if (added.length) parts.push(`add ${plural(added.length, 'bus stop')}`);
+  if (moved.length) parts.push(`move ${plural(moved.length, 'stop')} to the agency position`);
+  if (tagged.length) {
+    // One wording for all of them: a key counts as 'added' only if every stop lacked it.
+    const seen = {};
+    for (const x of tagged.flatMap(o => Edits.diff(o))) if (x.k !== 'position') seen[x.k] = seen[x.k] && seen[x.k].before ? seen[x.k] : x;
+    parts.push(`${plural(tagged.length, 'stop')}: ${tagWords(Object.values(seen))}`);
+  }
+  for (const o of nodes) if (o.route) routes.add(o.route);   // stops checked route by route: that route, not every route calling there
+  if (!routes.size) for (const o of nodes) for (const r of (D.stops[o.tags['gtfs:stop_id']] || {}).routes || []) routes.add((D.routes.find(x => x.id === r) || {}).short);
+  // Road edits say what they did (split, reconnect, move, add); relations they repaired aren't listed again.
+  const road = [...new Set(ops.filter(isRoad).map(o => o.note.slice(6)))];
+  if (road.length) parts.unshift(`${list(road.map(x => x.replace(/^\w/, c => c.toLowerCase())), 3)}; routes on them repaired`);
+  const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && Edits.diff(o).some(x => x.k !== 'nodes'));
+  if (ways.length) parts.push(`${plural(ways.length, 'way')}: ${tagWords(ways.flatMap(o => Edits.diff(o)))}`);
+  const rs = [...routes].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
+  // The agency is in the changeset's source tag; the comment spends its 255 characters on what changed.
+  const head = rs.length ? `Bus route${rs.length > 1 ? 's' : ''} ${list(rs, 5)}` : 'Bus routes';
+  const text = `${head}: ${parts.join('; ')}`;
+  return text.length <= 255 ? text : text.slice(0, 254) + '…';   // OSM caps tag values at 255 characters
+}
 function renderChanges(P) {
   const ops = Object.entries(Edits.ops);
   const user = Edits.auth.user();
   const d = el('div', {class: 'detail'});
   d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} change${ops.length > 1 ? 's' : ''} waiting` : 'No changes yet'));
   d.append(el('div', {class: 'hint', style: 'padding-left:0'}, 'Everything you decided, as one changeset. Review each line; remove what you don\'t want. Upload sends it to OSM under your account. Or take it to JOSM as osmChange, or Level0 as text.'));
+  const sug = Review.suggestedInChanges();
+  if (sug) d.append(el('div', {class: 'small box' + (sug > SUGGEST_CAP ? ' bad' : '')}, el('b', {}, `${sug} / ${SUGGEST_CAP} checked suggestions`),
+    el('span', {class: 'muted'}, sug > SUGGEST_CAP ? ' — over the limit for one upload. Remove some, or undo a route.' : ' in this upload. At most 50 go up at a time, like RapiD\'s limit on AI suggestions: enough to check properly, small enough for others to review.')));
+  if (Edits.roads.length) d.append(el('div', {class: 'small box'}, el('b', {}, `${Edits.roads.length} road edit${Edits.roads.length > 1 ? 's' : ''}`),
+    el('span', {class: 'muted'}, ' — each is several lines below (new nodes, ways, the relations repaired around them) that only work together: take one back with Undo (⌘Z / Ctrl+Z), not line by line.')));
   for (const [key, op] of ops) {
     const box = el('div', {class: 'small box'});
     const label = op.kind === 'create' ? 'new ' + op.type : op.kind === 'delete' ? 'delete ' + op.type + ' ' + op.id : `${op.type} ${op.id}`;
-    box.append(el('div', {}, el('b', {}, label), ' ', el('span', {class: 'muted'}, op.note || ''), el('button', {class: 'b tiny', style: 'float:right', onclick: () => { Edits.remove(key); render(); draw(); }}, 'remove')));
+    const road = Edits.roadOf(key);
+    box.append(el('div', {}, el('b', {}, label), ' ', el('span', {class: 'muted'}, op.note || ''),
+      road ? el('span', {class: 'chip edit', style: 'float:right', title: 'Part of a road edit: undo road edits (newest first) to take it back'}, 'road edit')
+           : el('button', {class: 'b tiny', style: 'float:right', onclick: () => { Edits.remove(key); render(); draw(); }}, 'remove')));
     if (op.kind === 'create') {
       box.append(el('div', {class: 'mono muted'}, Object.entries(op.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
       if (op.type === 'relation') box.append(el('div', {class: 'muted'}, `${op.members.length} members`));
+      if (op.type === 'way') box.append(el('div', {class: 'muted'}, `${op.nodes.length} nodes`));
       if (op.type === 'node') box.append(el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); map.flyTo({center: [op.lon, op.lat], zoom: 18}); }}, `${op.lat.toFixed(5)}, ${op.lon.toFixed(5)}`));
     } else if (op.kind === 'delete') {
       box.append(el('div', {class: 'mono muted'}, (op.tags.name || '') + ' ' + (op.tags.ref || '')));
@@ -640,11 +821,12 @@ function renderChanges(P) {
     d.append(box);
   }
   if (ops.length) {
-    const comment = el('input', {placeholder: 'changeset comment', value: S.comment || `${D.agency.agency_name}: bus stops and routes from the agency's GTFS, reviewed`, style: 'width:100%', oninput: e => S.comment = e.target.value});
+    const comment = el('input', {placeholder: 'changeset comment', value: S.comment || changesetComment(), style: 'width:100%', oninput: e => S.comment = e.target.value});
     d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment);
     const status = el('div', {class: 'small muted', style: 'margin:6px 0'});
     const btns = el('div', {class: 'btns'});
-    if (user) {
+    if (user && sug > SUGGEST_CAP) btns.append(el('button', {class: 'b primary', disabled: ''}, `Upload (over the ${SUGGEST_CAP}-suggestion limit)`));
+    else if (user) {
       btns.append(el('button', {class: 'b primary', onclick: async () => {
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
         try {
@@ -684,19 +866,22 @@ function renderAbout(P) {
     el('p', {}, el('b', {}, D.agency.agency_name), el('br'), `feed ${f.file} · version "${f.feed_version || '?'}" · ${f.feed_start_date || ''}–${f.feed_end_date || ''}`, el('br'), `OSM data fetched ${D.osm_fetched} · review built ${D.generated}`),
     el('p', {}, el('b', {}, 'What the agency is good for.'), ' Which stops exist, their codes, which routes call and in what order. What it is rough on: positions (10–30 m is normal — the OSM node on the sign is usually better), names (often an address), and shapes drawn by hand. flagstop treats identity as the agency\'s and everything else as your call.'),
     el('p', {}, 'The ', el('span', {style: 'color:var(--shape)'}, 'dashed orange line'), ' is the agency\'s drawn shape. The ', el('span', {style: 'color:var(--routed)'}, 'blue line'), ' is where a bus can drive on OSM\'s roads while hugging that shape (oneway, access and bus/psv tags honoured). Where they part, something is wrong on one side: a road missing or cut in OSM, a oneway the wrong way, or a sloppy shape. ', el('span', {style: 'color:var(--rel)'}, 'Purple'), ' is what OSM\'s route relation currently contains. Rings are agency stop positions, dots are OSM nodes.'),
-    el('p', {}, el('b', {}, 'Editing.'), ' Stop and relation decisions go into Changes and leave as one changeset (your OSM login), an osmChange file for JOSM, or Level0 text. Way tags (oneway, access) can be edited from a divergence. Geometry — drawing a road, splitting a way, moving things by eye — is RapiD\'s job: every "Open in RapiD" carries the agency line as an overlay and pre-fills the changeset comment.'),
+    el('p', {}, el('b', {}, 'Editing.'), ' Stop and relation decisions go into Changes and leave as one changeset (your OSM login), an osmChange file for JOSM, or Level0 text. Way tags (oneway, access) can be edited from a divergence. Roads (map, top right) splits, reconnects, moves and adds road segments on live OSM data and repairs every route on them in the same changeset — what RapiD refuses when a route runs through. Shaping roads by eye is RapiD\'s: every "Open in RapiD" carries the agency line as an overlay and pre-fills the changeset comment.'),
     el('p', {}, el('b', {}, 'Detours.'), ' Map the regular route. A detour of days or weeks isn\'t mapped; OSM can\'t keep up and the churn is worse than the lag. A long one (months) is, with a note=* on the relation saying it\'s a diversion, reverted afterwards. Stops named Temp/Detour and itineraries run only by a short-dated service are marked temporary here and left out of proposals.'),
     el('p', {}, el('b', {}, 'Before uploading much'), ', read ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Import/Guidelines', target: '_blank'}, 'Import/Guidelines'), ' and ', el('a', {href: 'https://wiki.openstreetmap.org/wiki/Automated_Edits_code_of_conduct', target: '_blank'}, 'the automated-edits code of conduct'), '. Reviewing route by route and uploading what you\'ve checked is mapping; uploading all of it unread is an import, and needs the licence checked and the community told first.')));
 }
 
 // ---------- boot ----------
-document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; if (S.tab !== 'routes') { S.pattern = null; S.vias = []; S.routed = null; } if (S.tab !== 'stops') S.stop = null; render(); draw(); });
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; if (S.tab !== 'routes') { S.pattern = null; S.review = null; S.vias = []; S.routed = null; } if (S.tab !== 'stops') S.stop = null; render(); draw(); });
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name);
-  Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; });
+  Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
+  undoBar();
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.slice(0, 10)}`;
   try { if (await Edits.auth.complete()) { S.tab = 'changes'; toast('Signed in to OSM'); } } catch (e) { toast('Sign-in failed: ' + e.message, 8000); }
   render();
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }
 }).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });
+
+window.addEventListener('hashchange', () => { if (D && map) applyHash(); });

@@ -95,3 +95,56 @@ button.b.tiny { font-size: 11px; padding: 2px 7px; }
 .kv input { font: inherit; font-size: 12px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); }
 #legend .ring { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; border: 1.5px solid; background: transparent; }
 #legend .ring.amb { border-color: var(--amb); } #legend .ring.miss { border-color: var(--miss); } #legend .ring.edit { border-color: var(--edit); }
+
+/* road editing */
+.roadsbtn { width: auto !important; padding: 0 8px !important; font: 600 12px system-ui, sans-serif; }
+.roadsbtn.on { background: var(--edit) !important; color: #fff; }
+#roadpanel { position: absolute; left: 10px; top: 10px; z-index: 5; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: calc(100% - 140px); pointer-events: none; }
+#roadpanel > * { pointer-events: auto; }
+#roadstatus { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+.roadacts { margin: 6px 0; }
+.roadrow { border-top: 1px solid var(--line); padding: 5px 0; }
+.roadrow .btns { margin: 3px 0 0; }
+.roadrow .btns { display: inline-flex; gap: 4px; margin: 2px 0 0; }
+.roadrow details summary { cursor: pointer; font-size: 11px; }
+.maplibregl-popup-content .roadacts { max-height: 45vh; overflow-y: auto; }
+#roadcard { width: 320px; max-width: 100%; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+#roadcard .close { float: right; margin: -4px -6px 0 6px; }
+.roadkey { margin: 8px 0 6px; display: grid; gap: 5px; }
+.roadkeyrow { display: flex; align-items: center; gap: 8px; }
+.roadkeyrow .grow { flex: 1; min-width: 0; }
+.roadkeyrow .sw { flex: none; width: 22px; height: 0; border-top: 6px solid var(--c); border-radius: 3px; }
+.roadkeyrow .sw.thru { border-top-style: dashed; border-top-width: 4px; }
+.roadhint { color: var(--muted); font-size: 11.5px; margin: 4px 0 6px; }
+#undobar { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
+#undobar button { padding: 0 6px; font-size: 13px; line-height: 18px; }
+button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
+#roadpanel.dragging #roadcard { opacity: .25; pointer-events: none; }
+#roadundo { display: flex; flex-direction: column; }
+#roadundo button { width: auto !important; height: auto !important; display: flex; align-items: center; gap: 6px; padding: 5px 10px !important; font: 600 12px system-ui, sans-serif; color: #1c1b18; text-align: left; max-width: 240px; }
+#roadundo button .ico { font-size: 16px; line-height: 1; }
+#roadundo button:disabled { color: #8a857b; background: #f3f1ec; cursor: default; }
+#roadundo button:not(:disabled):hover { background: #e6f4f5; }
+
+/* checking a route's stops */
+.reviewlist { margin-top: 10px; }
+.reviewrow { display: flex; gap: 8px; align-items: flex-start; padding: 8px 6px; border-top: 1px solid var(--line); cursor: pointer; border-radius: 4px; }
+.reviewrow.on { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.reviewrow.dim { opacity: .6; }
+.reviewrow .n { flex: none; width: 20px; color: var(--muted); font-size: 12px; text-align: right; }
+.reviewrow .grow { flex: 1; min-width: 0; font-size: 12.5px; }
+.reviewrow .pick { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; cursor: pointer; }
+.reviewrow .pick.take > span:first-of-type { color: var(--shape); }
+.reviewrow .why { color: var(--muted); font-size: 11.5px; }
+.reviewrow .kept { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; color: var(--muted); font-size: 11.5px; }
+.reviewrow .ask { margin-top: 5px; padding: 6px 8px; border-left: 3px solid var(--amb); background: color-mix(in srgb, var(--amb) 10%, transparent); border-radius: 3px; }
+.reviewrow .ask.answered { border-left-color: var(--ok); background: transparent; }
+.reviewrow .ask .btns { margin: 4px 0 0; display: flex; gap: 6px; align-items: center; }
+.reviewfoot { position: sticky; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 10px 0; margin-top: 8px; }
+.kv .bad, .box.bad { color: var(--miss); }
+.reviewrow .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; align-items: center; }
+.pickchip { font: inherit; font-size: 11.5px; padding: 1px 7px; border-radius: 10px; cursor: pointer; border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.pickchip.take { background: color-mix(in srgb, var(--shape) 16%, transparent); border-color: color-mix(in srgb, var(--shape) 45%, transparent); color: var(--ink); }
+.pickchip:hover { border-color: var(--accent); }
+.reviewrow .kept { display: inline-flex; gap: 4px; margin: 0; }
+.reviewrow .kept .pickchip { border-style: dashed; }

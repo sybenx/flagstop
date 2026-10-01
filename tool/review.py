@@ -7,13 +7,53 @@ Without --osm-* files the OSM data is fetched from Overpass for the feed's bound
 cache/. Writes web/data/review.json and one proposed relation per pattern, web/data/rel-<id>.osm, for
 JOSM to import.
 """
-import argparse, datetime, json, os, sys
+import math, argparse, datetime, json, os, sys
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gtfs, osm, stops as stopmatch, routes as routing, compare
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def stop_sides(feed, traced, match, osm_stops, kerb=3):
+    """Where each stop sits relative to the buses calling there: 'right' (the kerb they pull into; traffic
+    drives on the right), 'left' (across the street), or None (on the line, or no path). Judged on the path
+    just before and after that stop in each itinerary, so a loop down a street and back up it isn't confused.
+    -> {stop_id: {'osm': ..., 'gtfs': ...}}"""
+    def side(p, geom):
+        best = None
+        for i in range(len(geom) - 1):
+            a, b = geom[i], geom[i + 1]
+            kx = 111320 * math.cos(math.radians(a[1]))
+            vx, vy = (b[0] - a[0]) * kx, (b[1] - a[1]) * 110540
+            wx, wy = (p[0] - a[0]) * kx, (p[1] - a[1]) * 110540
+            L2 = vx * vx + vy * vy
+            if not L2:
+                continue
+            u = max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
+            d = math.hypot(wx - u * vx, wy - u * vy)
+            if best is None or d < best[0]:
+                best = (d, vx * wy - vy * wx)
+        if not best or best[0] < kerb:
+            return None
+        return 'left' if best[1] > 0 else 'right'
+    votes = {}
+    for p in feed.patterns:
+        legs = traced[p.id]['legs']
+        for k, sid in enumerate(p.stops):
+            geom = (legs[k - 1]['geometry'][-12:] if k and legs[k - 1]['ok'] else []) + (legs[k]['geometry'][:12] if k < len(legs) and legs[k]['ok'] else [])
+            if len(geom) < 2:
+                continue
+            s, m = feed.stops[sid], match.get(sid)
+            o = osm_stops.get(m['osm'][0]['id']) if m and m['osm'] else None
+            v = votes.setdefault(sid, {'osm': set(), 'gtfs': set()})
+            v['gtfs'].add(side((s.lon, s.lat), geom))
+            if o:
+                v['osm'].add(side((o['lon'], o['lat']), geom))
+    # a stop some itinerary has on its right is on the right; only 'left' for every one of them counts as across
+    pick = lambda xs: 'right' if 'right' in xs else 'left' if 'left' in xs else None
+    return {sid: {'osm': pick(v['osm']), 'gtfs': pick(v['gtfs'])} for sid, v in votes.items()}
 
 
 def main():
@@ -45,6 +85,13 @@ def main():
     traced = {}
     for p in feed.patterns:
         traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
+    # Which side of the street each stop is on, for the buses that call there; then what to suggest per difference.
+    sides = stop_sides(feed, traced, match, osm_stops)
+    names = {stopmatch.address(st.name): (st.id, st.name) for st in feed.stops.values()}
+    for sid, m in match.items():
+        if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
+            m['decide'] = stopmatch.decide(feed.stops[sid], osm_stops[m['osm'][0]['id']], m['diff'], sides.get(sid), names)
+            m['side'] = sides.get(sid)
     # Which relation is which pattern.
     best, chosen, scores = compare.pair(feed, traced, rels, rel_ways, coords, match)
     masters_by_ref = {}

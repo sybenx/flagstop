@@ -18,6 +18,9 @@ SERVICE_PENALTY = {'driveway': 3.0, 'parking_aisle': 2.2, 'alley': 2.5, 'emergen
 STRAY = 20       # m from the shape a road may be for free
 STRAY_COST = 0.2   # extra cost per metre of road, per metre beyond STRAY: 50 m off costs 7x, so the bus rounds a block
                  # to stay on the line rather than cut through, but still leaves it when the map gives no choice
+SKIP_SLACK = 25  # m: how far the path may get ahead of (or behind) the distance it has driven along the line
+SKIP_COST = 3.0  # cost per metre of line skipped or driven backwards: more than driving it on a service road (1.8),
+                 # so a loop whose end passes its own start can't cut across to it
 SNAP = 60        # m: a stop further than this from any road is placed on no road at all
 SNAP_HANDICAP = {'parking_aisle': 15, 'driveway': 15, 'drive-through': 15}   # m: a stop by the kerb is on the street,
                  # not on the parking aisle that happens to run a few metres closer to its sign
@@ -71,6 +74,26 @@ class Polyline:
                 if d < best[0]:
                     best = (d, i, self.cum[i] + t * (self.cum[i + 1] - self.cum[i]))
         return best
+
+    def positions(self, p, r, lo=None, hi=None):
+        """Every place the line passes within r metres of p: [position along in m], one per pass."""
+        hits = []
+        for i in self.grid.get((int(p[1] / self.cell), int(p[0] / self.cell)), []):
+            if lo is not None and (i < lo or i > hi):
+                continue
+            _, d, t = project(p, self.pts[i], self.pts[i + 1])
+            if d <= r:
+                hits.append((i, d, self.cum[i] + t * (self.cum[i + 1] - self.cum[i])))
+        # consecutive segments near p are one pass; keep the nearest point of each
+        out, last = [], None
+        for i, d, m in sorted(hits):
+            if last is not None and i == last[0] + 1:
+                if d < last[1]:
+                    out[-1] = m
+                last = (i, min(d, last[1]))
+            else:
+                out.append(m); last = (i, d)
+        return out
 
     def slice(self, m0, m1):
         """Points along the line between two distances in metres."""
@@ -213,9 +236,12 @@ class Graph:
                     out[wid] = (d, why); break
         return out
 
-    def astar(self, starts, goals, guide=None, lo=None, hi=None, limit=250000):
+    def astar(self, starts, goals, guide=None, lo=None, hi=None, limit=250000, start_at=None, end_at=None):
         """Cheapest path from any start to any goal.
         starts/goals: {node: initial cost}. guide: Polyline the path should hug (with segment range lo..hi).
+        start_at, end_at: where along the guide (m) the path starts and ends; with them, the path also pays for
+        getting ahead of or behind the line, not only for being far from it, and arriving pays for the line
+        it never drove.
         -> (cost, [nodes], [ways]) or None"""
         goal_pts = [self.coord[g] for g in goals]
 
@@ -233,29 +259,62 @@ class Graph:
                 stray[n] = max(0.0, d - STRAY) * STRAY_COST
             return stray[n]
 
-        dist, prev, pw = {}, {}, {}
+        passes = {}
+
+        def progress(q0, m, L):
+            """-> (position along the line at m, cost of the jump from q0, the position one step back). Of the
+            line's passes by m, the one that follows on; a path cutting across a loop lands far ahead of what it drove."""
+            if q0 is None:
+                return None, 0.0
+            if m not in passes:
+                passes[m] = guide.positions(self.coord[m], STRAY + 10, lo, hi)
+            if not passes[m]:
+                return q0 + L, 0.0
+            want = q0 + L
+            q = min(passes[m], key=lambda x: abs(x - want))
+            ahead = q - q0
+            return q, (max(0.0, ahead - L * 1.5 - SKIP_SLACK) + max(0.0, -ahead - SKIP_SLACK)) * SKIP_COST
+
+        # A search state is a node *and* how far along the line the path is there (in BAND-metre steps):
+        # the same corner reached by cutting across a loop and by driving it are different states, or the
+        # cheap-looking shortcut would claim the node first and the path that follows the line never arrive.
+        BAND = 40
+        band = lambda q: None if q is None else int(q // BAND)
+        dist, prev, pw, at = {}, {}, {}, {}
         pq = []
         for s, c in starts.items():
-            dist[s] = c
-            heapq.heappush(pq, (c + h(s), c, s))
+            q = start_at if guide is not None else None
+            st = (s, band(q))
+            dist[st] = c; at[st] = q
+            heapq.heappush(pq, (c + h(s), c, st, False))
         seen = 0
         while pq:
-            f, c, n = heapq.heappop(pq)
-            if c > dist.get(n, float('inf')):
+            f, c, st, arrived = heapq.heappop(pq)
+            if arrived:
+                path, ways = [st[0]], []
+                while st in prev:
+                    ways.append(pw[st]); st = prev[st]; path.append(st[0])
+                return c, path[::-1], ways[::-1]
+            if c > dist.get(st, float('inf')):
                 continue
+            n = st[0]
             if n in goals:
-                path, ways = [n], []
-                while n in prev:
-                    ways.append(pw[n]); n = prev[n]; path.append(n)
-                return c + goals[path[0]], path[::-1], ways[::-1]
+                # Arriving costs the goal's own offset, and the line between here and the stop left undriven.
+                short = max(0.0, end_at - at[st] - SKIP_SLACK) * SKIP_COST if end_at is not None and at[st] is not None else 0.0
+                heapq.heappush(pq, (c + goals[n] + short, c + goals[n] + short, st, True))
             seen += 1
             if seen > limit:
                 return None
+            back = prev[st][0] if st in prev else None
             for m, wid, fac, L in self.adj.get(n, []):
-                nc = c + L * (fac + stray_cost(m))
-                if nc < dist.get(m, float('inf')):
-                    dist[m] = nc; prev[m] = n; pw[m] = wid
-                    heapq.heappush(pq, (nc + h(m), nc, m))
+                if m == back:
+                    continue   # no U-turn in the street: revisiting a node is allowed now, so say so
+                q, jump = progress(at[st], m, L)
+                nc = c + L * (fac + stray_cost(m)) + jump
+                mt = (m, band(q))
+                if nc < dist.get(mt, float('inf')):
+                    dist[mt] = nc; prev[mt] = st; pw[mt] = wid; at[mt] = q
+                    heapq.heappush(pq, (nc + h(m), nc, mt, False))
         return None
 
 
@@ -308,7 +367,7 @@ def trace(g, stops, shape):
         goals = {s1[2]: s1[4] * Lb}
         if (s1[2], s1[1]) in {(m, w) for (m, w, _, _) in g.adj.get(s1[3], [])}:
             goals[s1[3]] = (1 - s1[4]) * Lb
-        res = g.astar(starts, goals, guide, lo, hi)
+        res = g.astar(starts, goals, guide, lo, hi, start_at=at[k][1] if guide else None, end_at=at[k + 1][1] if guide else None)
         if res is None:
             leg['why'] = 'no drivable path between these stops on the map'
             legs.append(leg); prev_end = None
