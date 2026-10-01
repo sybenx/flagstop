@@ -220,6 +220,15 @@ class Review(unittest.TestCase):
         self.assertFalse(lines, f'{len(lines)} differences from the snapshot (if they are meant, python3 tests/snapshot.py --update):\n' + '\n'.join(lines[:60]))
 
 
+class RouterParity(unittest.TestCase):
+    """web/router.js routes every itinerary as tool/routes.py does (needs node and OSM data in cache/)."""
+    def test_same_answers(self):
+        if not shutil.which('node'):
+            self.skipTest('no node')
+        import router_parity
+        self.assertEqual(router_parity.main([]), 0)
+
+
 class Web(unittest.TestCase):
     def test_scripts_parse(self):
         node = shutil.which('node')
