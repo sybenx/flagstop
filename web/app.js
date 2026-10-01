@@ -28,7 +28,7 @@ function toast(msg, ms = 2500) {
 }
 
 // ---------- editors: RapiD first, iD, JOSM ----------
-const dataUrl = p => p ? `${location.origin}/data/shape-${p.id.replace(/[^A-Za-z0-9]/g, '_')}.gpx` : null;
+const dataUrl = p => p ? new URL(`data/shape-${p.id.replace(/[^A-Za-z0-9]/g, '_')}.gpx`, location.href).href : null;   // works under a path (a published copy) too
 function editorUrl(which, {lon, lat, zoom = 18, select = [], pattern = null, comment = ''}) {
   const h = new URLSearchParams();
   h.set('map', `${zoom}/${lat.toFixed(6)}/${lon.toFixed(6)}`);
@@ -445,18 +445,8 @@ async function retrace() {
 }
 
 // ---------- panel ----------
-/** The OSM data predates the last upload (Overpass hadn't caught up when it was fetched): what's here would
- *  suggest redoing it. Said at the top until a refresh gets newer data. */
-function staleNote() {
-  let last = null; try { last = JSON.parse(localStorage.getItem('flagstop.lastUpload') || 'null'); } catch (e) { /* storage off */ }
-  if (!last || !last.at || !D.osm_base || new Date(D.osm_base) >= new Date(last.at)) return null;
-  const t = s => new Date(s).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-  return el('div', {class: 'note warn'}, `This OSM data is from ${t(D.osm_base)}, before your upload at ${t(last.at)} (changeset ${last.id}): Overpass hadn't caught up yet, so it may suggest what you just did. `,
-    el('button', {class: 'b tiny', onclick: () => refreshOSM()}, 'Refresh again'));
-}
 function render() {
   const P = $('#panel'); P.innerHTML = '';
-  if (S.tab === 'routes' || S.tab === 'stops') { const n = staleNote(); if (n) P.append(n); }
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
   if (S.tab === 'routes') S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
@@ -716,7 +706,7 @@ function renderPattern(P, p) {
       ...c.slice(0, 6).map(x => el('div', {class: 'small'}, `${x.name}: ${x.gone ? 'deleted' : `v${x.from} → v${x.to}`} by ${x.user}, ${x.date} (`,
         el('a', {href: `https://www.openstreetmap.org/changeset/${x.changeset}`, target: '_blank'}, x.changeset), ')')),
       c.length > 6 ? el('div', {class: 'small muted'}, `and ${c.length - 6} more`) : null,
-      el('button', {class: 'b primary tiny', style: 'margin-top:4px', onclick: () => bringIn(cs)}, 'Bring them in')));
+      SERVER ? el('button', {class: 'b primary tiny', style: 'margin-top:4px', onclick: () => bringIn(cs)}, 'Bring them in') : el('div', {class: 'small muted'}, 'This copy is rebuilt from OSM daily; until then, check these on OSM before deciding.')));
   }
   if (!p.routed) P.append(el('div', {class: 'note'}, p.routing || !p.routeError ? "Loading this route's roads from OSM…" : `Couldn't load this route's roads: ${p.routeError}. `,
     !p.routing && p.routeError ? el('button', {class: 'b tiny', onclick: () => { p.routeError = null; ensureRouted(p).then(() => { render(); draw(); }); render(); }}, 'Try again') : null));
@@ -1343,6 +1333,10 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   render(); draw();
   $('#panel').scrollTop = 0; $('#side').scrollTop = 0;   // a list starts at its top
 });
+// tool/serve.py running here? A published copy (GitHub Pages) has no server: no refresh or bring-in, and the
+// data is rebuilt there on a schedule instead.
+let SERVER = false;
+fetch('/api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j && 'running' in j); if (D) render(); }).catch(() => {});
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name);
@@ -1351,7 +1345,7 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.replace('T', ' ')} `;
-  $('#agency').append(el('a', {href: '#', title: 'Fetch OSM again and rebuild the review: after an upload, to see it', onclick: e => { e.preventDefault(); refreshOSM(); }}, 'refresh'));
+  $('#agency').append(el('a', {href: '#', title: 'Fetch OSM again and rebuild the review', onclick: e => { e.preventDefault(); SERVER ? refreshOSM() : toast(`This copy is rebuilt from OSM daily (last ${d.generated}). Your uploads show at once anyway.`, 6000); }}, 'refresh'));
   try { if (await Edits.auth.complete()) { S.tab = 'changes'; toast('Signed in to OSM'); } } catch (e) { toast('Sign-in failed: ' + e.message, 8000); }
   render();
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }

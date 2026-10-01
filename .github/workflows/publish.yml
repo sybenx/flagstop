@@ -1,0 +1,47 @@
+# Build the review from the agency's feed and OSM, and publish the page on GitHub Pages: daily, and when run by
+# hand (Actions -> publish -> Run workflow). Off until the repository variable PUBLISH is set to "yes" (Settings
+# -> Secrets and variables -> Actions -> Variables) and Pages is set to deploy from GitHub Actions (Settings -> Pages).
+# FEED_QUERY (a variable too) says which feed: a Mobility Database search, as tool/catalog.py takes it.
+name: publish
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  build:
+    if: vars.PUBLISH == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # what the last build kept: feed summaries (for "since the last feed"), other agencies' feeds, the catalog
+      - uses: actions/cache@v4
+        with:
+          path: cache
+          key: flagstop-${{ github.run_id }}
+          restore-keys: flagstop-
+      - name: the feed
+        run: python3 tool/catalog.py "${{ vars.FEED_QUERY || 'cache valley' }}" --get
+      - name: the review (stops and routes; each route's roads load in the page)
+        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -88,6 +88,10 @@ flagstop follows the routes the feed gives. Some agencies only publish a detour 
 
 Changes and stop decisions are kept in the browser and, while `tool/serve.py` runs, in `cache/state/` too: another browser on this machine, or this one after its site data is cleared, picks up where you left off (the newer copy wins). Only flagstop's own page can read or write it. Answers on a card you haven't added to Changes yet (a merge, a station) last for the browser tab.
 
+## Publishing it
+
+`.github/workflows/publish.yml` builds the review (the agency's feed from the Mobility Database, OSM's stops and routes) and publishes `web/` on GitHub Pages, daily and when run by hand. The published page needs no server: it routes in the browser and loads each route's roads from Overpass itself; your uploads show at once; what others change is checked live when you open a route, and comes in with the next build. It's off until you turn it on: Settings → Pages → Source: GitHub Actions, and a repository variable `PUBLISH` = `yes` (optionally `FEED_QUERY` for another agency). Check the feed's licence first: the page republishes its stops and shapes.
+
 ## Uploading from the page
 
 Sign in with OSM from the Changes tab. flagstop signs in through one OSM app (a public OAuth 2 client, no secret, like iD's), set in `web/config.js` with the addresses it's registered for. Until that's filled in, or at an address it doesn't cover, register your own once at <https://www.openstreetmap.org/oauth2/applications/new> — name `flagstop`, redirect URI exactly what the Changes tab shows, untick *Confidential application*, tick *read user preferences* and *modify the map* — and paste its client ID there. The token stays in your browser.
