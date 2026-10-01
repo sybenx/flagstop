@@ -127,7 +127,7 @@ function initMap() {
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
     setTimeout(applyHash);   // after the layers below exist
-    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad', 'stale']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad', 'stale', 'look']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
@@ -148,6 +148,21 @@ function initMap() {
     map.addLayer({id: 'stoplabels', type: 'symbol', source: 'stops', minzoom: 15, layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-font': ['Open Sans Semibold'], 'text-optional': true},
       paint: {'text-color': css('--ink'), 'text-halo-color': css('--panel'), 'text-halo-width': 1.5}});
     map.addLayer({id: 'edits', type: 'circle', source: 'edits', paint: {'circle-radius': 10, 'circle-color': css('--edit'), 'circle-opacity': 0.2, 'circle-stroke-color': css('--edit'), 'circle-stroke-width': 2}});
+    // a stop being looked at before deciding: where OSM has it (red), where the agency has it (green), the move between
+    map.addLayer({id: 'lookline', type: 'line', source: 'look', filter: ['==', ['geometry-type'], 'LineString'], layout: {'line-cap': 'round'},
+      paint: {'line-color': '#1c1b18', 'line-width': 3, 'line-dasharray': [2, 1.5]}});
+    map.addLayer({id: 'lookarrows', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'LineString'],
+      layout: {'symbol-placement': 'line', 'symbol-spacing': 40, 'text-field': '›', 'text-size': 22, 'text-font': ['Open Sans Semibold'], 'text-keep-upright': false, 'text-allow-overlap': true},
+      paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
+    map.addLayer({id: 'looklen', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'LineString'],
+      layout: {'symbol-placement': 'line-center', 'text-field': ['get', 'label'], 'text-size': 12, 'text-font': ['Open Sans Semibold'], 'text-offset': [0, -1], 'text-allow-overlap': true},
+      paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
+    map.addLayer({id: 'lookpts', type: 'circle', source: 'look', filter: ['==', ['geometry-type'], 'Point'],
+      paint: {'circle-radius': ['case', ['==', ['get', 'kind'], 'other'], 10, 14], 'circle-color': 'rgba(255,255,255,0.35)',
+        'circle-stroke-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', css('--ok'), '#8a857b'], 'circle-stroke-width': ['case', ['==', ['get', 'kind'], 'other'], 3, 5]}});
+    map.addLayer({id: 'looklabels', type: 'symbol', source: 'look', filter: ['==', ['geometry-type'], 'Point'],
+      layout: {'text-field': ['get', 'label'], 'text-size': 12.5, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1.6, 0], 'text-allow-overlap': true, 'text-max-width': 14},
+      paint: {'text-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', '#1f6b38', '#6f6a60'], 'text-halo-color': '#fff', 'text-halo-width': 2.5}});
     map.addLayer({id: 'vias', type: 'circle', source: 'vias', paint: {'circle-radius': 6, 'circle-color': css('--div'), 'circle-stroke-color': '#fff', 'circle-stroke-width': 2}});
     for (const layer of ['stops', 'gtfs', 'osmstops', 'div']) {
       map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
@@ -217,6 +232,7 @@ function draw() {
   set('edits', editFeatures());
   set('fixroad', typeof Fix !== 'undefined' ? Fix.features() : []);
   set('stale', typeof Merge !== 'undefined' ? Merge.staleFeatures() : []);
+  set('look', lookFeatures());
   Roads.drawAll();
   if (p) {
     const r = routedOf(p);
@@ -407,6 +423,20 @@ function lookAt(sid) {
   fit(pts, 110);
 }
 const looked = sid => S.looked.has(sid);
+/** The stop being looked at, drawn to stand out: OSM's stop now, the agency's spot, and the move between. */
+function lookFeatures() {
+  const s = S.lookStop && D.stops[S.lookStop];
+  if (!s) return [];
+  const c = (s.match && s.match.osm) || [], o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
+  const to = [s.lon, s.lat], out = [point(to, {kind: 'to', label: `agency: ${s.name}`})];
+  if (o) {
+    const now = osmPos(o), dm = Math.round(m(now, to));
+    out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
+    if (dm >= 3) out.push(line([now, to], {label: `${dm} m`}));
+  }
+  for (const x of c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
+  return out;
+}
 /** 'Look at it' until it has been looked at; then where it is, and the imagery to judge by. */
 function lookButtons(s, o) {
   if (!looked(s.id)) return el('button', {class: 'b tiny primary', onclick: () => lookAt(s.id)}, 'Look at it on the map');
