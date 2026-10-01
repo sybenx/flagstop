@@ -181,6 +181,25 @@ class FeedChanges(unittest.TestCase):
         self.assertEqual(d['routes_changed'][0]['stops_added'], ['d'])
 
 
+class OtherAgencies(unittest.TestCase):
+    def test_shared_stop_by_their_feed_lists_both(self):
+        conv = {'network': 'Connect Public Transit', 'operator': 'Connect Public Transit'}
+        o = osm('x', operator='Utah State University')
+        df = stops.network_diff(Feed(), o, conv)
+        self.assertEqual(stops.decide(Stop('x'), o, df)['operator']['pick'], 'ask')
+        o['served_by'] = ['Utah State University']
+        self.assertEqual(stops.decide(Stop('x'), o, df)['operator']['pick'], 'agency')
+        self.assertEqual(df['operator']['gtfs'], 'Utah State University;Connect Public Transit')
+
+    def test_stops_in_area(self):
+        import io, tempfile, zipfile, others
+        path = os.path.join(tempfile.mkdtemp(), 'x.zip')
+        with zipfile.ZipFile(path, 'w') as z:
+            z.writestr('stops.txt', 'stop_id,stop_name,stop_lat,stop_lon,location_type\n1,In,41.74,-111.83,0\n2,Out,40.0,-111.83,0\n3,Station,41.74,-111.83,1\n')
+        got = others.stops_in(path, (41.6, -111.9, 41.8, -111.7), 'Shuttle')
+        self.assertEqual([x['name'] for x in got], ['In'])
+
+
 class Positions(unittest.TestCase):
     def test_same_spot_distance_comes_from_the_feed(self):
         res = {str(i): {'status': 'matched', 'osm': [{'dist': 5, 'how': 'ref'}]} for i in range(30)}

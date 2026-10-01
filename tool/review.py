@@ -11,7 +11,7 @@ import math, re, argparse, datetime, json, os, sys
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff
+import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff, others
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -138,6 +138,8 @@ def main():
     ap.add_argument('--out', default=os.path.join(ROOT, 'web', 'data'))
     ap.add_argument('--cache', default=os.path.join(ROOT, 'cache'))
     ap.add_argument('--refresh', action='store_true', help='fetch OSM again even if cached')
+    ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
+    ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
     a = ap.parse_args()
 
     feed = gtfs.load(a.feed)
@@ -148,7 +150,8 @@ def main():
     notes_raw = osm.cached(os.path.join(a.cache, f'{slug}-notes.json'), osm.fetch_notes, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
-    feed_changes = feeddiff.track(feed, a.cache, slug)   # what changed since the last feed version reviewed
+    feed_changes = feeddiff.track(feed, a.cache, slug)
+    other_stops = [] if a.no_others else others.gather(box, a.cache, feed.agency.get('agency_name', ''), a.also)   # what changed since the last feed version reviewed
     osm_stops, rels, masters, rel_ways, coords = osm.parse_pt(pt_raw)
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 
@@ -161,6 +164,9 @@ def main():
         traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
     paths = stop_paths(feed, traced)
 
+    # who else stops at each OSM stop, by their own feeds: a shared stop is known, not guessed from its tags
+    for o in osm_stops.values():
+        o['served_by'] = sorted({x['agency'] for x in other_stops if stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon']) <= 20})
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
     typical, far = stopmatch.calibrate(match)
     print(f'positions: usually {typical} m apart; the same spot within {far} m', file=sys.stderr)
@@ -265,11 +271,12 @@ def main():
         'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw)]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user'],
-                          **({'nodes': v['nodes']} if v.get('nodes') else {}), **({'notes': v['notes']} if v.get('notes') else {})} for k, v in osm_stops.items()},
+                          **({'nodes': v['nodes']} if v.get('nodes') else {}), **({'notes': v['notes']} if v.get('notes') else {}), **({'served_by': v['served_by']} if v.get('served_by') else {})} for k, v in osm_stops.items()},
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
         'feed_changes': feed_changes,
         'extra_stops': extra,
-        'extra_owner': {k: stopmatch.owner(feed, osm_stops[k], conv, aliases) for k in extra if k in osm_stops},
+        'extra_owner': {k: 'other' if osm_stops[k].get('served_by') else stopmatch.owner(feed, osm_stops[k], conv, aliases) for k in extra if k in osm_stops},
+        'other_agencies': sorted({x['agency'] for x in other_stops}),
         'unpaired_relations': unpaired,
         'masters': [{'id': m['id'], 'tags': m['tags'], 'version': m['version'], 'members': [{'type': x['type'], 'ref': x['ref'], 'role': x['role']} for x in m['members']],
                      'routes': [x['ref'] for x in m['members'] if x['type'] == 'relation']} for m in masters.values()],

@@ -64,6 +64,8 @@ Each build keeps a short summary of the feed version it reviewed (in `cache/`). 
 
 Open OSM notes by a stop (within 30 m, or 150 m when the note talks about a bus stop) show on its page, in Check stops and in *OSM only*: someone saw something there. Comments other mappers leave on your changesets show at the top of Changes once you're signed in.
 
+Other operators: the Mobility Database is searched for other agencies' feeds covering the area (active, no key needed), and only their stops here are read. An OSM stop one of them serves is known to be shared: its network/operator lists both without a question, and it's never offered for removal. A feed the catalog doesn't have can be given by hand: `tool/review.py feed.zip --also shuttle.zip`; `--no-others` skips the lookup.
+
 ## What the agency is authoritative for
 
 Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).
@@ -106,6 +108,7 @@ tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a
 tool/serve.py     static server + /api/trace for re-routing through via points
 tool/catalog.py   Mobility Database search and download
 tool/feeddiff.py  what changed between two versions of the feed
+tool/others.py    other agencies' stops in the area, from their own feeds
 web/app.js        the page (MapLibre, vendored; OSM raster tiles)
 web/edits.js      the change basket: osmChange, Level0, OAuth sign-in, upload with conflict check
 web/roads.js      road edits on live OSM data (split, reconnect, move, add) that repair the relations on them

@@ -430,6 +430,8 @@ def decide(s, o, diff, side=None, others=None):
         elif k == 'operator':
             if not v['osm']:
                 out[k] = {'pick': 'agency', 'why': "what this agency's other stops and routes in OSM carry; OSM has none"}
+            elif v['other'] and o.get('served_by'):
+                out[k] = {'pick': 'agency', 'why': f"{', '.join(o['served_by'])}'s own feed has a stop here too: both"}
             elif v['other']:
                 out[k] = {'pick': 'ask', 'why': f"OSM says '{v['osm']}'. If their buses stop here too, it lists both ('{v['gtfs']}'); if not, it's '{v['gtfs'].split(';')[-1]}' alone: edit that by hand"}
             else:
