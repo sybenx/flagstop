@@ -70,6 +70,10 @@ Short detours (days) aren't mapped: OSM can't keep up, and the churn is worse th
 
 flagstop follows the routes the feed gives. Some agencies only publish a detour in GTFS when it'll last weeks or more (CVTD does), and then the feed is the route to map. If yours publishes every short detour, check before following it. Stops named Temp/Detour and itineraries run only by a short-dated service are marked *temporary* and left out of proposals either way.
 
+## Where your work is kept
+
+Changes and stop decisions are kept in the browser and, while `tool/serve.py` runs, in `cache/state/` too: another browser on this machine, or this one after its site data is cleared, picks up where you left off (the newer copy wins). Only flagstop's own page can read or write it. Answers on a card you haven't added to Changes yet (a merge, a station) last for the browser tab.
+
 ## Uploading from the page
 
 Once: register flagstop as an OAuth 2 application on your OSM account at <https://www.openstreetmap.org/oauth2/applications/new> — name `flagstop`, redirect URI exactly what the Changes tab shows (`http://127.0.0.1:8765/` by default), untick *Confidential application*, tick *read user preferences* and *modify the map*. Paste the client ID into the Changes tab. Sign-in is OSM's own page; the token stays in your browser.

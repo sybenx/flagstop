@@ -44,8 +44,27 @@ const Edits = {
     this.persist(now);
   },
   persist(now = this.state()) {
-    try { localStorage.setItem(this.key, now); } catch (e) {}
+    const at = Date.now();
+    try { localStorage.setItem(this.key, now); localStorage.setItem(this.key + '.at', String(at)); } catch (e) {}
+    // and to the local server (cache/state/), so another browser or cleared site data doesn't lose it
+    clearTimeout(this.pushing);
+    this.pushing = setTimeout(() => fetch('/api/state', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: this.key, state: now, at})}).catch(() => {}), 400);
     this.listeners.forEach(f => f());
+  },
+  /** The server's copy, if it's newer than this browser's (saved from another browser, or this one before its
+      site data was cleared). -> true when it was taken. */
+  async sync() {
+    try {
+      const r = await (await fetch('/api/state?key=' + encodeURIComponent(this.key))).json();
+      let mine = 0; try { mine = +localStorage.getItem(this.key + '.at') || 0; } catch (e) {}
+      if (!r.state && Object.keys(this.ops).length) this.persist();   // the server has none yet: give it this browser's
+      if (!r.state || !(r.at > mine) || r.state === this.state()) return false;
+      const s = JSON.parse(r.state);
+      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.roads = s.roads || [];
+      this.history = []; this.future = []; this.committed = this.state();
+      try { localStorage.setItem(this.key, this.committed); localStorage.setItem(this.key + '.at', String(r.at)); } catch (e) {}
+      return true;
+    } catch (e) { return false; }   // no server (a static copy of the page): this browser's is all there is
   },
   /** Name the action about to be saved, for the undo toast ("Undone: split 500 North"). Inside a held
       action, its own name stands. */

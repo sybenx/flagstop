@@ -11,12 +11,15 @@ of a pattern through extra via points the reviewer drops on the map:
     POST /api/refresh                                       -> fetch OSM again and rebuild the review (after an upload);
                                                                GET /api/refresh says whether it's still running
     POST /api/trace {pattern, vias, ways: {id: {nodes, tags}}, nodes: {id: [lon, lat]}}
+    GET /api/state?key=<k>, POST /api/state {key, state, at}  -> your decisions and Changes, kept in cache/state/
+                                                               so another browser, or cleared site data, doesn't lose
+                                                               them (this page's own origin only)
                                                             -> the trace as it would be with those road edits made
                                                                (Changes not yet uploaded, or a proposed fix)
 
 Runs on 127.0.0.1 only: JOSM's remote control (port 8111) accepts requests from a local page.
 """
-import argparse, glob, json, os, subprocess, sys, threading, urllib.parse
+import re, argparse, glob, json, os, subprocess, sys, threading, urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -115,6 +118,11 @@ class Handler(SimpleHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if not u.path.startswith('/api/'):
             return super().do_GET()
+        if u.path == '/api/state':
+            if not self._own():
+                return self._json({'error': 'not from this page'}, 403, cors=False)
+            path = self._state_path(urllib.parse.parse_qs(u.query).get('key', [''])[0])
+            return self._json(json.load(open(path)) if os.path.exists(path) else {}, cors=False)
         if u.path == '/api/refresh':
             return self._json(REFRESH)
         q = urllib.parse.parse_qs(u.query)
@@ -146,7 +154,29 @@ class Handler(SimpleHTTPRequestHandler):
             return
         self._json({'error': 'no such call'}, 404)
 
+    def _own(self):
+        """Only flagstop's own page may read or write the saved state: not another site open in the browser."""
+        o = self.headers.get('Origin')
+        host = self.headers.get('Host', '')
+        return o is None or o in (f'http://{host}', f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}')
+
+    def _state_path(self, key):
+        return os.path.join(os.environ.get('FLAGSTOP_STATE_DIR') or os.path.join(ROOT, 'cache', 'state'), re.sub(r'[^\w.-]+', '_', key or 'default')[:120] + '.json')
+
     def do_POST(self):
+        if urllib.parse.urlparse(self.path).path == '/api/state':
+            if not self._own():
+                return self._json({'error': 'not from this page'}, 403, cors=False)
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            except ValueError:
+                return self._json({'error': 'not JSON'}, 400, cors=False)
+            path = self._state_path(body.get('key'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + '.tmp', 'w') as f:
+                json.dump({'state': body.get('state'), 'at': body.get('at')}, f)
+            os.replace(path + '.tmp', path)
+            return self._json({'ok': True}, cors=False)
         if urllib.parse.urlparse(self.path).path == '/api/refresh':
             return self._json(start_refresh())
         if urllib.parse.urlparse(self.path).path != '/api/trace':
@@ -167,12 +197,13 @@ class Handler(SimpleHTTPRequestHandler):
         p, res, order, is_stop = trace_with_vias(pid, vias, g)
         return self._json(trace_json(res, vias))
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, cors=True):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Access-Control-Allow-Origin', '*')
+        if cors:
+            self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
         self.wfile.write(body)
 

@@ -1164,6 +1164,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name);
+  Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.replace('T', ' ')} `;
