@@ -856,8 +856,10 @@ function osmStopBox(s, o, c, pickable) {
     const checks = {};
     for (const [k, v] of Object.entries(diff)) {
       if (k === 'tagging') continue;
-      const isIdentity = ['ref', 'gtfs:stop_id', 'route_ref'].includes(k);
-      const cb = el('input', {type: 'checkbox', checked: isIdentity ? '' : null, title: isIdentity ? 'identity: the agency is the source' : 'the mapper may know better'});
+      // ticked as Check stops would have it: the agency's codes and its address in; what flagstop calls OSM's, or asks about, out
+      const dec = ((s.match && s.match.decide) || {})[k], isIdentity = ['ref', 'gtfs:stop_id', 'route_ref'].includes(k);
+      const on = isIdentity || (k !== 'position' && dec && dec.pick === 'agency');
+      const cb = el('input', {type: 'checkbox', checked: on ? '' : null, title: dec ? dec.why : isIdentity ? "the agency's code for it" : ''});
       checks[k] = cb;
       g.append(cb, el('span', {class: 'k'}, k), el('span', {class: 'g'}, k === 'position' ? v.gtfs : (v.gtfs || '—')),
         el('span', {class: 'o'}, k === 'position' ? (v.near ? 'close enough to be the same spot' : 'on the sign, probably') : (v.osm || '—')));

@@ -370,10 +370,15 @@ def decide(s, o, diff, side=None, others=None):
             g, m = v['gtfs'], v['osm']
             if not m:
                 out[k] = {'pick': 'agency', 'why': 'OSM has no name'}
+            # The agency's name is its address for the stop, and it's right: only the way it's written is OSM's
+            # call (spelled out: Street, not St). A landmark or note added to OSM's name goes; the agency's
+            # announcement goes in description.
+            elif same_address(g, m) and not extra(m):
+                out[k] = {'pick': 'keep', 'why': 'same address, written differently'}
             elif same_address(g, m):
-                out[k] = {'pick': 'keep', 'why': 'same address, written differently' + (f" (OSM adds '{extra(m)}')" if extra(m) else '')}
+                out[k] = {'pick': 'agency', 'why': f"same address; OSM's name adds '{extra(m)}', which isn't part of a name" + (f" (the agency announces '{s.desc}', which goes in description)" if s.desc else '')}
             elif set(re.sub(r"[^\w\s]", ' ', m.lower()).split()) <= set(re.sub(r"[^\w\s]", ' ', g.lower()).split()) | {'and'}:
-                out[k] = {'pick': 'keep', 'why': "OSM's name is part of the agency's: it names the bay, the agency adds the address"}
+                out[k] = {'pick': 'agency', 'why': "OSM's name is only part of the agency's (the bay, without the address)"}
             elif others and address(m) in others and others[address(m)][0] != s.id:
                 sid, nm = others[address(m)]
                 out[k] = {'pick': 'ask', 'why': f"OSM's name is the agency's name for another stop ({nm}, code {sid}): swapped?"}
@@ -385,7 +390,7 @@ def decide(s, o, diff, side=None, others=None):
                 else:
                     out[k] = {'pick': 'ask', 'why': f"OSM's address says {hn(m)}, the agency's says {hn(g)}, and they're {round(d)} m apart: has the stop moved?"}
             else:
-                out[k] = {'pick': 'ask', 'why': f"they name different streets: is OSM's '{m}' the same place as the agency's '{g}'?"}
+                out[k] = {'pick': 'agency', 'why': f"the agency's address for it; OSM's '{m}' names another street (often the same road by another name)"}
     # position: within FAR it's the same stop placed by two hands, unless OSM has it across the street
     wrong = side and side.get('osm') == 'left' and side.get('gtfs') == 'right'
     if wrong:
