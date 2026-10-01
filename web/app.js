@@ -949,7 +949,15 @@ function renderAbout(P) {
 }
 
 // ---------- boot ----------
-document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; if (S.tab !== 'routes') { S.pattern = null; S.review = null; S.vias = []; S.routed = null; } if (S.tab !== 'stops') S.stop = null; render(); draw(); });
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  // the tab you're on, clicked again: back to its list (out of a route, a card, a stop)
+  const again = S.tab === b.dataset.tab;
+  S.tab = b.dataset.tab;
+  if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.div = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; }
+  if (S.tab !== 'stops' || again) S.stop = null;
+  document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
+  render(); draw();
+});
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name);
