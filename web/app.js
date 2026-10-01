@@ -508,6 +508,7 @@ function syncHash() {
   if (!hashRead) return;
   // the merge card's answers survive a reload of this tab (not shared, not for later: sessionStorage)
   try { if (S.merge) sessionStorage.setItem('flagstop.merge', JSON.stringify({merge: S.merge, looked: [...S.looked]})); } catch (e) { /* storage off */ }
+  try { if (S.extraGone) sessionStorage.setItem('flagstop.extra', JSON.stringify({gone: S.extraGone, looked: [...S.looked].filter(k => k.startsWith('osm:'))})); } catch (e) { /* storage off */ }
   try { if (S.station) sessionStorage.setItem('flagstop.station', JSON.stringify({id: S.station.id, answers: S.station.answers, looked: [...S.looked]})); } catch (e) { /* storage off */ }
   const h = S.tab === 'stops' && S.station ? linkTo({station: S.station.id}) : S.tab === 'stops' && S.stop ? linkTo({stop: S.stop}) : S.tab === 'routes' && S.merge && S.pattern ? linkTo({merge: S.pattern}) : S.tab === 'routes' && S.review ? linkTo({review: S.review}) : S.tab === 'routes' && S.pattern ? linkTo({pattern: S.pattern, div: S.div}) : S.tab !== 'routes' ? linkTo({tab: S.tab}) : '';
   if (h !== location.hash && !(h === '' && !location.hash)) history.replaceState(null, '', h || location.pathname);
@@ -532,7 +533,10 @@ function applyHash() {
     const dv = patternById(q.get('pattern')).routed.divergences[+q.get('div')];
     if (q.get('div') != null && dv) { S.div = +q.get('div'); render(); map.once('moveend', () => showDivergence(dv)); }
   } else if (q.get('stop') && D.stops[q.get('stop')]) showStop(q.get('stop'));
-  else if (['stops', 'extra', 'changes', 'about'].includes(q.get('tab'))) { S.tab = q.get('tab'); render(); draw(); }
+  else if (['stops', 'extra', 'changes', 'about'].includes(q.get('tab'))) {
+    if (q.get('tab') === 'extra') try { const x = JSON.parse(sessionStorage.getItem('flagstop.extra') || 'null'); if (x) { S.extraGone = x.gone; for (const k of x.looked) S.looked.add(k); } } catch (e) { /* storage off */ }
+    S.tab = q.get('tab'); render(); draw();
+  }
 }
 function showDivergence(dv) {
   document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
@@ -896,16 +900,63 @@ function placeNewStop(s) {
 }
 
 // ---------- OSM-only stops ----------
+/** OSM stops no stop in the agency's data claims. The agency's own (its network, as its matched stops carry
+ *  it) may be gone: look on the map, then remove. Other operators' are listed, never touched. */
 function renderExtra(P) {
-  P.append(el('div', {class: 'hint'}, `${D.extra_stops.length} bus stops in OSM within 400 m of this network that no feed stop claims: another operator's, moved, or gone. Nothing here is deleted by flagstop; look, and decide in RapiD.`));
+  const mine = o => (D.extra_owner || {})[o.id] !== 'other';   // the agency's, by network/operator, or saying nothing
   const nearestGtfs = o => { let b = null, bd = 1e9; for (const s of Object.values(D.stops)) { const d = m([o.lon, o.lat], [s.lon, s.lat]); if (d < bd) { bd = d; b = s; } } return [b, bd]; };
   const rows = D.extra_stops.map(id => D.osm_stops[id]).filter(Boolean).map(o => ({o, ng: nearestGtfs(o)})).sort((a, b) => a.ng[1] - b.ng[1]);
-  for (const {o, ng} of rows) {
-    P.append(el('div', {class: 'row', onclick: () => { map.flyTo({center: [o.lon, o.lat], zoom: 17}); popupOsm(o.id, [o.lon, o.lat]); }},
+  const ours = rows.filter(r => mine(r.o)), theirs = rows.filter(r => !mine(r.o));
+  const g = S.extraGone || (S.extraGone = {});
+  const chosen = ours.filter(r => g[r.o.id] === 'remove');
+  P.append(el('div', {class: 'hint'}, `Bus stops in OSM within 400 m of this network that no stop in the agency's data claims. ${ours.length} look like this agency's (by their network or operator, or none): moved, or gone. Look at each on the map; if it isn't there any more, it can come out of OSM.`));
+  if (chosen.length) P.append(el('div', {class: 'btns'}, el('button', {class: 'b primary', onclick: async () => {
+    Edits.hold(`remove ${chosen.length} stop${chosen.length > 1 ? 's' : ''} that are gone`);
+    try {
+      const kept = await removeStops(chosen.map(r => r.o));
+      for (const r of chosen) delete g[r.o.id];
+      toast(kept.length ? `Not removed, something else uses them: ${kept.join('; ')}` : `${chosen.length} in Changes`, kept.length ? 9000 : 4000);
+    } catch (e) { toast(e.message, 8000); } finally { Edits.release(); }
+    render(); draw();
+  }}, `Remove ${chosen.length} from OSM → Changes`)));
+  const row = ({o, ng}, removable) => {
+    const seen = S.looked.has('osm:' + o.id), on = g[o.id] === 'remove', op = Edits.get('n' + osmNumId(o));
+    const r = el('div', {class: 'row' + (on ? ' on' : '')},
       el('span', {class: 'dotc extra'}),
-      el('div', {class: 'grow'}, el('div', {class: 't'}, o.tags.name || '(no name)'), el('div', {class: 's'}, [o.tags.ref ? 'ref ' + o.tags.ref : null, o.tags.operator || o.tags.network, o.tags.route_ref ? 'routes ' + o.tags.route_ref : null, `${Math.round(ng[1])} m from ${ng[0].name}`].filter(Boolean).join(' · '))),
-      el('span', {class: 'muted small'}, `v${o.version}`)));
+      el('div', {class: 'grow'}, el('div', {class: 't'}, o.tags.name || '(no name)'), el('div', {class: 's'}, [o.tags.ref ? 'ref ' + o.tags.ref : null, o.tags.operator || o.tags.network, o.tags.route_ref ? 'routes ' + o.tags.route_ref : null, `${Math.round(ng[1])} m from ${ng[0].name}`].filter(Boolean).join(' · ')),
+        removable && !op ? el('div', {class: 'btns', style: 'margin-top:4px'},
+          el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: e => { e.stopPropagation(); S.looked.add('osm:' + o.id); render(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); popupOsm(o.id, [o.lon, o.lat]); }}, 'Show on map'),
+          el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { e.stopPropagation(); g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone"),
+          seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:6px', onclick: e => { e.preventDefault(); e.stopPropagation(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null) : null,
+        op ? el('span', {class: 'chip edit'}, op.kind === 'delete' ? 'to remove' : 'edited') : null),
+      el('span', {class: 'muted small'}, `v${o.version}`));
+    r.onclick = () => { map.flyTo({center: [o.lon, o.lat], zoom: 17}); popupOsm(o.id, [o.lon, o.lat]); };
+    return r;
+  };
+  P.append(el('h2', {}, `This agency's: ${ours.length}`));
+  for (const x of ours) P.append(row(x, true));
+  if (theirs.length) {
+    P.append(el('h2', {}, `Other operators': ${theirs.length}`), el('div', {class: 'hint'}, 'Their stops, not this agency\'s: listed so you know they\'re there, never changed here.'));
+    for (const x of theirs) P.append(row(x, false));
   }
+}
+
+/** Take bus stops that are gone out of OSM, carefully: one another relation still uses is left (and said);
+ *  one that's a point in a way (a sidewalk) loses only its stop tags, so the way keeps its shape; the rest are
+ *  deleted. mine: relation ids this edit is rewriting anyway (their membership doesn't count). -> [kept, why] */
+const STOP_KEYS = /^(highway|public_transport|bus|name|ref|local_ref|route_ref|network|network:wikidata|operator|operator:wikidata|description|shelter|bench|bin|lit|tactile_paving|departures_board|wheelchair|gtfs:.*)$/;
+async function removeStops(list, mine = new Set(), why = 'stop gone') {
+  const kept = [];
+  for (const o of list) {
+    if (o.id[0] !== 'n') { kept.push(`${o.tags.name || o.id} (drawn as a shape: remove it in iD)`); continue; }
+    const n = osmNumId(o);
+    const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
+    if (rels.length) { kept.push(`${o.tags.name || o.id} (also in ${rels.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
+    const ways = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/ways.json`)).json()).elements;
+    if (ways.length) Edits.modify('node', n, nodeBase(o), {removeTags: Object.keys(o.tags).filter(k => STOP_KEYS.test(k))}, `${o.tags.name || o.id}: ${why} (point kept: it's on a way)`);
+    else Edits.delete('node', n, nodeBase(o), `${o.tags.name || o.id}: ${why}`);
+  }
+  return kept;
 }
 
 // ---------- changes ----------

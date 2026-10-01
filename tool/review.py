@@ -211,6 +211,7 @@ def main():
                           **({'nodes': v['nodes']} if v.get('nodes') else {})} for k, v in osm_stops.items()},
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
         'extra_stops': extra,
+        'extra_owner': {k: stopmatch.owner(feed, osm_stops[k], conv, aliases) for k in extra if k in osm_stops},
         'unpaired_relations': unpaired,
         'masters': [{'id': m['id'], 'tags': m['tags'], 'version': m['version'], 'members': [{'type': x['type'], 'ref': x['ref'], 'role': x['role']} for x in m['members']],
                      'routes': [x['ref'] for x in m['members'] if x['type'] == 'relation']} for m in masters.values()],

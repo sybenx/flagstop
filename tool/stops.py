@@ -266,6 +266,21 @@ def network_diff(feed, o, conv, aliases=()):
     return out
 
 
+def owner(feed, o, conv, aliases=()):
+    """Whose stop an OSM stop is, by its network and operator: 'agency' (this agency's current name, or an old
+    or short one, as network_diff knows them), 'other' (someone else's: a university shuttle, a coach line),
+    or None (it says nothing)."""
+    vals = [x.strip() for k in ('network', 'operator') for x in (o['tags'].get(k) or '').split(';') if x.strip()]
+    if not vals:
+        return None
+    agency = feed.agency.get('agency_name', '').lower()
+    for cur in {conv.get('network'), conv.get('operator')} - {None}:
+        for x in vals:
+            if x == cur or x.lower() in aliases or (len(x) > 2 and x.lower() in agency) or set(x.lower().split()) <= set(cur.lower().split()):
+                return 'agency'
+    return 'other'
+
+
 def proposed_tags(feed, s, conv=None):
     """The tags a fresh platform node for this GTFS stop would carry (the GTFS tagging scheme, 2024)."""
     conv = conv or {}

@@ -236,15 +236,7 @@ const Merge = {
       const tags = {...x.tags, ...(hours ? x.timetable : {})};
       // stops gone for real: only if nothing else on OSM uses them (another relation); a stop that's a point on a
       // sidewalk line loses its bus stop tags instead of being deleted (deleting it would break the line)
-      const kept = [], stopKeys = /^(highway|public_transport|bus|name|ref|local_ref|route_ref|network|network:wikidata|operator|description|shelter|bench|bin|lit|tactile_paving|departures_board|wheelchair|gtfs:.*)$/;
-      for (const o of x.gone.filter(o => (S.merge.gone || {})[o.id] === 'remove')) {
-        const n = osmNumId(o), mine = new Set(x.rels.map(a => a.id));
-        const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
-        if (rels.length) { kept.push(`${o.tags.name || o.id} (also in ${rels.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
-        const ways = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/ways.json`)).json()).elements;
-        if (ways.length) Edits.modify('node', n, nodeBase(o), {removeTags: Object.keys(o.tags).filter(k => stopKeys.test(k))}, `${o.tags.name || o.id}: stop gone (point kept: it's on a way)`);
-        else Edits.delete('node', n, nodeBase(o), `${o.tags.name || o.id}: stop gone`);
-      }
+      const kept = await removeStops(x.gone.filter(o => (S.merge.gone || {})[o.id] === 'remove'), new Set(x.rels.map(a => a.id)));
       if (kept.length) say(`Not removed, something else uses them: ${kept.join('; ')}`);
       const key = Edits.modify('relation', x.keep.id, relBase(x.keep), {tags, members}, `${x.r.short}: one relation for one route`);
       Edits.ops[key].suggested = true; Edits.ops[key].route = x.r.short;
