@@ -14,21 +14,7 @@
     <tag k="route_ref" v="9"/>
     <tag k="description" v="Kubex"/>
   </node>
-  <node id="-2" lat="41.749329" lon="-111.839488" version="0">
-    <tag k="highway" v="bus_stop"/>
-    <tag k="public_transport" v="platform"/>
-    <tag k="bus" v="yes"/>
-    <tag k="name" v="987 North 200 West"/>
-    <tag k="ref" v="917"/>
-    <tag k="gtfs:stop_id" v="7568626"/>
-    <tag k="gtfs:stop_code" v="917"/>
-    <tag k="operator" v="Connect Public Transit"/>
-    <tag k="network" v="Connect Public Transit"/>
-    <tag k="network:wikidata" v="Q129798316"/>
-    <tag k="route_ref" v="9"/>
-    <tag k="description" v="Canal Bridge"/>
-  </node>
-  <node id="-3" lat="41.743646" lon="-111.839890" version="0">
+  <node id="-2" lat="41.743646" lon="-111.839890" version="0">
     <tag k="highway" v="bus_stop"/>
     <tag k="public_transport" v="platform"/>
     <tag k="bus" v="yes"/>
@@ -60,8 +46,8 @@
     <member type="node" ref="11504801832" role="platform"/>
     <member type="node" ref="11504801844" role="platform"/>
     <member type="node" ref="11504801846" role="platform"/>
+    <member type="node" ref="11504801853" role="platform"/>
     <member type="node" ref="-2" role="platform"/>
-    <member type="node" ref="-3" role="platform"/>
     <member type="node" ref="11504801878" role="platform"/>
     <member type="node" ref="3756748843" role="platform"/>
     <member type="way" ref="1238471154" role=""/>

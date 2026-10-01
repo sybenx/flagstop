@@ -34,44 +34,63 @@ def days_of(c):
     return ','.join(out)
 
 
-def stop_sides(feed, traced, match, osm_stops, kerb=3):
-    """Where each stop sits relative to the buses calling there: 'right' (the kerb they pull into; traffic
-    drives on the right), 'left' (across the street), or None (on the line, or no path). Judged on the path
-    just before and after that stop in each itinerary, so a loop down a street and back up it isn't confused.
-    -> {stop_id: {'osm': ..., 'gtfs': ...}}"""
-    def side(p, geom):
-        best = None
-        for i in range(len(geom) - 1):
-            a, b = geom[i], geom[i + 1]
-            kx = 111320 * math.cos(math.radians(a[1]))
-            vx, vy = (b[0] - a[0]) * kx, (b[1] - a[1]) * 110540
-            wx, wy = (p[0] - a[0]) * kx, (p[1] - a[1]) * 110540
-            L2 = vx * vx + vy * vy
-            if not L2:
-                continue
-            u = max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
-            d = math.hypot(wx - u * vx, wy - u * vy)
-            if best is None or d < best[0]:
-                best = (d, vx * wy - vy * wx)
-        if not best or best[0] < kerb:
-            return None
-        return 'left' if best[1] > 0 else 'right'
-    votes = {}
+def side(p, geom, kerb=3):
+    """Which side of a bus path a point is on: 'right' (the kerb buses pull into; traffic drives on the right),
+    'left' (across the street), or None (within kerb metres of the line)."""
+    best = None
+    for i in range(len(geom) - 1):
+        a, b = geom[i], geom[i + 1]
+        kx = 111320 * math.cos(math.radians(a[1]))
+        vx, vy = (b[0] - a[0]) * kx, (b[1] - a[1]) * 110540
+        wx, wy = (p[0] - a[0]) * kx, (p[1] - a[1]) * 110540
+        L2 = vx * vx + vy * vy
+        if not L2:
+            continue
+        u = max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
+        d = math.hypot(wx - u * vx, wy - u * vy)
+        if best is None or d < best[0]:
+            best = (d, vx * wy - vy * wx)
+    if not best or best[0] < kerb:
+        return None
+    return 'left' if best[1] > 0 else 'right'
+
+
+def stop_paths(feed, traced):
+    """{stop_id: [path just before and after the stop, per itinerary calling there]}: so a loop down a street
+    and back up it isn't confused."""
+    out = {}
     for p in feed.patterns:
         legs = traced[p.id]['legs']
         for k, sid in enumerate(p.stops):
             geom = (legs[k - 1]['geometry'][-12:] if k and legs[k - 1]['ok'] else []) + (legs[k]['geometry'][:12] if k < len(legs) and legs[k]['ok'] else [])
-            if len(geom) < 2:
-                continue
-            s, m = feed.stops[sid], match.get(sid)
-            o = osm_stops.get(m['osm'][0]['id']) if m and m['osm'] else None
-            v = votes.setdefault(sid, {'osm': set(), 'gtfs': set()})
-            v['gtfs'].add(side((s.lon, s.lat), geom))
-            if o:
-                v['osm'].add(side((o['lon'], o['lat']), geom))
-    # a stop some itinerary has on its right is on the right; only 'left' for every one of them counts as across
+            if len(geom) >= 2:
+                out.setdefault(sid, []).append(geom)
+    return out
+
+
+def across_fn(feed, paths):
+    """-> across(stop_id, osm_stop): the OSM stop is across the street from where every bus calling there pulls
+    in, and the agency's point isn't. Then it's the other direction's stop, never this one moved."""
+    def across(sid, o):
+        gs = paths.get(sid)
+        if not gs:
+            return False
+        s = feed.stops[sid]
+        # 5 m: closer than that to the middle of the road, which side it's on is inside how exactly roads are drawn
+        return {side((o['lon'], o['lat']), g, kerb=5) for g in gs} == {'left'} and 'left' not in {side((s.lon, s.lat), g) for g in gs}
+    return across
+
+
+def stop_sides(feed, paths, match, osm_stops):
+    """{stop_id: {'osm': side, 'gtfs': side}}: a stop some itinerary has on its right is on the right; only 'left'
+    for every one of them counts as across."""
     pick = lambda xs: 'right' if 'right' in xs else 'left' if 'left' in xs else None
-    return {sid: {'osm': pick(v['osm']), 'gtfs': pick(v['gtfs'])} for sid, v in votes.items()}
+    out = {}
+    for sid, gs in paths.items():
+        s, m = feed.stops[sid], match.get(sid)
+        o = osm_stops.get(m['osm'][0]['id']) if m and m['osm'] else None
+        out[sid] = {'gtfs': pick({side((s.lon, s.lat), g) for g in gs}), 'osm': pick({side((o['lon'], o['lat']), g, kerb=5) for g in gs}) if o else None}
+    return out
 
 
 def main():
@@ -94,21 +113,24 @@ def main():
     osm_stops, rels, masters, rel_ways, coords = osm.parse_pt(pt_raw)
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 
-    match, extra = stopmatch.match(feed, osm_stops)
+    # The buses' paths first (they only need the feed and the roads): a stop across the street from where the
+    # buses pull in is the other direction's, so matching has to know which side is which.
+    g = routing.Graph(roads_raw)
+    print(f'road graph: {len(g.ways)} ways, {len(g.coord)} nodes', file=sys.stderr)
+    traced = {}
+    for p in feed.patterns:
+        traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
+    paths = stop_paths(feed, traced)
+
+    match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
     conv = stopmatch.conventions(feed, match, osm_stops)
     print(f'local conventions: {conv}', file=sys.stderr)
     aliases = osm.nsi_aliases(conv.get('network'), os.path.join(a.cache, 'nsi-bus.json'), a.refresh) if conv.get('network') else set()
     for sid, m in match.items():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['diff'].update(stopmatch.network_diff(feed, osm_stops[m['osm'][0]['id']], conv, aliases))
-    g = routing.Graph(roads_raw)
-    print(f'road graph: {len(g.ways)} ways, {len(g.coord)} nodes', file=sys.stderr)
-
-    traced = {}
-    for p in feed.patterns:
-        traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
     # Which side of the street each stop is on, for the buses that call there; then what to suggest per difference.
-    sides = stop_sides(feed, traced, match, osm_stops)
+    sides = stop_sides(feed, paths, match, osm_stops)
     names = {stopmatch.address(st.name): (st.id, st.name) for st in feed.stops.values()}
     for sid, m in match.items():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:

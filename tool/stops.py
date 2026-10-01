@@ -71,11 +71,14 @@ def _osm_text(o):
     return ' '.join(x for x in (t.get('name'), t.get('description'), t.get('alt_name'), t.get('official_name')) if x)
 
 
-def match(feed, osm_stops):
+def match(feed, osm_stops, across=None):
     """-> {gtfs_stop_id: result}, [extra osm stops]
 
     result: {status, osm: [candidate...], diff: {...}}  candidate = {id, dist, score, how}
+    across(stop_id, osm_stop): True when the OSM stop is across the street from where the buses pull in. Then
+    it's the other direction's stop: never a candidate, whatever its name or code says.
     """
+    across = across or (lambda sid, o: False)
     osm = list(osm_stops.values())
     by_ref, by_gtfs_id = {}, {}
     for o in osm:
@@ -129,6 +132,9 @@ def match(feed, osm_stops):
         ids = by_gtfs_id.get(s.id, []) + by_ref.get(s.code, []) + (by_ref.get(s.id, []) if s.id != s.code else [])
         for o in filter(platform, ids):
             d = dist(s.lat, s.lon, o['lat'], o['lon'])
+            if across(s.id, o):
+                notes.append(f"OSM {o['id']} carries code {s.ref} but is across the street, where the other direction's buses stop: its code may be wrong")
+                continue
             if d <= REF_FAR:
                 cands.append({'id': o['id'], 'dist': round(d), 'score': 1.0, 'how': 'ref'})
             else:  # the same ref far away: OSM's code is stale, or another agency's numbering
@@ -136,7 +142,7 @@ def match(feed, osm_stops):
         if not any(c['how'] == 'ref' for c in cands):
             for d, o in near(s.lat, s.lon, NEAR):
                 sim = alike(_gtfs_text(s), _osm_text(o))
-                if not platform(o):
+                if not platform(o) or across(s.id, o):
                     continue
                 if d <= CLOSE or sim >= 0.5:
                     cands.append({'id': o['id'], 'dist': round(d), 'score': round(0.5 * (1 - d / NEAR) + 0.5 * sim - (0.2 if other_network(o) else 0), 3), 'how': 'close' if d <= CLOSE else 'name'})
@@ -167,7 +173,7 @@ def match(feed, osm_stops):
             continue
         cands = []
         for d, o in near(s.lat, s.lon, MOVED):
-            if o['id'] in claimed or o['type'] != 'node':
+            if o['id'] in claimed or o['type'] != 'node' or not platform(o) or across(s.id, o):
                 continue
             t = o['tags']
             byref = bool(s.ref) and (t.get('ref') == s.ref or s.id in (t.get('gtfs:stop_id') or ''))
