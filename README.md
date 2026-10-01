@@ -60,6 +60,10 @@ The page lists itineraries worst first. Open one:
 
 Each build keeps a short summary of the feed version it reviewed (in `cache/`). When the agency publishes a new one, the Routes page opens with what changed since the last version: stops added, gone, moved or renamed, routes added or gone, routes calling at different stops. That's where to look first; a stop gone from the feed turns up in *OSM only*, to remove after a look.
 
+## Other mappers
+
+Open OSM notes by a stop (within 30 m, or 150 m when the note talks about a bus stop) show on its page, in Check stops and in *OSM only*: someone saw something there. Comments other mappers leave on your changesets show at the top of Changes once you're signed in.
+
 ## What the agency is authoritative for
 
 Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).

@@ -128,7 +128,7 @@ function initMap() {
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
-    setTimeout(applyHash);   // after the layers below exist
+    setTimeout(() => hashRead ? draw() : applyHash());   // after the layers below exist: draw what's open
     for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
@@ -378,6 +378,27 @@ function pending(p) {
 function pendingChip(p) {
   const bits = pending(p);
   return bits.length ? el('span', {class: 'chip edit', title: 'Waiting in Changes, not uploaded yet'}, `in Changes: ${bits.join(', ')}`) : null;
+}
+/** Open OSM notes someone left by a stop: worth reading before deciding anything about it. */
+function noteLines(notes) {
+  if (!notes || !notes.length) return null;
+  return el('div', {class: 'note warn'}, ...notes.map(n => el('div', {}, el('b', {}, 'OSM note: '), `“${n.text.length > 220 ? n.text.slice(0, 219) + '…' : n.text}” `,
+    el('span', {class: 'muted'}, n.date + ' · '), el('a', {href: `https://www.openstreetmap.org/note/${n.id}`, target: '_blank'}, `note ${n.id}`))));
+}
+/** Comments other mappers left on your changesets: a question about an edit wants an answer. */
+async function changesetTalk(box) {
+  const me = Edits.auth.user();
+  if (!me) return;
+  try {
+    const list = (await (await fetch(`${OSM_API}/api/0.6/changesets.json?user=${me.id}&limit=25`)).json()).changesets || [];
+    const talked = list.filter(c => c.comments_count > 0);
+    if (!talked.length) return;
+    const full = await Promise.all(talked.map(async c => (await (await fetch(`${OSM_API}/api/0.6/changeset/${c.id}.json?include_discussion=true`)).json()).changeset || c));
+    const lines = full.flatMap(c => (c.comments || []).filter(x => x.uid !== me.id).map(x => ({c, x})));
+    if (!lines.length) return;
+    box.append(el('div', {class: 'note warn'}, el('b', {}, `Comments on your changesets: ${lines.length}`),
+      ...lines.slice(-8).map(({c, x}) => el('div', {style: 'margin-top:4px'}, el('a', {href: `https://www.openstreetmap.org/changeset/${c.id}`, target: '_blank'}, `${c.id}`), ` ${x.user}, ${(x.date || '').slice(0, 10)}: “${x.text.length > 200 ? x.text.slice(0, 199) + '…' : x.text}”`))));
+  } catch (e) { /* offline: nothing to say */ }
 }
 /** What changed since the last feed version reviewed: where to look first after the agency publishes. */
 function feedChanges() {
@@ -823,6 +844,7 @@ function renderStop(P, s) {
     s.wheelchair && s.wheelchair !== '0' ? el('span', {class: 'k'}, 'wheelchair') : null, s.wheelchair && s.wheelchair !== '0' ? el('span', {}, {1: 'yes', 2: "no, says the agency (not put in OSM: too often wrong)"}[s.wheelchair]) : null,
     s.platform_code ? el('span', {class: 'k'}, 'platform') : null, s.platform_code ? el('span', {}, s.platform_code) : null));
   if (s.match && s.match.notes && s.match.notes.length) d.append(el('div', {class: 'note warn'}, ...s.match.notes.map(n => el('div', {}, n))));
+  { const nl = noteLines([...(s.osm_notes || [])]); if (nl) d.append(nl); }
   const place = Station.ofStop(s);
   if (place) d.append(el('div', {class: 'note'}, `A bay at ${place.stations[0].tags.name || 'a station'}. `, el('button', {class: 'b tiny', onclick: () => Station.open(place.id)}, 'The station: how it\'s mapped')));
   const existing = Object.keys(Edits.ops).find(k => Edits.ops[k].kind === 'create' && Edits.ops[k].tags['gtfs:stop_id'] === s.id);
@@ -874,6 +896,7 @@ function osmStopBox(s, o, c, pickable) {
   const op = Edits.get('n' + osmNumId(o));
   box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${Math.round(m(osmPos(o), [s.lon, s.lat]))} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'edited') : null));
   box.append(el('div', {class: 'muted mono'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
+  if (o.notes && o.notes.length && !(s.osm_notes || []).length) box.append(noteLines(o.notes));
   const base = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
   const diff = base && {...base};
   // The review only calls a position different past FAR (closer is the same stop placed by two hands), but
@@ -952,7 +975,8 @@ function renderExtra(P) {
           el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: e => { e.stopPropagation(); S.looked.add('osm:' + o.id); render(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); popupOsm(o.id, [o.lon, o.lat]); }}, 'Show on map'),
           el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { e.stopPropagation(); g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone"),
           seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:6px', onclick: e => { e.preventDefault(); e.stopPropagation(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null) : null,
-        op ? el('span', {class: 'chip edit'}, op.kind === 'delete' ? 'to remove' : 'edited') : null),
+        op ? el('span', {class: 'chip edit'}, op.kind === 'delete' ? 'to remove' : 'edited') : null,
+        o.notes && o.notes.length ? noteLines(o.notes) : null),
       el('span', {class: 'muted small'}, `v${o.version}`));
     r.onclick = () => { map.flyTo({center: [o.lon, o.lat], zoom: 17}); popupOsm(o.id, [o.lon, o.lat]); };
     return r;
@@ -1041,6 +1065,7 @@ function renderChanges(P) {
   const ops = Object.entries(Edits.ops);
   const user = Edits.auth.user();
   const d = el('div', {class: 'detail'});
+  const talk = el('div'); d.append(talk); changesetTalk(talk);
   d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} of ${UPLOAD_CAP} changes` : 'No changes yet'));
   d.append(el('div', {class: 'hint', style: 'padding-left:0'}, 'Everything you decided, as one changeset. Review each line; remove what you don\'t want. Upload sends it to OSM under your account. Or take it to JOSM as osmChange, or Level0 as text.'));
   if (ops.length) d.append(el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => { if (confirm(`Remove all ${ops.length} changes? (Undo brings them back.)`)) { Edits.clear(); render(); draw(); } }}, 'Remove all')));
@@ -1172,6 +1197,8 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   try { if (await Edits.auth.complete()) { S.tab = 'changes'; toast('Signed in to OSM'); } } catch (e) { toast('Sign-in failed: ' + e.message, 8000); }
   render();
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }
+  // what the address says is open, now: not when the map has loaded (a background tab may not load it for a while)
+  try { applyHash(); } catch (e) { console.error(e); }
 }).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });
 
 window.addEventListener('hashchange', () => { if (D && map) applyHash(); });

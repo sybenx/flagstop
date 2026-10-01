@@ -7,7 +7,7 @@ Without --osm-* files the OSM data is fetched from Overpass for the feed's bound
 cache/. Writes web/data/review.json and one proposed relation per pattern, web/data/rel-<id>.osm, for
 JOSM to import.
 """
-import math, argparse, datetime, json, os, sys
+import math, re, argparse, datetime, json, os, sys
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -145,6 +145,7 @@ def main():
     slug = ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
     pt_raw = osm.load(a.osm_pt) if a.osm_pt else osm.cached(os.path.join(a.cache, f'{slug}-osm-pt.json'), osm.fetch_pt, box, a.refresh)
     roads_raw = osm.load(a.osm_roads) if a.osm_roads else osm.cached(os.path.join(a.cache, f'{slug}-osm-roads.json'), osm.fetch_roads, box, a.refresh)
+    notes_raw = osm.cached(os.path.join(a.cache, f'{slug}-notes.json'), osm.fetch_notes, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
     feed_changes = feeddiff.track(feed, a.cache, slug)   # what changed since the last feed version reviewed
@@ -232,11 +233,27 @@ def main():
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
                            'patterns': pids, 'masters': masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
+    # open OSM notes by a stop (its agency point or its OSM node): someone saw something there
+    notes = [{'id': f['properties']['id'], 'lon': f['geometry']['coordinates'][0], 'lat': f['geometry']['coordinates'][1],
+              'text': (f['properties']['comments'] or [{}])[0].get('text', ''), 'date': (f['properties'].get('date_created') or '')[:10]}
+             for f in notes_raw.get('features', [])]
+    # by a stop: within 30 m, or within 150 m when it talks about a bus stop (a note is often dropped where the
+    # stop should be, not on the mapped one)
+    busy = re.compile(r'\b(bus|stop|shelter|bench)\b', re.I)
+    near_note = lambda la, lo, x: stopmatch.dist(la, lo, x['lat'], x['lon']) <= (150 if busy.search(x['text']) else 30)
+    brief = lambda x: {k: x[k] for k in ('id', 'text', 'date')}
+    def notes_by(s):
+        m = match.get(s.id) or {}
+        o = osm_stops.get(m['osm'][0]['id']) if m.get('osm') else None
+        pts = [(s.lat, s.lon)] + ([(o['lat'], o['lon'])] if o else [])
+        return [brief(x) for x in notes if any(near_note(la, lo, x) for la, lo in pts)]
+    for o in osm_stops.values():
+        o['notes'] = [brief(x) for x in notes if near_note(o['lat'], o['lon'], x)]
     stops_out = {}
     for s in feed.stops.values():
         stops_out[s.id] = {'id': s.id, 'code': s.code, 'ref': s.ref, 'name': s.name, 'lat': s.lat, 'lon': s.lon, 'desc': s.desc, 'tts': s.tts, 'url': s.url,
                            'wheelchair': s.wheelchair, 'platform_code': s.platform_code, 'parent': s.parent, 'location_type': s.location_type,
-                           'routes': sorted(s.routes), 'trips': s.trips, 'match': match.get(s.id), 'proposed_tags': stopmatch.proposed_tags(feed, s, conv)}
+                           'routes': sorted(s.routes), 'trips': s.trips, 'match': match.get(s.id), 'proposed_tags': stopmatch.proposed_tags(feed, s, conv), 'osm_notes': notes_by(s)}
 
     unpaired = [compare_lite(rels[rid], rel_ways, coords) for rid, pids in chosen.items() if not pids]
 
@@ -248,7 +265,7 @@ def main():
         'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw)]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user'],
-                          **({'nodes': v['nodes']} if v.get('nodes') else {})} for k, v in osm_stops.items()},
+                          **({'nodes': v['nodes']} if v.get('nodes') else {}), **({'notes': v['notes']} if v.get('notes') else {})} for k, v in osm_stops.items()},
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
         'feed_changes': feed_changes,
         'extra_stops': extra,

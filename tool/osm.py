@@ -66,6 +66,21 @@ def fetch_pt(bbox):
     return fetch(PT_QUERY.format(bbox=_bbox(bbox)))
 
 
+NOTES_API = 'https://api.openstreetmap.org/api/0.6/notes.json'
+
+
+def fetch_notes(bbox):
+    """Open OSM notes in the box: what other people reported (a stop that isn't where it's mapped, a sign gone)."""
+    s, w, n, e = bbox
+    url = f'{NOTES_API}?bbox={w:.5f},{s:.5f},{e:.5f},{n:.5f}&closed=0&limit=10000'
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=120) as r:
+            return json.load(r)
+    except Exception as ex:
+        print(f'notes: {ex}; none shown', file=sys.stderr)
+        return {'features': []}
+
+
 def fetch_roads(bbox):
     return fetch(ROADS_QUERY.format(bbox=_bbox(bbox)))
 

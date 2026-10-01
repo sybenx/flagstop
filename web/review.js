@@ -98,11 +98,12 @@ const Review = {
       }
       const pk = this.pick(st), keys = Object.keys(st.decide);
       // a stop whose every difference is kept (as OSM has it) has nothing to check: it's only counted
-      if (!keys.some(k => pk[k] !== 'keep')) { quiet++; continue; }
+      if (!keys.some(k => pk[k] !== 'keep') && !(s.osm_notes || []).length) { quiet++; continue; }
       const diff = (s.match && s.match.diff) || {};
       const row = el('div', {class: 'reviewrow' + (on ? ' on' : ''), 'data-review': s.id, onclick: e => { if (!e.target.closest('button, input, label')) this.focus(s.id); }},
         el('span', {class: 'n'}, st.i + 1), el('span', {class: 'dotc ' + st.status}));
       const body = el('div', {class: 'grow'}, el('div', {}, el('b', {}, s.name), o.tags.name && o.tags.name !== s.name ? el('span', {class: 'muted'}, ` · OSM: ${o.tags.name}`) : null));
+      if ((s.osm_notes || []).length) body.append(noteLines(s.osm_notes));
       const kept = el('span', {class: 'kept'}), chips = el('div', {class: 'chips'});
       const short = x => x.length > 28 ? x.slice(0, 27) + '…' : x;
       for (const k of keys) {
