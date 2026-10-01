@@ -176,6 +176,8 @@ def main():
     out = {
         'generated': datetime.datetime.now().isoformat(timespec='minutes'),
         'agency': feed.agency, 'feed': {**feed.info, 'file': os.path.basename(a.feed), 'bbox': box}, 'osm_fetched': osm_fetched,
+        # how current the data is: Overpass runs behind OSM, so this, not when it was fetched
+        'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw)]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user']} for k, v in osm_stops.items()},
         'extra_stops': extra,

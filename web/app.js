@@ -331,8 +331,18 @@ async function retrace() {
 }
 
 // ---------- panel ----------
+/** The OSM data predates the last upload (Overpass hadn't caught up when it was fetched): what's here would
+ *  suggest redoing it. Said at the top until a refresh gets newer data. */
+function staleNote() {
+  let last = null; try { last = JSON.parse(localStorage.getItem('flagstop.lastUpload') || 'null'); } catch (e) { /* storage off */ }
+  if (!last || !last.at || !D.osm_base || new Date(D.osm_base) >= new Date(last.at)) return null;
+  const t = s => new Date(s).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  return el('div', {class: 'note warn'}, `This OSM data is from ${t(D.osm_base)}, before your upload at ${t(last.at)} (changeset ${last.id}): Overpass hadn't caught up yet, so it may suggest what you just did. `,
+    el('button', {class: 'b tiny', onclick: () => refreshOSM()}, 'Refresh again'));
+}
 function render() {
   const P = $('#panel'); P.innerHTML = '';
+  if (S.tab === 'routes' || S.tab === 'stops') { const n = staleNote(); if (n) P.append(n); }
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
   if (S.tab === 'routes') S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
