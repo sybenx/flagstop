@@ -163,6 +163,14 @@ button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
 .note { margin: 8px 0; padding: 6px 8px; border-radius: 5px; background: color-mix(in srgb, var(--edit) 14%, transparent); font-size: 12px; }
 .mergelist { margin: 4px 0 0; padding-left: 18px; }
 .mergelist li { margin: 3px 0; }
+.practice { list-style: none; margin: 4px 0 0; padding: 0; }
+.practice li { display: flex; gap: 8px; margin: 6px 0; font-size: 13px; }
+.practice .tick { flex: 0 0 14px; font-weight: 700; }
+.practice li.ok .tick { color: var(--ok); }
+.practice li.no .tick { color: var(--miss); }
+.practice li .small { margin-top: 2px; }
+.signrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 3px 0; }
+.signrow input { width: 4em; }
 .fixcard .decide { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--line); }
 .fixcard .decide .why { color: var(--muted); font-size: 12px; margin: 2px 0; }
 .fixcard .decide .btns { margin: 4px 0 0; }
