@@ -22,6 +22,9 @@ relation["type"="route"]["route"~"^(bus|trolleybus|share_taxi)$"]({bbox})->.rout
   nwr["public_transport"="platform"]["highway"="bus_stop"]({bbox});
   nwr["public_transport"="stop_position"]["bus"="yes"]({bbox});
   nwr["amenity"="bus_station"]({bbox});
+  nwr["public_transport"="station"]["bus"="yes"]({bbox});
+  // what groups a station's parts
+  relation["public_transport"="stop_area"]({bbox});
 );
 out meta;
 >;
@@ -107,9 +110,10 @@ STOP_TAGS = ('highway', 'public_transport', 'bus', 'amenity')
 
 
 def parse_pt(raw):
-    """-> (stops, routes, masters, ways, nodes)
+    """-> (stops, routes, masters, ways, nodes)   (stop areas: parse_pt.stop_areas, after a call)
 
-    stops:   {id: {id, type, lat, lon, tags}} for every stop-like object (a way/relation gets its centroid)
+    stops:   {id: {id, type, lat, lon, tags}} for every stop-like object (a way gets its centroid, and its
+             node list, so it can be edited without losing its shape)
     routes:  {id: {id, tags, members:[{type, ref, role}]}} for type=route
     masters: same for type=route_master
     ways:    {id: {tags, nodes:[node ids]}}   member ways of the routes
@@ -125,7 +129,7 @@ def parse_pt(raw):
             rels[el['id']] = el
 
     def is_stop(tags):
-        return (tags.get('highway') == 'bus_stop' or tags.get('amenity') == 'bus_station'
+        return (tags.get('highway') == 'bus_stop' or tags.get('amenity') == 'bus_station' or (tags.get('public_transport') == 'station' and tags.get('bus') == 'yes')
                 or (tags.get('public_transport') in ('platform', 'stop_position') and (tags.get('bus') == 'yes' or tags.get('highway') == 'bus_stop')))
 
     stops = {}
@@ -140,17 +144,20 @@ def parse_pt(raw):
             pts = [(nodes[i]['lon'], nodes[i]['lat']) for i in w.get('nodes', []) if i in nodes]
             if pts:
                 stops[f"w{w['id']}"] = {'id': f"w{w['id']}", 'osm_id': w['id'], 'type': 'way', 'lon': sum(p[0] for p in pts) / len(pts), 'lat': sum(p[1] for p in pts) / len(pts), 'tags': t,
-                                        'version': w.get('version'), 'timestamp': w.get('timestamp'), 'user': w.get('user')}
+                                        'nodes': w.get('nodes', []), 'version': w.get('version'), 'timestamp': w.get('timestamp'), 'user': w.get('user')}
 
-    routes, masters = {}, {}
+    routes, masters, areas = {}, {}, {}
     for r in rels.values():
         t = r.get('tags', {})
         rec = {'id': r['id'], 'tags': t, 'members': r.get('members', []), 'version': r.get('version'), 'timestamp': r.get('timestamp'), 'user': r.get('user')}
-        if t.get('type') == 'route_master':
+        if t.get('public_transport') == 'stop_area':
+            areas[r['id']] = rec
+        elif t.get('type') == 'route_master':
             masters[r['id']] = rec
         elif t.get('type') == 'route':
             routes[r['id']] = rec
 
+    parse_pt.stop_areas = areas
     coords = {i: (n['lon'], n['lat']) for i, n in nodes.items()}
     wayrecs = {i: {'id': i, 'tags': w.get('tags', {}), 'nodes': w.get('nodes', [])} for i, w in ways.items()}
     return stops, routes, masters, wayrecs, coords

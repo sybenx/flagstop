@@ -113,7 +113,8 @@ function markDuplicate(a, p) {
   editMasters([], a.id, keep ? {type: 'relation', ref: keep.id} : null);
   toast('Marked for deletion' + ((D.masters || []).some(m => m.routes.includes(a.id)) ? ', and swapped in its route_master' : '')); render();
 }
-const nodeBase = o => ({version: o.version, tags: o.tags, lat: o.lat, lon: o.lon});
+// what an edit starts from: a point's position, or a way's node list (without it, an upload would empty the way)
+const nodeBase = o => o.nodes ? {version: o.version, tags: o.tags, nodes: o.nodes} : {version: o.version, tags: o.tags, lat: o.lat, lon: o.lon};
 const osmNumId = o => o.osm_id ?? +o.id.slice(1);
 
 // ---------- map ----------

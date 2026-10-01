@@ -14,8 +14,8 @@
 'use strict';
 
 const typeOf = o => ({n: 'node', w: 'way', r: 'relation'})[o.id[0]];
-// the review data has no node lists for ways: editing one here would upload it without them. Points only.
-const isPoint = o => o.id[0] === 'n';
+// a way can be edited only with its node list (else the upload would empty it); the review data has them now
+const isPoint = o => o.id[0] === 'n' || (o.id[0] === 'w' && Array.isArray(o.nodes) && o.nodes.length > 1);
 
 const Station = {
   NEAR: 80,    // m: a platform this close to a station point is one of its bays
