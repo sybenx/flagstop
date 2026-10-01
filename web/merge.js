@@ -46,13 +46,13 @@ const Merge = {
     const stale = [...had.keys()].filter(id => !now.has(id)).map(id => D.osm_stops['n' + id] || {id: 'n' + id, tags: {}});
     const splits = (p.chain_breaks || []).filter(b => b.kind === 'split');
     // the timetable the OSM way, as tags on the one relation: when it runs (first departure from its first stop
-    // to last arrival), and how often (the busiest days' gap as interval, the other days' as interval:conditional;
-    // left out where buses don't come at a steady gap)
+    // to last arrival), and how often (the busiest days' usual gap as interval, the other days' as
+    // interval:conditional; where the gap drifts through the day, the usual one, said so in the card)
     const svc = (p.services || []).filter(x => x.trips && x.days), main = [...svc].sort((a, b) => b.trips - a.trips)[0];
     const timetable = svc.length ? {opening_hours: svc.map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ')} : {};
-    if (main && main.every && main.steady) {
+    if (main && main.every) {
       timetable.interval = hhmm(main.every);
-      const cond = svc.filter(x => x !== main && x.every && x.steady && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
+      const cond = svc.filter(x => x !== main && x.every && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
       if (cond.length) timetable['interval:conditional'] = cond.join('; ');
     }
     // OSM's own values, where they differ: a question, not an overwrite
@@ -66,7 +66,8 @@ const Merge = {
     const picked = new Set(stops.filter(x => x.o).map(x => x.o.id));
     const unpicked = decide.filter(q => q.kind === 'which' && q.answer).flatMap(q => q.cands.map(c => ({o: c.o, sid: q.s.id}))).filter(x => !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
     const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
-    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, gone};
+    const uneven = svc.some(x => x.every && !x.steady);
+    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
   goneStops(x) {
@@ -174,6 +175,7 @@ const Merge = {
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: this.hours(x) ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
             ` and put the timetable on it (times at its first stop, ${D.stops[p.stops[0]].name}): `, el('code', {}, Object.entries(x.timetable).map(([k, v]) => `${k}=${v}`).join('  ')),
+            x.uneven ? el('div', {class: 'muted small'}, "The gap between buses drifts through the day here; the interval is the usual one.") : null,
             x.clash.length ? el('div', {class: 'muted small'}, 'OSM has ', el('code', {}, [...new Set(x.rels.flatMap(a => x.clash.filter(k => a.tags[k]).map(k => `${k}=${a.tags[k]}`)))].join('  ')), '. Ticking replaces it.') : null)) : null)),
       ...[x.decide.length ? this.decisions(x) : null, x.gone.length ? this.goneStops(x) : null,
       x.questions.length ? el('div', {class: 'muted small', style: 'margin:6px 0'}, `${x.questions.length} other stop question${x.questions.length > 1 ? 's' : ''} on this route (names, codes) don't change the route; settle them in Check stops: `,
