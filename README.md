@@ -31,6 +31,8 @@ python3 tool/review.py cache/cvtd-*.zip               # → web/data/review.json
 python3 tool/serve.py                                  # → http://127.0.0.1:8765/
 ```
 
+After you upload from the page, *refresh* reads your changesets straight from OSM's API (`tool/patch.py`): seconds, and current, where Overpass takes minutes and runs behind. A plain refresh fetches stops and routes again, and the roads only if they're a day old (`--refresh-roads` to force). Overpass servers are tried in turn when one is busy.
+
 If Overpass or the agency is unreachable from where you run this, fetch by hand and pass the files:
 
 ```bash
@@ -105,6 +107,7 @@ tool/stops.py     stop conflation and tag diff
 tool/routes.py    road graph, bus-legal shape-guided routing, divergences
 tool/compare.py   relation ↔ pattern pairing and audit; proposed tags
 tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a .osm per proposed relation)
+tool/patch.py     the cached OSM data brought up to date with changesets, from OSM's API
 tool/serve.py     static server + /api/trace for re-routing through via points
 tool/catalog.py   Mobility Database search and download
 tool/feeddiff.py  what changed between two versions of the feed

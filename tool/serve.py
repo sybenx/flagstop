@@ -69,9 +69,10 @@ def trace_with_vias(pid, vias, g=None):
 REFRESH = {'running': False, 'error': None, 'done': None}
 
 
-def start_refresh():
-    """Fetch OSM again and rebuild review.json (after an upload, so the page shows what's there now), then
-    reload the roads the re-routing uses. In the background: Overpass takes a minute or two."""
+def start_refresh(changesets=()):
+    """Bring OSM up to date and rebuild review.json, then reload the roads the re-routing uses. After an upload
+    (changesets given): those changesets, straight from OSM's API, in seconds. Otherwise: Overpass again (roads
+    only if a day old). In the background."""
     if REFRESH['running']:
         return REFRESH
     if not STATE.get('paths'):
@@ -80,7 +81,12 @@ def start_refresh():
 
     def run():
         feed, roads, pt = STATE['paths']
-        r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, '--refresh'], capture_output=True, text=True)
+        if changesets:
+            r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'patch.py'), *map(str, changesets)], capture_output=True, text=True)
+            if r.returncode:
+                REFRESH.update(running=False, error=(r.stderr.strip().splitlines() or ['patch.py failed'])[-1])
+                return
+        r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, *([] if changesets else ['--refresh'])], capture_output=True, text=True)
         if r.returncode:
             REFRESH.update(running=False, error=(r.stderr.strip().splitlines() or ['review.py failed'])[-1])
             return
@@ -178,7 +184,11 @@ class Handler(SimpleHTTPRequestHandler):
             os.replace(path + '.tmp', path)
             return self._json({'ok': True}, cors=False)
         if urllib.parse.urlparse(self.path).path == '/api/refresh':
-            return self._json(start_refresh())
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            except ValueError:
+                body = {}
+            return self._json(start_refresh([int(x) for x in body.get('changesets', []) if str(x).isdigit()][:20]))
         if urllib.parse.urlparse(self.path).path != '/api/trace':
             return self._json({'error': 'no such call'}, 404)
         if 'graph' not in STATE:

@@ -7,7 +7,7 @@ Without --osm-* files the OSM data is fetched from Overpass for the feed's bound
 cache/. Writes web/data/review.json and one proposed relation per pattern, web/data/rel-<id>.osm, for
 JOSM to import.
 """
-import math, re, argparse, datetime, json, os, sys
+import math, re, argparse, datetime, json, os, sys, time
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -137,7 +137,8 @@ def main():
     ap.add_argument('--osm-roads')
     ap.add_argument('--out', default=os.path.join(ROOT, 'web', 'data'))
     ap.add_argument('--cache', default=os.path.join(ROOT, 'cache'))
-    ap.add_argument('--refresh', action='store_true', help='fetch OSM again even if cached')
+    ap.add_argument('--refresh', action='store_true', help='fetch OSM again even if cached (roads too, if a day old)')
+    ap.add_argument('--refresh-roads', action='store_true', help='fetch the roads again, however recent')
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
     ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
     a = ap.parse_args()
@@ -146,7 +147,11 @@ def main():
     box = gtfs.bbox(feed)
     slug = ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
     pt_raw = osm.load(a.osm_pt) if a.osm_pt else osm.cached(os.path.join(a.cache, f'{slug}-osm-pt.json'), osm.fetch_pt, box, a.refresh)
-    roads_raw = osm.load(a.osm_roads) if a.osm_roads else osm.cached(os.path.join(a.cache, f'{slug}-osm-roads.json'), osm.fetch_roads, box, a.refresh)
+    # roads: the biggest fetch and the slowest (Overpass often busy); they change less than stops and routes, and
+    # an upload's own road edits come in by tool/patch.py. Again when asked, or when a day old.
+    rp = os.path.join(a.cache, f'{slug}-osm-roads.json')
+    stale = not os.path.exists(rp) or time.time() - os.path.getmtime(rp) > 86400
+    roads_raw = osm.load(a.osm_roads) if a.osm_roads else osm.cached(rp, osm.fetch_roads, box, a.refresh_roads or (a.refresh and stale))
     notes_raw = osm.cached(os.path.join(a.cache, f'{slug}-notes.json'), osm.fetch_notes, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 

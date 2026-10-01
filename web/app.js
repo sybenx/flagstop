@@ -467,9 +467,12 @@ function revertNote(u, newId) {
 /** Fetch OSM again and rebuild the review on the server, then show it. */
 async function refreshOSM() {
   try {
-    let st = await (await fetch('/api/refresh', {method: 'POST'})).json();
+    // your uploads the data doesn't have yet: read straight from OSM (seconds), not Overpass (minutes, and behind)
+    let ups = []; try { ups = JSON.parse(localStorage.getItem('flagstop.uploads') || '[]'); } catch (e) { /* storage off */ }
+    const changesets = ups.filter(u => !D.osm_base || new Date(u.at) > new Date(D.osm_base)).map(u => u.id);
+    let st = await (await fetch('/api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
     if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
-    toast('Fetching OSM again and rebuilding the review: a minute or two…', 120000);
+    toast(changesets.length ? `Reading your upload${changesets.length > 1 ? 's' : ''} from OSM and rebuilding the review…` : 'Fetching OSM again and rebuilding the review: a minute or two…', 120000);
     while (st.running) { await new Promise(r => setTimeout(r, 3000)); st = await (await fetch('/api/refresh')).json(); }
     if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
     location.reload();
@@ -1156,7 +1159,11 @@ function renderChanges(P) {
           // remembered, so the changeset stays findable after the page redraws or reloads
           // remembered with what goes with it (records for undone edits, deletes OSM skipped), so it all
           // survives the redraw that follows, and a reload
-          try { localStorage.setItem('flagstop.lastUpload', JSON.stringify({id, comment: comment.value, n, at: new Date().toISOString(), undid: undid || [], skipped})); } catch (e) {}
+          try {
+            localStorage.setItem('flagstop.lastUpload', JSON.stringify({id, comment: comment.value, n, at: new Date().toISOString(), undid: undid || [], skipped}));
+            const ups = JSON.parse(localStorage.getItem('flagstop.uploads') || '[]'); ups.push({id, at: new Date().toISOString()});
+            localStorage.setItem('flagstop.uploads', JSON.stringify(ups.slice(-50)));
+          } catch (e) {}
           S.comment = null;
           toast(`Uploaded: changeset ${id}`, 6000);
           render();

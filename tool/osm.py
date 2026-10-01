@@ -8,7 +8,9 @@ Both are the raw Overpass JSON; `parse_pt` and `Graph` (in routes.py) read them.
 """
 import json, os, sys, time, urllib.parse, urllib.request
 
-OVERPASS = os.environ.get('OVERPASS_URL', 'https://overpass-api.de/api/interpreter')
+# the main public server, then others: one busy server shouldn't stall a refresh
+OVERPASS = [u for u in [os.environ.get('OVERPASS_URL')] if u] + ['https://overpass-api.de/api/interpreter',
+            'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter']
 
 # Stops and routes, with every member way's geometry so an existing relation can be drawn and scored.
 PT_QUERY = """[out:json][timeout:180];
@@ -50,16 +52,21 @@ def _bbox(b):
 
 
 def fetch(query, tries=3):
+    """Run an Overpass query: each server in turn, a short wait between rounds."""
     data = urllib.parse.urlencode({'data': query}).encode()
+    last = None
     for i in range(tries):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(OVERPASS, data=data, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=400) as r:
-                return json.load(r)
-        except Exception as e:  # 429 / 504 when the public server is busy
-            if i == tries - 1:
-                raise
-            print(f'overpass: {e}; retrying in {30 * (i + 1)}s', file=sys.stderr)
-            time.sleep(30 * (i + 1))
+        for url in OVERPASS:
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, data=data, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=300) as r:
+                    return json.load(r)
+            except Exception as e:   # 429 / 504 / timeouts when a public server is busy
+                last = e
+                print(f'overpass: {url.split("/")[2]}: {e}', file=sys.stderr)
+        if i < tries - 1:
+            print(f'overpass: all busy; again in {20 * (i + 1)}s', file=sys.stderr)
+            time.sleep(20 * (i + 1))
+    raise last
 
 
 def fetch_pt(bbox):
@@ -81,8 +88,64 @@ def fetch_notes(bbox):
         return {'features': []}
 
 
-def fetch_roads(bbox):
-    return fetch(ROADS_QUERY.format(bbox=_bbox(bbox)))
+ROAD_CLASSES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road'
+TILE = 0.005     # degrees (~550 m): the routes are covered by tiles this size and their neighbours, so every road
+                 # within a tile or so of a line comes, not the whole county (a search around the lines is too slow)
+
+
+def corridors(feed, step=80):
+    """Each route's line (its shape, or its stops in order), thinned to a point every `step` metres: what the
+    roads fetch follows."""
+    import math
+    lines, seen = [], set()
+    for p in feed.patterns:
+        pts = feed.shapes.get(p.shape_id) or [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops if s in feed.stops]
+        key = (p.shape_id, len(pts))
+        if len(pts) < 2 or key in seen:
+            continue
+        seen.add(key)
+        out = [pts[0]]
+        for x in pts[1:]:
+            if math.hypot((x[0] - out[-1][0]) * 83000, (x[1] - out[-1][1]) * 111000) >= step:
+                out.append(x)
+        out.append(pts[-1])
+        lines.append(out)
+    return lines
+
+
+def fetch_roads(bbox, feed=None):
+    """The roads a bus could drive, near the routes (or in the whole box, without a feed), with the turn
+    restrictions on them."""
+    if not feed:
+        return fetch(ROADS_QUERY.format(bbox=_bbox(bbox)))
+    cells = set()
+    for line in corridors(feed, step=100):
+        for lon, lat in line:
+            i, j = int(lat // TILE), int(lon // TILE)
+            cells |= {(i + di, j + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}
+    # neighbouring tiles in a row as one box: fewer, longer boxes are quicker for Overpass
+    rows = {}
+    for i, j in cells:
+        rows.setdefault(i, []).append(j)
+    boxes = []
+    for i, js in rows.items():
+        js.sort(); start = prev = js[0]
+        for j in js[1:] + [None]:
+            if j is not None and j == prev + 1:
+                prev = j; continue
+            boxes.append((i * TILE, start * TILE, (i + 1) * TILE, (prev + 1) * TILE))
+            if j is not None:
+                start = prev = j
+    parts = ''.join(f'  way["highway"~"^({ROAD_CLASSES})$"]({s:.5f},{w:.5f},{n:.5f},{e:.5f});\n' for s, w, n, e in boxes)
+    return fetch(f"""[out:json][timeout:300];
+(
+{parts})->.roads;
+.roads out body;
+relation(bw.roads)["type"="restriction"];
+out body;
+.roads >;
+out skel qt;
+""")
 
 
 def load(path):
