@@ -91,7 +91,35 @@ function patternGrade(p) {
   if (r.tag_issues.length) return {chip: 'tags', cls: 'info', order: 4};
   return {chip: 'ok', cls: 'good', order: 5};
 }
-const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : p.routed;
+// a route not routed yet (its roads load when it's opened): nothing to draw or say about the path
+const NOT_ROUTED = {ways: [], geometry: [], legs: [], divergences: [], score: null};
+const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : (p.routed || NOT_ROUTED);
+/** A route's roads and path: fetched from the server when first needed (its roads, from Overpass, the first
+ *  time each day), then kept on the pattern. -> true when it's there. */
+async function ensureRouted(p) {
+  if (p.routed) return true;
+  if (p.routing) return p.routing;
+  p.routing = (async () => {
+    try {
+      const r = await fetch(`/api/route?pattern=${encodeURIComponent(p.id)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      Object.assign(p, j);
+      return true;
+    } catch (e) { p.routeError = e.message; return false; }
+    finally { p.routing = null; }
+  })();
+  return p.routing;
+}
+/** Route every itinerary in the background, one at a time, so the list fills in while you work. */
+async function routeAll() {
+  for (const p of D.patterns) {
+    if (p.routed || p.temporary) continue;
+    const ok = await ensureRouted(p);
+    if (ok && S.tab === 'routes' && !S.pattern) render();
+    if (!ok) break;   // Overpass not answering: stop asking; opening a route tries again
+  }
+}
 const FAR = () => (D.positions && D.positions.far) || 25;   // m: closer than this, the same spot (from the feed)
 const relBase = a => ({version: a.version, tags: a.tags, members: a.members});
 // Of an itinerary's relations, the one to keep: the oldest not marked for deletion (it carries the history).
@@ -428,15 +456,16 @@ function renderRoutes(P) {
   const fc = feedChanges();
   if (fc) P.append(fc);
   P.append(el('h2', {}, 'Itineraries, worst first'), el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
-  const rows = D.patterns.map(p => ({p, g: patternGrade(p), sc: p.routed.score ? p.routed.score.shape_covered : 0}));
+  const rows = D.patterns.map(p => ({p, g: patternGrade(p), sc: p.routed ? (p.routed.score ? p.routed.score.shape_covered : 0) : 1}));
   rows.sort((a, b) => a.g.order - b.g.order || a.sc - b.sc || b.p.trips - a.p.trips);
   for (const {p, g, sc} of rows) {
-    const r = routeOf(p), nd = p.routed.divergences.length;
+    const r = routeOf(p), nd = routedOf(p).divergences.length;
     P.append(el('div', {class: 'row' + (p.temporary ? ' dim' : ''), onclick: () => selectPattern(p.id)},
       refBadge(r),
       el('div', {class: 'grow'}, el('div', {class: 't'}, p.headsign || p.direction_name || r.long || ('direction ' + p.direction)),
-        el('div', {class: 's'}, `${p.stops.length} stops · ${p.trips} trips${nd ? ` · ${nd} place${nd > 1 ? 's' : ''} to look at` : ''}${p.chain_ok ? '' : ' · path broken'}`)),
-      el('span', {class: 'pct' + (sc < 0.97 ? ' low' : ''), title: 'share of the agency line drivable on OSM roads'}, pct(sc)),
+        el('div', {class: 's'}, `${p.stops.length} stops · ${p.trips} trips${nd ? ` · ${nd} place${nd > 1 ? 's' : ''} to look at` : ''}${p.routed && !p.chain_ok ? ' · path broken' : ''}`)),
+      p.routed ? el('span', {class: 'pct' + (sc < 0.97 ? ' low' : ''), title: 'share of the agency line drivable on OSM roads'}, pct(sc))
+        : el('span', {class: 'pct muted', title: "its roads haven't loaded yet"}, p.routeError ? '?' : '…'),
       pendingChip(p),
       el('span', {class: 'chip ' + g.cls}, g.chip)));
   }
@@ -570,8 +599,8 @@ function applyHash() {
     const p = patternById(q.get('merge'));
     let saved = null;   // read before opening: opening saves a fresh card over it
     try { saved = JSON.parse(sessionStorage.getItem('flagstop.merge') || 'null'); } catch (e) { /* storage off */ }
-    selectPattern(p.id); Merge.open(p);
-    if (saved && saved.merge && saved.merge.pid === p.id) { S.merge = saved.merge; for (const k of saved.looked || []) S.looked.add(k); render(); draw(); }
+    selectPattern(p.id);
+    Merge.open(p).then(() => { if (S.merge && saved && saved.merge && saved.merge.pid === p.id) { S.merge = saved.merge; for (const k of saved.looked || []) S.looked.add(k); render(); draw(); } });
   } else if (q.get('station') && Station.place(q.get('station'))) {
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('flagstop.station') || 'null'); } catch (e) { /* storage off */ }
@@ -580,8 +609,8 @@ function applyHash() {
   } else if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }
   else if (q.get('pattern') && patternById(q.get('pattern'))) {
     selectPattern(q.get('pattern'));
-    const dv = patternById(q.get('pattern')).routed.divergences[+q.get('div')];
-    if (q.get('div') != null && dv) { S.div = +q.get('div'); render(); map.once('moveend', () => showDivergence(dv)); }
+    const pp = patternById(q.get('pattern'));
+    if (q.get('div') != null) ensureRouted(pp).then(() => { const dv = routedOf(pp).divergences[+q.get('div')]; if (dv && S.pattern === pp.id) { S.div = +q.get('div'); render(); draw(); showDivergence(dv); } });
   } else if (q.get('stop') && D.stops[q.get('stop')]) showStop(q.get('stop'));
   else if (['stops', 'extra', 'changes', 'about'].includes(q.get('tab'))) {
     if (q.get('tab') === 'extra') try { const x = JSON.parse(sessionStorage.getItem('flagstop.extra') || 'null'); if (x) { S.extraGone = x.gone; for (const k of x.looked) S.looked.add(k); } } catch (e) { /* storage off */ }
@@ -600,11 +629,14 @@ function selectPattern(id) {
   render(); draw();
   const p = patternById(id);
   fit(p.shape.length ? p.shape : p.stops.map(s => [D.stops[s].lon, D.stops[s].lat]));
+  if (!p.routed) ensureRouted(p).then(() => { if (S.pattern === id) { render(); draw(); } });
 }
 
 function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
   P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
+  if (!p.routed) P.append(el('div', {class: 'note'}, p.routing || !p.routeError ? "Loading this route's roads from OSM…" : `Couldn't load this route's roads: ${p.routeError}. `,
+    !p.routing && p.routeError ? el('button', {class: 'b tiny', onclick: () => { p.routeError = null; ensureRouted(p).then(() => { render(); draw(); }); render(); }}, 'Try again') : null));
   const d = el('div', {class: 'detail'});
   d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), pendingChip(p), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
   d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · ${p.loop && p.loop.length ? 'loop' : 'direction ' + p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
@@ -730,6 +762,7 @@ function timetableLine(a, p, op) {
 
 /** Build the relation op(s) for a pattern from the routed ways and matched platforms. */
 function proposeRelation(p) {
+  if (!p.routed) return toast("This route's roads are still loading: try again in a moment", 5000);
   const rt = routedOf(p);
   if (!p.chain_ok && !S.routed) { if (!confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return; }
   // The routed path and the relations here were read before any road edit in Changes: building from them
@@ -1237,6 +1270,7 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }
   // what the address says is open, now: not when the map has loaded (a background tab may not load it for a while)
   try { applyHash(); } catch (e) { console.error(e); }
+  routeAll();   // each route's roads, one at a time, so the list's percentages fill in
 }).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });
 
 window.addEventListener('hashchange', () => { if (D && map) applyHash(); });

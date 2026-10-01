@@ -26,8 +26,9 @@ def brief(review):
         }
     for p in review['patterns']:
         out['patterns'][p['id']] = {
-            'relations': sorted(a['id'] for a in p['relations']), 'chain_ok': p.get('chain_ok'),
-            'divergences': len(p['routed']['divergences']),
+            'relations': sorted(a['id'] for a in p['relations']),
+            # routed only in a full build (--route-all); a light build's routes are compared on the rest
+            **({'chain_ok': p.get('chain_ok'), 'divergences': len(p['routed']['divergences'])} if p.get('routed') else {}),
             'services': [f"{x['days']} {x['first']}-{x['last']} every {x['every']}{'' if x.get('steady') else ' (drifts)'}" for x in p.get('services', [])],
         }
     return out
@@ -45,7 +46,7 @@ def compare(old, new):
             if a is None or b is None:
                 lines.append(f"{label}: {'added' if a is None else 'gone'}")
                 continue
-            for f in sorted(set(a) | set(b)):
+            for f in sorted(set(a) & set(b) if kind == 'patterns' else set(a) | set(b)):   # a light build has no route fields
                 if a.get(f) != b.get(f):
                     if isinstance(a.get(f), dict) and isinstance(b.get(f), dict):
                         for kk in sorted(set(a[f]) | set(b[f])):

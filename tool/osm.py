@@ -58,7 +58,7 @@ def fetch(query, tries=3):
     for i in range(tries):
         for url in OVERPASS:
             try:
-                with urllib.request.urlopen(urllib.request.Request(url, data=data, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=300) as r:
+                with urllib.request.urlopen(urllib.request.Request(url, data=data, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=90) as r:
                     return json.load(r)
             except Exception as e:   # 429 / 504 / timeouts when a public server is busy
                 last = e
@@ -118,8 +118,14 @@ def fetch_roads(bbox, feed=None):
     restrictions on them."""
     if not feed:
         return fetch(ROADS_QUERY.format(bbox=_bbox(bbox)))
+    return fetch_roads_near(corridors(feed, step=100))
+
+
+def fetch_roads_near(lines):
+    """The roads a bus could drive within a tile or so of these lines ([(lon, lat), ...] each), with the turn
+    restrictions on them: what one route needs, in one small query."""
     cells = set()
-    for line in corridors(feed, step=100):
+    for line in lines:
         for lon, lat in line:
             i, j = int(lat // TILE), int(lon // TILE)
             cells |= {(i + di, j + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}

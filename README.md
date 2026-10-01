@@ -24,11 +24,13 @@ Python 3.9+, no dependencies.
 # 1. find the feed (Mobility Database catalog, no key needed)
 python3 tool/catalog.py "cache valley" --get          # → cache/cvtd-cache-valley-transit-district.zip
 
-# 2. compare with OSM (fetches Overpass for the feed's bounding box, cached in cache/)
-python3 tool/review.py cache/cvtd-*.zip               # → web/data/review.json + rel-*.osm
+# 2. compare with OSM: stops and route relations for the feed's area (Overpass, cached in cache/)
+python3 tool/review.py cache/cvtd-*.zip               # → web/data/review.json
 
 # 3. look
 python3 tool/serve.py                                  # → http://127.0.0.1:8765/
+
+Roads are loaded a route at a time: opening a route (or the list, in the background) fetches the roads around that one route, a small query, kept a day in `cache/roads/`. So a big system costs no more up front than a small one. `--route-all` routes everything at build time instead, with one roads fetch for the whole area (the tests, or a build to publish).
 ```
 
 After you upload from the page, *refresh* reads your changesets straight from OSM's API (`tool/patch.py`): seconds, and current, where Overpass takes minutes and runs behind. A plain refresh fetches stops and routes again, and the roads only if they're a day old (`--refresh-roads` to force). Overpass servers are tried in turn when one is busy.

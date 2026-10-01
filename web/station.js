@@ -64,6 +64,9 @@ const Station = {
   /** Live OSM around the place: the roads, an existing stop area, what uses the stop positions. Then where
    *  each bay's stop position would go: the nearest point on a road the buses calling there use. */
   async look(p) {
+    // the routes calling at its bays, routed: their roads are where the stop positions go
+    const sids = new Set(p.bays.flatMap(b => b.stops.map(s => s.id)));
+    await Promise.all(D.patterns.filter(q => q.stops.some(id => sids.has(id))).map(ensureRouted));
     const pts = [...p.stations, ...p.bays.map(b => b.o)].map(osmPos);
     const lons = pts.map(x => x[0]), lats = pts.map(x => x[1]);
     try {

@@ -9,7 +9,7 @@ and relations to the stops-and-routes data, roads and their nodes to the roads d
 over a road the stops-and-routes data never had gets that road (and its nodes) from the roads data, or from
 the API.
 """
-import glob, json, os, sys, urllib.request
+import functools, glob, json, os, sys, urllib.request
 import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,7 @@ def get(url):
         return r.read()
 
 
+@functools.lru_cache(maxsize=None)   # each roads file is patched with the same changesets: fetch each once
 def changes(cs):
     """-> [(action, element as Overpass JSON has it)], and when the changeset closed."""
     meta = ET.fromstring(get(f'{API}/changeset/{cs}')).find('changeset')
@@ -121,11 +122,17 @@ def main(argv):
     if not ids:
         raise SystemExit(__doc__)
     newest = lambda pat: max(glob.glob(os.path.join(ROOT, 'cache', pat)), key=os.path.getmtime)
-    pt_path, roads_path = newest('*-osm-pt.json'), newest('*-osm-roads.json')
-    pt, roads = json.load(open(pt_path)), json.load(open(roads_path))
-    n = apply(pt, roads, ids)
-    for path, data in ((pt_path, pt), (roads_path, roads)):
-        json.dump(data, open(path + '.tmp', 'w')); os.replace(path + '.tmp', path)
+    # the stops-and-routes data, and every roads file: the whole area's (if any) and each route's (cache/roads/)
+    pt_path = newest('*-osm-pt.json')
+    road_paths = glob.glob(os.path.join(ROOT, 'cache', '*-osm-roads.json')) + glob.glob(os.path.join(ROOT, 'cache', 'roads', '*.json'))
+    pt = json.load(open(pt_path))
+    n = 0
+    for i, rp in enumerate(road_paths or [None]):
+        roads = json.load(open(rp)) if rp else {'elements': []}
+        n += apply(pt, roads, ids) if i == 0 else apply({'elements': []}, roads, ids)
+        if rp:
+            json.dump(roads, open(rp + '.tmp', 'w')); os.replace(rp + '.tmp', rp)
+    json.dump(pt, open(pt_path + '.tmp', 'w')); os.replace(pt_path + '.tmp', pt_path)
     print(f'patched {n} elements from changeset{"s" if len(ids) > 1 else ""} {", ".join(map(str, ids))}', file=sys.stderr)
 
 

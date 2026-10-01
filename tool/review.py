@@ -36,7 +36,8 @@ def days_of(c):
 
 def side(p, geom, kerb=3):
     """Which side of a bus path a point is on: 'right' (the kerb buses pull into; traffic drives on the right),
-    'left' (across the street), or None (within kerb metres of the line)."""
+    'left' (across the street), or None (within kerb metres of the line, or beyond either end of it, where a side
+    means nothing)."""
     best = None
     for i in range(len(geom) - 1):
         a, b = geom[i], geom[i + 1]
@@ -49,8 +50,8 @@ def side(p, geom, kerb=3):
         u = max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
         d = math.hypot(wx - u * vx, wy - u * vy)
         if best is None or d < best[0]:
-            best = (d, vx * wy - vy * wx)
-    if not best or best[0] < kerb:
+            best = (d, vx * wy - vy * wx, (i == 0 and u == 0.0) or (i == len(geom) - 2 and u == 1.0))
+    if not best or best[0] < kerb or best[2]:
         return None
     return 'left' if best[1] > 0 else 'right'
 
@@ -66,6 +67,58 @@ def stop_paths(feed, traced):
             if len(geom) >= 2:
                 out.setdefault(sid, []).append(geom)
     return out
+
+
+def shape_paths(feed):
+    """{stop_id: [the agency's line just before and after the stop, per itinerary calling there]}: which way the
+    buses go past each stop, from the feed alone (no roads needed). Without a shape, the stops before and after."""
+    out = {}
+    for p in feed.patterns:
+        shape = feed.shapes.get(p.shape_id) or []
+        guide = routing.Polyline(shape) if len(shape) > 1 else None
+        prev_seg = 0
+        for k, sid in enumerate(p.stops):
+            s = feed.stops[sid]
+            if guide:
+                d, i, m = guide.nearest((s.lon, s.lat))
+                if k and i < prev_seg:   # a loop passes the same place twice: the pass after the previous stop
+                    d2, i2, m2 = guide.nearest((s.lon, s.lat), lo=prev_seg, hi=len(guide.pts) - 2)
+                    if d2 <= d + 30:
+                        i, m = i2, m2
+                prev_seg = max(prev_seg, i)
+                geom = guide.slice(m - 120, m + 120)
+            else:
+                geom = [(feed.stops[x].lon, feed.stops[x].lat) for x in p.stops[max(0, k - 1):k + 2]]
+            if len(geom) >= 2:
+                out.setdefault(sid, []).append(geom)
+    return out
+
+
+def route_pattern(feed, p, g, match, osm_stops, stop_areas=()):
+    """What needs roads, for one itinerary: the path a bus can drive, where it parts from the agency's line and
+    why, whether its roads join up, the stop positions on them. -> the pattern's route fields."""
+    tr = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
+    routed_breaks = compare.chain_breaks(tr['ways'], g.ways)
+    # In and out of a dead end is a turnaround when the agency's line goes there too; when it doesn't,
+    # a stop was put on the wrong way (the parking aisle beside the street), and the path is wrong.
+    guide = routing.Polyline(feed.shapes[p.shape_id]) if len(feed.shapes.get(p.shape_id) or []) > 1 else None
+    for b in routed_breaks:
+        if b['kind'] == 'spur':
+            far = [n for n in (g.ways[b['b']]['nodes'][0], g.ways[b['b']]['nodes'][-1]) if n != b['node'] and n in g.coord]
+            b['turnaround'] = bool(guide and far and guide.nearest(g.coord[far[0]])[0] <= routing.DIVERGE)
+    one = type('F', (), {'patterns': [p], 'stops': feed.stops})
+    return {
+        'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
+        'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
+        'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
+        'way_nodes': {w: g.ways[w].get('nodes', []) for w in tr['ways'] if w in g.ways},
+        'stop_positions': stop_positions(one, {p.id: tr}, match, osm_stops, g, list(stop_areas)).get(p.id, {}),
+        'routed': {'ways': tr['ways'], 'geometry': [[round(x, 6), round(y, 6)] for x, y in tr['geometry']],
+                   'legs': [{'from': l['from'], 'to': l['to'], 'ok': l['ok'], 'why': l['why'], 'ways': l['ways']} for l in tr['legs']],
+                   'divergences': [{**{k: (round_pts(v) if k in ('shape', 'path') else v) for k, v in d.items()},
+                                    'way_tags': {w: g.ways[w].get('tags', {}) for w in d['ways'] if w in g.ways}} for d in tr['divergences']],
+                   'score': tr['score']},
+    }
 
 
 def across_fn(feed, paths):
@@ -141,6 +194,7 @@ def main():
     ap.add_argument('--refresh-roads', action='store_true', help='fetch the roads again, however recent')
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
     ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
+    ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
     a = ap.parse_args()
 
     feed = gtfs.load(a.feed)
@@ -151,7 +205,7 @@ def main():
     # an upload's own road edits come in by tool/patch.py. Again when asked, or when a day old.
     rp = os.path.join(a.cache, f'{slug}-osm-roads.json')
     stale = not os.path.exists(rp) or time.time() - os.path.getmtime(rp) > 86400
-    roads_raw = osm.load(a.osm_roads) if a.osm_roads else osm.cached(rp, osm.fetch_roads, box, a.refresh_roads or (a.refresh and stale))
+    roads_raw = (osm.load(a.osm_roads) if a.osm_roads else osm.cached(rp, osm.fetch_roads, box, a.refresh_roads or (a.refresh and stale))) if a.route_all else None
     notes_raw = osm.cached(os.path.join(a.cache, f'{slug}-notes.json'), osm.fetch_notes, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
@@ -160,14 +214,9 @@ def main():
     osm_stops, rels, masters, rel_ways, coords = osm.parse_pt(pt_raw)
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 
-    # The buses' paths first (they only need the feed and the roads): a stop across the street from where the
-    # buses pull in is the other direction's, so matching has to know which side is which.
-    g = routing.Graph(roads_raw)
-    print(f'road graph: {len(g.ways)} ways, {len(g.coord)} nodes', file=sys.stderr)
-    traced = {}
-    for p in feed.patterns:
-        traced[p.id] = routing.trace(g, [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops], feed.shapes.get(p.shape_id))
-    paths = stop_paths(feed, traced)
+    # Which way the buses go past each stop, from the agency's line: a stop across the street from where they
+    # pull in is the other direction's, so matching has to know which side is which. No roads needed.
+    paths = shape_paths(feed)
 
     # who else stops at each OSM stop, by their own feeds: a shared stop is known, not guessed from its tags
     for o in osm_stops.values():
@@ -194,49 +243,32 @@ def main():
                 near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
                 m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
-    positions = stop_positions(feed, traced, match, osm_stops, g, list(getattr(osm.parse_pt, 'stop_areas', {}).values()))
+    stop_areas = list(getattr(osm.parse_pt, 'stop_areas', {}).values())
     # Which relation is which pattern.
-    best, chosen, scores = compare.pair(feed, traced, rels, rel_ways, coords, match)
+    best, chosen, scores = compare.pair(feed, None, rels, rel_ways, coords, match)
+    # the roads, only when asked to route everything now (tests, a hosted build); else each route when opened
+    g = routing.Graph(roads_raw) if roads_raw else None
     masters_by_ref = {}
     for m in masters.values():
         masters_by_ref.setdefault((m['tags'].get('ref') or '').strip(), []).append(m['id'])
 
     patterns_out = []
     for p in feed.patterns:
-        tr = traced[p.id]
-        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, tr, conv) for rid in best.get(p.id, []) if p.id in chosen.get(rid, [])]
+        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, None, conv) for rid in best.get(p.id, []) if p.id in chosen.get(rid, [])]
         for au in audits:
             au['duplicate'] = len(audits) > 1
             au['both_directions'] = len(chosen.get(au['id'], [])) > 1
             au['also_covers'] = [x for x in chosen.get(au['id'], []) if x != p.id]
-        routed_breaks = compare.chain_breaks(tr['ways'], g.ways)
-        # In and out of a dead end is a turnaround when the agency's line goes there too; when it doesn't,
-        # a stop was put on the wrong way (the parking aisle beside the street), and the path is wrong.
-        guide = routing.Polyline(feed.shapes[p.shape_id]) if len(feed.shapes.get(p.shape_id) or []) > 1 else None
-        for b in routed_breaks:
-            if b['kind'] == 'spur':
-                far = [n for n in (g.ways[b['b']]['nodes'][0], g.ways[b['b']]['nodes'][-1]) if n != b['node'] and n in g.coord]
-                b['turnaround'] = bool(guide and far and guide.nearest(g.coord[far[0]])[0] <= routing.DIVERGE)
         patterns_out.append({
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
             'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops, 'loop': p.loop, 'split_at': p.split_at,
             'services': [{'id': sid, 'days': days_of(feed.calendar.get(sid)), 'first': h[0], 'last': h[1], 'trips': h[2], 'every': h[3], 'steady': h[4]} for sid, h in sorted(p.hours.items())],
-            'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
-            'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
-            'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
-            'way_nodes': {w: g.ways[w].get('nodes', []) for w in tr['ways'] if w in g.ways},
-            'stop_positions': positions.get(p.id, {}),
+            **(route_pattern(feed, p, g, match, osm_stops, stop_areas) if g else {}),
             'shape': [[round(x, 6), round(y, 6)] for x, y in feed.shapes.get(p.shape_id, [])],
-            'routed': {'ways': tr['ways'], 'geometry': [[round(x, 6), round(y, 6)] for x, y in tr['geometry']],
-                       'legs': [{'from': l['from'], 'to': l['to'], 'ok': l['ok'], 'why': l['why'], 'ways': l['ways']} for l in tr['legs']],
-                       'divergences': [{**{k: (round_pts(v) if k in ('shape', 'path') else v) for k, v in d.items()},
-                                        'way_tags': {w: g.ways[w].get('tags', {}) for w in d['ways'] if w in g.ways}} for d in tr['divergences']],
-                       'score': tr['score']},
             'relations': audits,
             'proposed_tags': compare.proposed_relation_tags(feed, p, match, conv),
         })
-        write_relation_osm(os.path.join(a.out, f'rel-{safe(p.id)}.osm'), feed, p, tr, match, osm_stops, conv)
         write_gpx(os.path.join(a.out, f'shape-{safe(p.id)}.gpx'), feed, p)
 
     routes_out = []
@@ -276,7 +308,7 @@ def main():
         'agency': feed.agency, 'feed': {**feed.info, 'file': os.path.basename(a.feed), 'bbox': box}, 'osm_fetched': osm_fetched,
         # how current the data is: Overpass runs behind OSM, so this, not when it was fetched
         'positions': {'typical': stopmatch.TYPICAL, 'far': stopmatch.FAR},
-        'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw)]), default=None),
+        'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw) if r]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user'],
                           **({'nodes': v['nodes']} if v.get('nodes') else {}), **({'notes': v['notes']} if v.get('notes') else {}), **({'served_by': v['served_by']} if v.get('served_by') else {})} for k, v in osm_stops.items()},
@@ -341,7 +373,7 @@ def summary(feed, match, extra, patterns, unpaired):
             pat['relation needs work'] += 1
         else:
             pat['relation ok'] += 1
-        if p['routed']['divergences']:
+        if (p.get('routed') or {}).get('divergences'):
             pat['map divergences'] += 1
     return {'stops': dict(st), 'stop_diffs': dict(diffs), 'extra_osm_stops': len(extra), 'patterns': dict(pat), 'unpaired_relations': len(unpaired)}
 

@@ -6,6 +6,8 @@
 Static files come from web/. With a feed and roads file loaded, the page can ask for a fresh trace
 of a pattern through extra via points the reviewer drops on the map:
 
+    GET /api/route?pattern=<id>                             -> the itinerary's route fields (path, divergences, joins,
+                                                               stop positions), from its own roads, fetched when first asked
     GET /api/trace?pattern=<id>&via=<lon>,<lat>&via=...     -> the same shape as review.json's routed{}
     GET /api/relation?pattern=<id>&via=...                  -> the proposed relation as .osm
     POST /api/refresh                                       -> fetch OSM again and rebuild the review (after an upload);
@@ -19,7 +21,7 @@ of a pattern through extra via points the reviewer drops on the map:
 
 Runs on 127.0.0.1 only: JOSM's remote control (port 8111) accepts requests from a local page.
 """
-import re, argparse, glob, json, os, subprocess, sys, threading, urllib.parse
+import re, argparse, glob, json, os, subprocess, sys, threading, time, urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,19 +36,61 @@ def load(feed_path, roads_path, pt_path):
     feed = gtfs.load(feed_path)
     STATE['feed'] = feed
     STATE['patterns'] = {p.id: p for p in feed.patterns}
-    STATE['graph'] = routing.Graph(osm.load(roads_path))
+    STATE['graph'] = True   # roads are loaded per route, when it's opened (graph_for)
+    ROUTED.clear(); GRAPHS.clear()
+    STATE['osm_stops'], STATE['stop_areas'] = {}, []
     if pt_path and os.path.exists(pt_path):
-        osm_stops, *_ = osm.parse_pt(osm.load(pt_path))
-        STATE['match'], _ = stopmatch.match(feed, osm_stops)
-        STATE['osm_stops'] = osm_stops
-    else:
-        STATE['match'], STATE['osm_stops'] = {}, {}
-    print(f'loaded {os.path.basename(feed_path)}: {len(feed.patterns)} patterns; graph {len(STATE["graph"].ways)} ways', file=sys.stderr)
+        STATE['osm_stops'], *_ = osm.parse_pt(osm.load(pt_path))
+        STATE['stop_areas'] = list(getattr(osm.parse_pt, 'stop_areas', {}).values())
+    # the matches the page shows (review.json), so a route's stop positions are worked out for the same stops
+    rj = os.path.join(WEB, 'data', 'review.json')
+    STATE['match'] = {k: s.get('match') for k, s in json.load(open(rj))['stops'].items()} if os.path.exists(rj) else {}
+    print(f'loaded {os.path.basename(feed_path)}: {len(feed.patterns)} patterns; roads per route, when opened', file=sys.stderr)
+
+
+ROUTED = {}   # pattern id -> its route fields, as /api/route gives them (until the next refresh)
+GRAPHS = {}   # pattern id -> the road graph around it
+
+
+def roads_for(pid):
+    """The roads around one itinerary: cache/roads/<it>.json if under a day old, else fetched (a small Overpass
+    query); an older copy if Overpass can't be had; the whole-area roads, if there are any, as a last resort."""
+    feed, p = STATE['feed'], STATE['patterns'][pid]
+    path = os.path.join(ROOT, 'cache', 'roads', review.safe(pid) + '.json')
+    fresh = os.path.exists(path) and time.time() - os.path.getmtime(path) < 86400
+    if not fresh:
+        try:
+            one = type('F', (), {'patterns': [p], 'shapes': feed.shapes, 'stops': feed.stops})
+            raw = osm.fetch_roads_near(osm.corridors(one, step=100))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            json.dump(raw, open(path + '.tmp', 'w')); os.replace(path + '.tmp', path)
+            return raw
+        except Exception as e:
+            print(f'roads for {pid}: {e}', file=sys.stderr)
+    if os.path.exists(path):
+        return osm.load(path)
+    whole = STATE.get('paths', (None, None, None))[1]
+    if whole and os.path.exists(whole):
+        return osm.load(whole)
+    raise RuntimeError("couldn't get this route's roads from Overpass; try again in a minute")
+
+
+def graph_for(pid):
+    if pid not in GRAPHS:
+        GRAPHS[pid] = routing.Graph(roads_for(pid))
+    return GRAPHS[pid]
+
+
+def route_for(pid):
+    """The pattern's route fields (path, divergences, joins, stop positions), from its own roads."""
+    if pid not in ROUTED:
+        ROUTED[pid] = review.route_pattern(STATE['feed'], STATE['patterns'][pid], graph_for(pid), STATE['match'], STATE['osm_stops'], STATE['stop_areas'])
+    return ROUTED[pid]
 
 
 def trace_with_vias(pid, vias, g=None):
     """Trace the pattern with via points folded into the stop list at the nearest leg; on graph g if given."""
-    feed, g = STATE['feed'], g or STATE['graph']
+    feed, g = STATE['feed'], g or graph_for(pid)
     p = STATE['patterns'][pid]
     pts = [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops]
     order = list(range(len(pts)))          # index into pts; vias get appended
@@ -132,6 +176,14 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == '/api/refresh':
             return self._json(REFRESH)
         q = urllib.parse.parse_qs(u.query)
+        if u.path == '/api/route':
+            pid = (q.get('pattern') or [''])[0]
+            if pid not in STATE.get('patterns', {}):
+                return self._json({'error': 'unknown pattern'}, 404)
+            try:
+                return self._json(route_for(pid))
+            except Exception as e:
+                return self._json({'error': str(e)}, 503)
         if 'graph' not in STATE:
             return self._json({'error': 'server started without --feed/--osm-roads; re-routing is off'}, 503)
         pid = (q.get('pattern') or [''])[0]
@@ -203,7 +255,7 @@ class Handler(SimpleHTTPRequestHandler):
         ways = {int(k): {'nodes': [int(n) for n in v['nodes']], 'tags': v.get('tags', {})} for k, v in (body.get('ways') or {}).items()}
         nodes = {int(k): tuple(v) for k, v in (body.get('nodes') or {}).items()}
         vias = [tuple(v) for v in body.get('vias') or []]
-        g = STATE['graph'].patched(ways, nodes) if ways or nodes else None
+        g = graph_for(pid).patched(ways, nodes) if ways or nodes else None
         p, res, order, is_stop = trace_with_vias(pid, vias, g)
         return self._json(trace_json(res, vias))
 
@@ -229,7 +281,7 @@ def main():
     feed = a.feed or newest('*.zip')
     roads = a.osm_roads or newest('*roads*.json')
     pt = a.osm_pt or newest('*pt*.json')
-    if feed and roads:
+    if feed:
         load(feed, roads, pt)
         STATE['paths'] = (feed, roads, pt)
     else:

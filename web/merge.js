@@ -129,7 +129,9 @@ const Merge = {
     const near = p.stops.map(id => D.stops[id]).reduce((best, s) => { const dd = m([s.lon, s.lat], [b.lon, b.lat]); return !best || dd < best.d ? {s, d: dd} : best; }, null);
     return `an unnamed ${t.highway || 'road'}${t.service ? ' (' + t.service + ')' : ''}${near ? ` by ${near.s.name}` : ''}`;
   },
-  open(p) { S.merge = {pid: p.id, view: 'proposed', hours: null, answers: {}}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
+  async open(p) {
+    if (!p.routed && !(await ensureRouted(p))) return toast(`Couldn't load this route's roads: ${p.routeError}`, 6000);
+    S.merge = {pid: p.id, view: 'proposed', hours: null, answers: {}}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
   close() { S.merge = null; render(); draw(); },
   show(view) { S.merge.view = view; render(); draw(); },
   /** On the map: the stops the merge takes out, as red rings. */
