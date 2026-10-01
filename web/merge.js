@@ -102,7 +102,7 @@ const Merge = {
         row.append(el('div', {class: 'why'}, (on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m away. ` : `OSM has it ${dist} m away. `) +
             (nameQ.pick === 'ask' && /address says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why)),
           look(),
-          el('div', {class: 'btns'}, btn('Move it here', 'move'), btn('Keep it', 'keep')),
+          el('div', {class: 'btns'}, btn(mergedWith(q.s) ? `Move it here, remove ${mergedWith(q.s).tags.name || 'the other'}` : 'Move it here', 'move'), btn('Keep it', 'keep')),
           changes ? el('div', {class: 'why'}, "Moving it also gives it the agency's address and codes.") : null);
       }
       if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
@@ -227,6 +227,8 @@ const Merge = {
           for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
           if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !q.o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
           Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {lat: q.s.lat, lon: q.s.lon, tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+          const gone = mergedWith(q.s);   // two stops made one: the other goes
+          if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }
         if (q.kind === 'which') { Edits.decisions[q.s.id] = (S.merge.answers[q.s.id] || {}).pick; }
         if (q.kind === 'missing' && q.answer === 'add') added[q.s.id] = Edits.createNode(q.s.lat, q.s.lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`);

@@ -200,6 +200,34 @@ def match(feed, osm_stops, across=None):
             r['status'] = 'moved'; r['osm'] = cands[:3]
             r['diff'] = diff(feed, s, osm_stops[cands[0]['id']])
 
+    # Two stops made one: nothing at the agency's spot, and OSM has two stops nobody else claims on the same
+    # street and side, one either side of it. The nearer is the one to move here (it keeps its history and
+    # takes the agency's name and codes); the other goes.
+    taken = {r['osm'][0]['id'] for r in results.values() if r and r['status'] == 'matched' and r['osm']}
+    for s in feed.stops.values():
+        r = results.get(s.id)
+        if not r or r['status'] != 'moved' or not r['osm'] or not street(s.name):
+            continue
+        a = osm_stops[r['osm'][0]['id']]
+        k = math.cos(math.radians(s.lat))
+        vec = lambda o: ((o['lon'] - s.lon) * 111320 * k, (o['lat'] - s.lat) * 110540)
+        best = None
+        for d, o in near(s.lat, s.lon, MOVED):
+            if o['id'] in taken or o['id'] == a['id'] or not platform(o) or across(s.id, o) or street(o['tags'].get('name', '')) != street(s.name):
+                continue
+            (ax, ay), (ox, oy) = vec(a), vec(o)
+            if ax * ox + ay * oy < 0 and (best is None or d < best[0]):   # the other side of the agency's point
+                best = (d, o)
+        if not best:
+            continue
+        da = dist(s.lat, s.lon, a['lat'], a['lon'])
+        if best[0] < da:   # move the nearer
+            r['osm'] = [{'id': best[1]['id'], 'dist': round(best[0]), 'score': r['osm'][0]['score'], 'how': 'moved'}] + r['osm']
+            r['merged_with'] = {'id': a['id'], 'dist': round(da)}
+        else:
+            r['merged_with'] = {'id': best[1]['id'], 'dist': round(best[0])}
+        r['diff'] = diff(feed, s, osm_stops[r['osm'][0]['id']])
+
     # An OSM stop claimed twice is really ambiguous for both.
     for oid, sids in claimed.items():
         if len(sids) > 1:

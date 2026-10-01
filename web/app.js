@@ -484,10 +484,12 @@ function lookAt(sid) {
   const o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
   S.looked.add(sid); S.lookStop = sid;
   render(); draw();
-  const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat])];
+  const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat]), ...(mergedWith(s) ? [[mergedWith(s).lon, mergedWith(s).lat]] : [])];
   fit(pts, 110);
 }
 const looked = sid => S.looked.has(sid);
+/** The OSM stop that goes when this one moves to the agency's spot (two stops the agency made one), or null. */
+const mergedWith = s => (s && s.match && s.match.merged_with && D.osm_stops[s.match.merged_with.id]) || null;
 /** The stop being looked at, drawn to stand out: OSM's stop now, the agency's spot, and the move between. */
 function lookFeatures() {
   const s = S.lookStop && D.stops[S.lookStop];
@@ -500,6 +502,8 @@ function lookFeatures() {
     if (dm >= 3) out.push(line([now, to], {label: `${dm} m`}));
   }
   for (const x of c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
+  const g = mergedWith(s);
+  if (g && !c.some(x => x.id === g.id)) out.push(point([g.lon, g.lat], {kind: 'now', label: `goes: ${g.tags.name || g.id} (OSM)`}));
   return out;
 }
 /** 'Show on map' (what enables the choice), and once shown, a small link to imagery to judge by. */
@@ -858,14 +862,24 @@ function renderStop(P, s) {
     d.append(el('details', {class: 'small'}, el('summary', {}, 'Tags it would get'), el('div', {class: 'kv'}, ...Object.entries(s.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)]))));
   } else if (st === 'moved') {
     const c = s.match.osm[0], oo = D.osm_stops[c.id];
-    d.append(el('h2', {style: 'margin-left:0'}, 'Probably moved'));
-    d.append(el('div', {class: 'small'}, `Nothing within 60 m, but OSM has `, el('b', {}, oo.tags.name || oo.id), ` ${c.dist} m away on the same street${oo.tags.ref === s.ref ? ' with the same code' : ''}. Most likely the stop moved and OSM still has the old spot.`));
+    const gone = mergedWith(s);   // two stops the agency made one: the other goes when this one moves
+    d.append(el('h2', {style: 'margin-left:0'}, gone ? 'Two stops made one' : 'Probably moved'));
+    d.append(el('div', {class: 'small'}, gone ? s.match.decide.position.why + '.' : [`Nothing within 60 m, but OSM has `, el('b', {}, oo.tags.name || oo.id), ` ${c.dist} m away on the same street${oo.tags.ref === s.ref ? ' with the same code' : ''}. Most likely the stop moved and OSM still has the old spot.`]));
     d.append(el('div', {class: 'btns'},
-      el('button', {class: 'b primary', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {lat: s.lat, lon: s.lon, tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`); toast('Node move added to changes'); render(); draw(); }}, `Move that node here (${c.dist} m)`),
+      el('button', {class: 'b primary', onclick: async () => {
+        Edits.hold(`${s.name}: ${gone ? 'two stops made one' : 'moved'}`);
+        try {
+          Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {lat: s.lat, lon: s.lon, tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`);
+          const kept = gone ? await removeStops([gone], new Set(), `merged into ${s.name}`) : [];
+          toast(kept.length ? `Moved; not removed, something else uses it: ${kept.join('; ')}` : gone ? 'Moved, and the other removed: in Changes' : 'Node move added to changes', 6000);
+        } finally { Edits.release(); }
+        render(); draw();
+      }}, gone ? `Move it here (${c.dist} m) and remove ${gone.tags.name || gone.id}` : `Move that node here (${c.dist} m)`),
       el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.save(); toast('Treated as the same stop, position kept'); render(); draw(); }}, 'Same stop, keep OSM\'s position'),
       el('button', {class: 'b', onclick: () => placeNewStop(s)}, 'Different stop — add new')));
     d.append(osmStopBox(s, oo, c, false));
     for (const c2 of s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
+    if (gone && !s.match.osm.some(c2 => c2.id === gone.id)) d.append(osmStopBox(s, gone, {how: 'the other side', dist: s.match.merged_with.dist}, false));
   } else {
     d.append(el('h2', {style: 'margin-left:0'}, st === 'ambiguous' ? 'Which is it?' : 'OSM stop'));
     if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
@@ -972,6 +986,7 @@ function renderExtra(P) {
       el('span', {class: 'dotc extra'}),
       el('div', {class: 'grow'}, el('div', {class: 't'}, o.tags.name || '(no name)'), el('div', {class: 's'}, [o.tags.ref ? 'ref ' + o.tags.ref : null, o.tags.operator || o.tags.network, o.tags.route_ref ? 'routes ' + o.tags.route_ref : null, `${Math.round(ng[1])} m from ${ng[0].name}`].filter(Boolean).join(' · ')),
         (o.served_by || []).length ? el('div', {class: 'small muted'}, `In ${o.served_by.join(', ')}'s own feed: still served, not gone.`) : null,
+        (() => { const into = Object.values(D.stops).find(t => t.match && t.match.merged_with && t.match.merged_with.id === o.id); return into ? el('div', {class: 'small muted'}, 'The agency merged it into ', el('a', {href: '#', onclick: e => { e.preventDefault(); e.stopPropagation(); showStop(into.id); }}, into.name), ': removed when that one moves.') : null; })(),
         removable && !op && !(o.served_by || []).length ? el('div', {class: 'btns', style: 'margin-top:4px'},
           el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: e => { e.stopPropagation(); S.looked.add('osm:' + o.id); render(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); popupOsm(o.id, [o.lon, o.lat]); }}, 'Show on map'),
           el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { e.stopPropagation(); g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone"),
@@ -990,9 +1005,10 @@ function renderExtra(P) {
   }
 }
 
-/** Take bus stops that are gone out of OSM, carefully: one another relation still uses is left (and said);
- *  one that's a point in a way (a sidewalk) loses only its stop tags, so the way keeps its shape; the rest are
- *  deleted. mine: relation ids this edit is rewriting anyway (their membership doesn't count). -> [kept, why] */
+/** Take bus stops that are gone out of OSM, carefully: bus routes and stop areas that still list one lose it
+ *  (a gone stop has no place in them); one any other relation uses is left (and said); one that's a point in a
+ *  way (a sidewalk) loses only its stop tags, so the way keeps its shape; the rest are deleted.
+ *  mine: relation ids this edit is rewriting anyway (their membership doesn't count). -> [kept, why] */
 const STOP_KEYS = /^(highway|public_transport|bus|name|ref|local_ref|route_ref|network|network:wikidata|operator|operator:wikidata|description|shelter|bench|bin|lit|tactile_paving|departures_board|wheelchair|gtfs:.*)$/;
 async function removeStops(list, mine = new Set(), why = 'stop gone') {
   const kept = [];
@@ -1000,7 +1016,13 @@ async function removeStops(list, mine = new Set(), why = 'stop gone') {
     if (o.id[0] !== 'n') { kept.push(`${o.tags.name || o.id} (drawn as a shape: remove it in iD)`); continue; }
     const n = osmNumId(o);
     const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
-    if (rels.length) { kept.push(`${o.tags.name || o.id} (also in ${rels.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
+    const pt = e => (e.tags || {}).type === 'route' || (e.tags || {}).public_transport === 'stop_area';
+    const other = rels.filter(e => !pt(e));
+    if (other.length) { kept.push(`${o.tags.name || o.id} (also in ${other.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
+    for (const e of rels) {   // out of the routes and stop areas that list it, as they are in Changes if edited there
+      const op = Edits.get('r' + e.id), cur = (op && op.members) || e.members;
+      Edits.modify('relation', e.id, {version: e.version, tags: e.tags, members: e.members}, {members: cur.filter(x => !(x.type === 'node' && x.ref === n))}, op ? null : `${(e.tags || {}).name || 'r' + e.id}: without ${o.tags.name || o.id}`);
+    }
     const ways = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/ways.json`)).json()).elements;
     if (ways.length) Edits.modify('node', n, nodeBase(o), {removeTags: Object.keys(o.tags).filter(k => STOP_KEYS.test(k))}, `${o.tags.name || o.id}: ${why} (point kept: it's on a way)`);
     else Edits.delete('node', n, nodeBase(o), `${o.tags.name || o.id}: ${why}`);
@@ -1024,7 +1046,8 @@ function changesetComment() {
   const place = areas.length === 1 && areas[0].tags.name;
   const extraSt = ops.filter(o => /second station|same station as/.test(o.note || '')).length;
   if (extraSt) parts.push(`${n(extraSt, 'second station point')} sorted out`);   // a station's changes, said once under its name
-  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area');
+  // a route that only lost a stop that's gone is said with the stop ("1 removed"), not as a rebuilt relation
+  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || ''));
   for (const o of rels) {
     const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
     if (r) routes.add(r);

@@ -185,6 +185,9 @@ def main():
     for sid, m in match.items():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['decide'] = stopmatch.decide(feed.stops[sid], osm_stops[m['osm'][0]['id']], m['diff'], sides.get(sid), names)
+            if m.get('merged_with'):   # two stops made one
+                near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
+                m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
     positions = stop_positions(feed, traced, match, osm_stops, g, list(getattr(osm.parse_pt, 'stop_areas', {}).values()))
     # Which relation is which pattern.

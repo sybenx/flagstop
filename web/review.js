@@ -143,17 +143,22 @@ const Review = {
       why ? el('div', {class: 'muted small'}, why) : null));
     P.append(d);
   },
-  accept(p, changing) {
+  async accept(p, changing) {
     const r = routeOf(p);
-    Edits.label(`stops on route ${r.short}, checked (${changing.length})`);
-    for (const st of changing) {
-      const c = this.change(st), s = st.s, o = st.o;
-      const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
-      Edits.ops[key].suggested = true;   // counts toward the per-upload cap
-      Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
-    }
-    Edits.save();
-    toast(`${changing.length} stops on route ${r.short} added to Changes`);
+    Edits.hold(`stops on route ${r.short}, checked (${changing.length})`);
+    const kept = [];
+    try {
+      for (const st of changing) {
+        const c = this.change(st), s = st.s, o = st.o;
+        const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
+        Edits.ops[key].suggested = true;   // counts toward the per-upload cap
+        Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
+        // two stops the agency made one: the one moved here stays, the other goes
+        if (c.move && mergedWith(s)) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
+      }
+      Edits.save();
+    } finally { Edits.release(); }
+    toast(`${changing.length} stops on route ${r.short} added to Changes` + (kept.length ? `; not removed, something else uses it: ${kept.join('; ')}` : ''), kept.length ? 8000 : 4000);
     render(); draw();
   },
 };
