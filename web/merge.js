@@ -22,21 +22,49 @@ const Merge = {
     const name = (master && master.tags.name) || keep.tags.name.replace(SERVICE_DAY, '').replace(/\s*-\s*$/, '').trim();
     const tags = {...keep.tags, name};
     for (const k of ['gtfs:route_id', 'gtfs:shape_id', 'public_transport:version', 'roundtrip']) if (p.proposed_tags[k]) tags[k] = p.proposed_tags[k];
-    // stops: the feed's, in order; where OSM has more than one candidate, the best, marked for checking
-    const stops = [], guessed = [], absent = [];
+    // stops: the feed's, in order. Each has to be settled before the route can be: which OSM stop it is,
+    // and whether it's where buses stop. What isn't settled is a decision in the card, not a guess.
+    const ans = (S.merge && S.merge.answers) || {}, decide = [], stops = [];
     for (const sid of p.stops) {
-      const s = D.stops[sid], o = matchedOsm(s) || (s.match && s.match.osm && s.match.osm[0] ? D.osm_stops[s.match.osm[0].id] : null);
-      if (!o) { absent.push(s); continue; }
-      if (!matchedOsm(s) && !guessed.some(g => g.s.id === s.id)) guessed.push({s, o});   // a loop's terminal comes twice
-      stops.push({s, o});
+      const s = D.stops[sid], m = s.match || {}, cands = (m.osm || []).map(c => ({...c, o: D.osm_stops[c.id]})).filter(c => c.o);
+      const pos = (m.decide || {}).position, a = ans[sid];
+      let o = matchedOsm(s), q = null;
+      if (o && pos && pos.pick === 'ask') q = {kind: 'where', s, o, why: pos.why};
+      else if (!o && m.status === 'moved' && cands[0]) { o = cands[0].o; q = {kind: 'where', s, o, why: pos ? pos.why : `OSM's stop is ${cands[0].dist} m from the agency's point`}; }
+      else if (!o && m.status === 'ambiguous' && cands.length) { o = a && a.pick ? D.osm_stops[a.pick] : null; q = {kind: 'which', s, cands}; }
+      else if (!o) q = {kind: 'missing', s};
+      if (q && o && Edits.get('n' + osmNumId(o)) && Edits.diff(Edits.get('n' + osmNumId(o))).some(x => x.k === 'position')) q = null;   // already moved in Changes
+      if (q && !decide.some(x => x.s.id === sid)) decide.push({...q, answer: a ? a.choice : null});   // a loop's terminal comes twice
+      if (q && q.kind === 'missing') { if (a && a.choice === 'add') stops.push({s, add: true}); continue; }
+      if (o) stops.push({s, o});
     }
+    const open = decide.filter(x => !x.answer).length;
+    const questions = p.stops.filter((sid, i) => p.stops.indexOf(sid) === i).map(sid => D.stops[sid]).filter(s => !decide.some(x => x.s.id === s.id))
+      .flatMap(s => Object.entries((s.match && s.match.decide) || {}).filter(([k, v]) => v.pick === 'ask' && k !== 'position').map(([k, v]) => ({s, k, why: v.why})));
     const had = new Map();
     for (const a of rels) for (const m of a.members) if (m.type === 'node' && /platform/.test(m.role || '')) had.set(m.ref, a);
-    const now = new Set(stops.map(x => osmNumId(x.o)));
+    const now = new Set(stops.filter(x => x.o).map(x => osmNumId(x.o)));
     const stale = [...had.keys()].filter(id => !now.has(id)).map(id => D.osm_stops['n' + id] || {id: 'n' + id, tags: {}});
     const splits = (p.chain_breaks || []).filter(b => b.kind === 'split');
     const hours = (p.services || []).filter(x => x.trips && x.days).map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ');
-    return {p, r, rels, keep, drop, master, name, tags, stops, guessed, absent, stale, splits, hours};
+    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, hours};
+  },
+  /** Stops the route can't be right without settling, each with its choice, in the card. */
+  decisions(x) {
+    const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, `Decide first: ${x.decide.length} stop${x.decide.length > 1 ? 's' : ''}`));
+    const set = (sid, choice, pick) => { S.merge.answers = {...(S.merge.answers || {}), [sid]: {choice, pick}}; render(); draw(); };
+    for (const q of x.decide) {
+      const name = el('a', {href: '#', onclick: e => { e.preventDefault(); const at = q.o ? osmPos(q.o) : [q.s.lon, q.s.lat]; map.flyTo({center: at, zoom: 17.5}); }}, q.s.name);
+      const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''), onclick: () => set(q.s.id, choice, pick)}, label);
+      const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, name));
+      if (q.kind === 'where') row.append(el('div', {class: 'why'}, q.why), el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
+      if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`),
+        el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
+      if (q.kind === 'missing') row.append(el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
+          " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn("Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
+      box.append(row);
+    }
+    return box;
   },
   /** A road as a person would know it: its name, its ref, or what it is and which stop it's by. */
   roadName(p, b) {
@@ -45,7 +73,7 @@ const Merge = {
     const near = p.stops.map(id => D.stops[id]).reduce((best, s) => { const dd = m([s.lon, s.lat], [b.lon, b.lat]); return !best || dd < best.d ? {s, d: dd} : best; }, null);
     return `an unnamed ${t.highway || 'road'}${t.service ? ' (' + t.service + ')' : ''}${near ? ` by ${near.s.name}` : ''}`;
   },
-  open(p) { S.merge = {pid: p.id, view: 'proposed', hours: false}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
+  open(p) { S.merge = {pid: p.id, view: 'proposed', hours: false, answers: {}}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
   close() { S.merge = null; render(); draw(); },
   show(view) { S.merge.view = view; render(); draw(); },
   /** On the map: the stops the merge takes out, as red rings. */
@@ -77,17 +105,16 @@ const Merge = {
           el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           x.hours ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: S.merge.hours ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}), ` and say when it runs: opening_hours=${x.hours}`)) : null)),
-      x.guessed.length || x.absent.length ? el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, 'Check'),
-        x.guessed.length ? el('div', {}, `${x.guessed.length} stop${x.guessed.length > 1 ? 's' : ''} where OSM has more than one candidate: flagstop picked the likeliest. `,
-          ...x.guessed.flatMap(({s}, i) => [i ? ', ' : '', el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(s.id); }}, s.name)])) : null,
-        x.absent.length ? el('div', {}, `${x.absent.length} stop${x.absent.length > 1 ? 's' : ''} not in OSM yet, left out: `, ...x.absent.flatMap((s, i) => [i ? ', ' : '', el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(s.id); }}, s.name)]), ' (add them from Stops, then propose again)') : null) : null);
+      x.decide.length ? this.decisions(x) : null,
+      x.questions.length ? el('div', {class: 'muted small', style: 'margin:6px 0'}, `${x.questions.length} other stop question${x.questions.length > 1 ? 's' : ''} on this route (names, codes) don't change the route; settle them in Check stops: `,
+        ...x.questions.slice(0, 5).flatMap((q, i) => [i ? ', ' : '', el('a', {href: '#', title: q.why, onclick: e => { e.preventDefault(); showStop(q.s.id); }}, q.s.name)]), x.questions.length > 5 ? ', …' : '') : null);
     d.append(el('div', {class: 'seg'},
       el('button', {class: 'b' + (S.merge.view === 'now' ? ' on' : ''), onclick: () => this.show('now')}, 'OSM now'),
       el('button', {class: 'b' + (S.merge.view === 'proposed' ? ' on' : ''), onclick: () => this.show('proposed')}, 'Proposed')),
       el('div', {class: 'muted small'}, S.merge.view === 'now' ? 'On the map: the relations as they are (purple); red rings are the stops that would come out.' : 'On the map: the route as the one relation would have it (blue), and its stops.'));
     d.append(el('h2', {style: 'margin-left:0'}, 'Does this look right?'),
       el('div', {class: 'btns'},
-        el('button', {class: 'b primary', onclick: () => this.accept()}, 'Looks right: add to Changes'),
+        el('button', {class: 'b primary', disabled: x.open ? '' : null, title: x.open ? 'Decide the stops above first' : '', onclick: () => this.accept()}, x.open ? `Looks right (decide ${x.open} stop${x.open > 1 ? 's' : ''} first)` : 'Looks right: add to Changes'),
         el('button', {class: 'b', onclick: () => openIn('rapid', {...centerOf(p.shape.length ? p.shape : p.routed.geometry), zoom: 14, select: rels.map(a => 'r' + a.id), pattern: p, comment: `Bus route ${r.short}: one relation`})}, 'Let me edit it (RapiD)'),
         el('button', {class: 'b', onclick: () => { this.close(); toast('Left as OSM has it'); }}, 'Not right')),
       el('div', {class: 'muted small'}, 'Not right? If the days really do run different streets or stops, they should stay separate relations: one per way the route is run.'));
@@ -110,7 +137,15 @@ const Merge = {
       await Roads.fetchWays(tr.ways.filter(w => w > 0));
       const breaks = Roads.chainBreaks(tr.ways.map(w => Roads.way(w)));
       if (breaks) return say(`Stopped: the roads still don't join up in ${breaks} place${breaks > 1 ? 's' : ''}. The splits are in Changes; nothing else was changed.`);
-      const members = [...x.stops.map(({o}) => ({type: 'node', ref: osmNumId(o), role: 'platform'})), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
+      // the stop decisions: moves, a stop picked out of several, stops added
+      const added = {};
+      for (const q of x.decide) {
+        if (q.kind === 'where' && q.answer === 'move') Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {lat: q.s.lat, lon: q.s.lon}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+        if (q.kind === 'which') { Edits.decisions[q.s.id] = (S.merge.answers[q.s.id] || {}).pick; }
+        if (q.kind === 'missing' && q.answer === 'add') added[q.s.id] = Edits.createNode(q.s.lat, q.s.lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`);
+      }
+      const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};
+      const members = [...x.stops.map(plat), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
       const tags = {...x.tags, ...(hours && x.hours ? {opening_hours: x.hours} : {})};
       const key = Edits.modify('relation', x.keep.id, relBase(x.keep), {tags, members}, `${x.r.short}: one relation for one route`);
       Edits.ops[key].suggested = true; Edits.ops[key].route = x.r.short;
