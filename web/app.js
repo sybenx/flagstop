@@ -780,66 +780,48 @@ function renderExtra(P) {
 // ---------- changes ----------
 /** A changeset comment that says what this basket does: which routes, which relations, which stop tags. */
 function changesetComment() {
+  // What a person reading the changeset wants: which routes, and what was done to them, in a few words.
+  // No ids or tag keys: those are in the changeset itself.
   const ops = Object.values(Edits.ops).filter(o => o.kind !== 'modify' || Edits.diff(o).length);
-  const shortOf = p => p && (routeOf(p) || {}).short;
-  const list = (xs, n = 3) => xs.length > n ? `${xs.slice(0, n).join(', ')} and ${xs.length - n} more` : xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs.join('');
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  // [{k, before, after}] -> 'add a and b, change c, remove d' (a rename is just 'rename')
-  const tagWords = diffs => {
-    const by = {add: [], change: [], remove: []};
-    for (const x of diffs) if (x.k !== 'members' && x.k !== 'position' && !Object.values(by).flat().includes(x.k)) by[x.before == null || x.before === '' ? 'add' : x.after == null || x.after === '' ? 'remove' : 'change'].push(x.k);
-    const renamed = by.change.includes('name');
-    by.change = by.change.filter(k => k !== 'name');
-    return [renamed ? 'rename' : null, ...Object.entries(by).filter(([, ks]) => ks.length).map(([w, ks]) => `${w} ${list(ks, 4)}`)].filter(Boolean).join(', ');
-  };
-  const routes = new Set(), parts = [];
-  // Route relations, per route: merged duplicates, rebuilt members, added tags, new ones.
-  const byRoute = {};
+  const list = xs => xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : xs.join('');
+  const n = (k, w, ws = w + 's') => `${k} ${k === 1 ? w : ws}`;
   const isRoad = o => String(o.note || '').startsWith('road: ');
-  for (const o of ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o))) {
-    // the route this relation belongs to: recorded on it (a merge, Check stops), or from its note
-    const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : shortOf(patternById(o.note)));
-    (byRoute[r || '?'] = byRoute[r || '?'] || []).push(o);
+  const routes = new Set(), parts = [];
+  // relations
+  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o));
+  for (const o of rels) {
+    const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
+    if (r) routes.add(r);
   }
-  for (const [r, os] of Object.entries(byRoute)) {
-    routes.add(r);
-    const del = os.filter(o => o.kind === 'delete').map(o => 'r' + o.id), kept = os.filter(o => o.kind === 'modify'), made = os.filter(o => o.kind === 'create');
-    if (del.length && kept.length) parts.push(`merge duplicate route relations into ${kept.map(o => 'r' + o.id).join(', ')} (delete ${list(del)})`);
-    else if (del.length) parts.push(`delete duplicate route relation${del.length > 1 ? 's' : ''} ${list(del)}`);
-    for (const o of kept) {
-      const diff = Edits.diff(o), words = tagWords(diff);
-      if (diff.some(x => x.k === 'members')) parts.push(`rebuild r${o.id} platforms and ways from the GTFS pattern`);
-      if (words) parts.push(`r${o.id}: ${words}`);
-    }
-    if (made.length) parts.push(`new route relation${made.length > 1 ? 's' : ''} for ${list(made.map(o => (patternById(o.note) || {}).headsign || 'its pattern'))}`);
-  }
-  const masters = ops.filter(o => o.type === 'relation' && String(o.note || '').startsWith('master:'));
-  if (masters.length) parts.push(`update route_master ${list(masters.map(o => o.kind === 'create' ? 'new' : 'r' + o.id))}`);
-  // Stops: what happened to them, and the tags touched.
+  const dropped = rels.filter(o => o.kind === 'delete').length, kept = rels.filter(o => o.kind === 'modify'), made = rels.filter(o => o.kind === 'create');
+  if (dropped && kept.length) parts.push(`merged ${n(dropped + kept.length, 'relation')} into ${kept.length === 1 ? 'one' : kept.length}`);
+  else if (dropped) parts.push(`removed ${n(dropped, 'duplicate relation')}`);
+  const rebuilt = kept.filter(o => Edits.diff(o).some(x => x.k === 'members')).length;
+  if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
+  if (made.length) parts.push(`${n(made.length, 'relation')} added`);
+  // stops
   const nodes = ops.filter(o => o.type === 'node' && !isRoad(o));
-  const added = nodes.filter(o => o.kind === 'create'), moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position'));
+  for (const o of nodes) if (o.route) routes.add(o.route);
+  const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position'));
-  if (added.length) parts.push(`add ${plural(added.length, 'bus stop')}`);
-  if (moved.length) parts.push(`move ${plural(moved.length, 'stop')} to the agency position`);
+  const stopBits = [moved ? `${n(moved, 'stop')} moved` : null, added ? `${added} added` : null].filter(Boolean);
+  if (stopBits.length) parts.push(stopBits.join(', ').replace(/^(\d+) added$/, (_, k) => `${n(+k, 'stop')} added`));
   if (tagged.length) {
-    // One wording for all of them: a key counts as 'added' only if every stop lacked it.
-    const seen = {};
-    for (const x of tagged.flatMap(o => Edits.diff(o))) if (x.k !== 'position') seen[x.k] = seen[x.k] && seen[x.k].before ? seen[x.k] : x;
-    parts.push(`${plural(tagged.length, 'stop')}: ${tagWords(Object.values(seen))}`);
+    const keys = new Set(tagged.flatMap(o => Edits.diff(o).map(x => x.k)));
+    const what = [['ref', 'codes'], ['gtfs:stop_id', 'ids'], ['route_ref', 'routes'], ['name', 'names'], ['description', 'announcements']].filter(([k]) => keys.has(k)).map(([, w]) => w);
+    parts.push(`${what.length ? list(what) : 'tags'} on ${n(tagged.length, 'stop')}`);
   }
-  for (const o of nodes) if (o.route) routes.add(o.route);   // stops checked route by route: that route, not every route calling there
   if (!routes.size) for (const o of nodes) for (const r of (D.stops[o.tags['gtfs:stop_id']] || {}).routes || []) routes.add((D.routes.find(x => x.id === r) || {}).short);
-  // Road edits say what they did (split, reconnect, move, add); relations they repaired aren't listed again.
-  const road = [...new Set(ops.filter(isRoad).map(o => o.note.slice(6)))];
-  const repaired = ops.filter(o => o.type === 'relation' && isRoad(o)).length;
-  if (road.length) parts.unshift(`${list(road.map(x => x.replace(/^\w/, c => c.toLowerCase())), 3)}${repaired ? `; ${repaired} route relation${repaired > 1 ? 's' : ''} on them repaired` : ''}`);
+  // roads: what was done, by road name
+  const road = [...new Set(ops.filter(isRoad).map(o => o.note.slice(6)
+    .replace(/\s*\((?:w|n)-?\d+\)/g, '').replace(/\s+(?:at|from) n-?\d+/g, '').replace(/,?\s*as before changeset \d+/, '')
+    .replace(/^Turn (.*) back$/, 'turned $1 back').replace(/^\w/, c => c.toLowerCase())))];
+  if (road.length) parts.unshift(list(road.slice(0, 3)) + (road.length > 3 ? ` and ${road.length - 3} more road edits` : ''));
   const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && Edits.diff(o).some(x => x.k !== 'nodes'));
-  if (ways.length) parts.push(`${plural(ways.length, 'way')}: ${tagWords(ways.flatMap(o => Edits.diff(o)))}`);
+  if (ways.length) parts.push(`tags on ${n(ways.length, 'road')}`);
   const rs = [...routes].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
-  // The agency is in the changeset's source tag; the comment spends its 255 characters on what changed.
-  const head = rs.length ? `Bus route${rs.length > 1 ? 's' : ''} ${list(rs, 5)}` : 'Bus routes';
-  const text = `${head}: ${parts.join('; ')}`;
-  return text.length <= 255 ? text : text.slice(0, 254) + '…';   // OSM caps tag values at 255 characters
+  const text = `${rs.length ? `Bus route${rs.length > 1 ? 's' : ''} ${list(rs)}` : 'Bus routes'}: ${parts.join('; ')}`;
+  return [...text].length <= 255 ? text : [...text].slice(0, 254).join('') + '…';   // OSM's limit
 }
 function renderChanges(P) {
   const ops = Object.entries(Edits.ops);
