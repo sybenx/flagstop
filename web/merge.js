@@ -58,7 +58,12 @@ const Merge = {
       const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''), onclick: () => set(q.s.id, choice, pick)}, label);
       const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, name));
       if (q.kind === 'where') {
-        row.append(el('div', {class: 'why'}, q.why), el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
+        // what's different, in one go: where OSM has it, what it calls it, and the agency's, then the question
+        const on = q.o.tags.name, nameQ = ((q.s.match.decide || {}).name || {});
+        const dist = Math.round(m(osmPos(q.o), [q.s.lon, q.s.lat]));
+        row.append(el('div', {class: 'why'}, on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m from the agency's "${q.s.name}".` : `OSM has it ${dist} m from the agency's point.`),
+          el('div', {class: 'why'}, nameQ.pick === 'ask' && /house number/.test(nameQ.why || '') ? nameQ.why.replace(/ and \d+ m apart/, '') : q.why),
+          el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
         // moving it there: what else about it differs goes along by default (its address, its code), each one flippable
         if (q.answer === 'move') {
           const t = this.moveTags(q), chips = el('div', {class: 'chips'});
@@ -82,7 +87,9 @@ const Merge = {
       Everything that differs, by default (it's the agency's stop at the agency's spot now), unless already answered. */
   moveTags(q) {
     const a = S.merge.answers[q.s.id] || {}, diff = (q.s.match && q.s.match.diff) || {}, out = {};
-    for (const k of ['name', 'ref', 'gtfs:stop_id', 'route_ref', 'description']) if (diff[k] && diff[k].gtfs) out[k] = a.tags && k in a.tags ? a.tags[k] : true;
+    // all of it by default, except an announcement flagstop doubts (an internal note with a date in it)
+    const dec = (q.s.match && q.s.match.decide) || {};
+    for (const k of ['name', 'ref', 'gtfs:stop_id', 'route_ref', 'description']) if (diff[k] && diff[k].gtfs) out[k] = a.tags && k in a.tags ? a.tags[k] : !(k === 'description' && dec[k] && dec[k].pick === 'ask');
     return out;
   },
   /** A road as a person would know it: its name, its ref, or what it is and which stop it's by. */
@@ -124,9 +131,9 @@ const Merge = {
           el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           x.hours ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: S.merge.hours ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}), ` and say when it runs: opening_hours=${x.hours}`)) : null)),
-      x.decide.length ? this.decisions(x) : null,
+      ...[x.decide.length ? this.decisions(x) : null,
       x.questions.length ? el('div', {class: 'muted small', style: 'margin:6px 0'}, `${x.questions.length} other stop question${x.questions.length > 1 ? 's' : ''} on this route (names, codes) don't change the route; settle them in Check stops: `,
-        ...x.questions.slice(0, 5).flatMap((q, i) => [i ? ', ' : '', el('a', {href: '#', title: q.why, onclick: e => { e.preventDefault(); showStop(q.s.id); }}, q.s.name)]), x.questions.length > 5 ? ', …' : '') : null);
+        ...x.questions.slice(0, 5).flatMap((q, i) => [i ? ', ' : '', el('a', {href: '#', title: q.why, onclick: e => { e.preventDefault(); showStop(q.s.id); }}, q.s.name)]), x.questions.length > 5 ? ', …' : '') : null].filter(Boolean));   // DOM append writes 'null' for null
     d.append(el('div', {class: 'seg'},
       el('button', {class: 'b' + (S.merge.view === 'now' ? ' on' : ''), onclick: () => this.show('now')}, 'OSM now'),
       el('button', {class: 'b' + (S.merge.view === 'proposed' ? ' on' : ''), onclick: () => this.show('proposed')}, 'Proposed')),

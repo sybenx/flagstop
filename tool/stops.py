@@ -267,6 +267,8 @@ ABBR = {'st': 'street', 'ave': 'avenue', 'av': 'avenue', 'dr': 'drive', 'rd': 'r
         'pkwy': 'parkway', 'ctr': 'center', 'cir': 'circle', 'ct': 'court', 'pl': 'place', 'n': 'north', 's': 'south', 'e': 'east', 'w': 'west'}
 
 
+# a stop_desc with a date or a time in it is someone's note ("(Detour) added 10/13/2025 11:58:27"), not what the bus announces
+NOTE = re.compile(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(:\d{2})?\b|\badded\b', re.I)
 SUFFIX = {'street', 'avenue', 'drive', 'road', 'lane', 'boulevard', 'parkway', 'circle', 'court', 'place'}
 
 
@@ -303,6 +305,8 @@ def decide(s, o, diff, side=None, others=None):
                                                  'route_ref': 'which routes call here, per the timetable'}[k]}
         elif k == 'tagging':
             out[k] = {'pick': 'agency', 'why': 'public transport tagging (PTv2) is incomplete'}
+        elif k == 'description' and NOTE.search(v['gtfs']):
+            out[k] = {'pick': 'ask', 'why': f"the agency's text looks like an internal note, not an announcement: \"{v['gtfs']}\""}
         elif k in ('description', 'wheelchair'):
             if v['osm']:
                 out[k] = {'pick': 'ask', 'why': f"OSM says something else: {v['osm']}"}
