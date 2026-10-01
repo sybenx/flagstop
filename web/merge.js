@@ -9,7 +9,6 @@
 'use strict';
 
 const SERVICE_DAY = /\s*[-–(]?\s*\b(weekdays?|saturdays?|sundays?|weekends?|mon(day)?s?\s*-\s*fri(day)?s?|sat|sun)\b\)?/gi;
-const NAMED_FOR_DAYS = /\b(weekdays?|saturdays?|sundays?|weekends?)\b/i;   // a test (no 'g': .test on a global regex remembers where it got to)
 
 const Merge = {
   /** What flagstop would do for an itinerary with more than one relation. */
@@ -117,7 +116,11 @@ const Merge = {
     const p = patternById(S.merge.pid), x = this.plan(p);
     if (!x) { S.merge = null; return renderPattern(P, p); }
     const {r, rels, keep, drop} = x, svc = p.services || [];
-    const days = svc.map(v => `${v.trips} ${p.loop && p.loop.length ? 'loop' : 'trip'}${v.trips === 1 ? '' : 's'} ${v.days}`).join(', ');
+    // 'weekdays (30 trips) and Saturdays (9)': days in words, the unit said once
+    const unit = p.loop && p.loop.length ? 'loop' : 'trip';
+    const dayWords = d => ({'Mo-Fr': 'weekdays', 'Sa': 'Saturdays', 'Su': 'Sundays', 'Sa,Su': 'weekends', 'Mo-Su': 'every day', 'Mo-Sa': 'Mondays to Saturdays'}[d] || d);
+    const parts = svc.map((v, i) => `${dayWords(v.days)} (${v.trips}${i ? '' : ` ${unit}${v.trips === 1 ? '' : 's'}`})`);
+    const days = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join('');
     P.append(el('button', {class: 'back', onclick: () => this.close()}, `← ${p.headsign || r.long}`));
     const d = el('div', {class: 'detail fixcard'});
     d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, `${rels.length} relations for one route`)));
@@ -125,9 +128,8 @@ const Merge = {
       el('div', {class: 'fixstep now'}, el('div', {class: 'k'}, 'OSM has'),
         ...rels.map(a => el('div', {}, el('a', {href: `https://www.openstreetmap.org/relation/${a.id}`, target: '_blank'}, a.name || `r${a.id}`),
           el('span', {class: 'muted'}, ` · ${a.stops.in_relation ? `${a.stops.in_relation} stops` : 'no stops'} · ${a.ways.chain_breaks.length ? `${a.ways.chain_breaks.length} places its roads don't join up` : 'roads join up'}`)))),
-      el('div', {class: 'fixstep why'}, el('div', {class: 'k'}, 'Why two, probably'),
-        el('div', {}, rels.some(a => NAMED_FOR_DAYS.test(a.name || '')) ? `They're named for different days, and the timetables do differ: ${days}.` : `Different timetables, most likely: ${days}.`),
-        el('div', {}, `But GTFS runs the same ${p.stops.length} stops on the same streets every day. OSM maps the route, not the timetable, so it's one relation; when it runs can be a tag on it.`)),
+      el('div', {class: 'fixstep why'}, el('div', {class: 'k'}, `Why ${rels.length === 2 ? 'two' : rels.length}`),
+        el('div', {}, `Probably one per timetable: ${days}. Both days use the same ${p.stops.length} stops and streets, though, and OSM maps routes, not timetables, so it should be one relation.`)),
       el('div', {class: 'fixstep want'}, el('div', {class: 'k'}, 'flagstop would'),
         el('ul', {class: 'mergelist'},
           el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"`),
