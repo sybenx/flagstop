@@ -64,6 +64,10 @@ The page lists itineraries worst first. Open one:
 
 Each build keeps a short summary of the feed version it reviewed (in `cache/`). When the agency publishes a new one, the Routes page opens with what changed since the last version: stops added, gone, moved or renamed, routes added or gone, routes calling at different stops. That's where to look first; a stop gone from the feed turns up in *OSM only*, to remove after a look.
 
+## Live where you look
+
+Opening a route reads its relations and stops from OSM's API (a request or two, like iD) and says what changed since flagstop's copy, by whom, in which changeset. *Bring them in* applies those changesets (`tool/patch.py`) and rebuilds: no waiting for Overpass.
+
 ## Other mappers
 
 Open OSM notes by a stop (within 30 m, or 150 m when the note talks about a bus stop) show on its page, in Check stops and in *OSM only*: someone saw something there. Comments other mappers leave on your changesets show at the top of Changes once you're signed in.

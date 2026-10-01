@@ -111,6 +111,40 @@ async function ensureRouted(p) {
   })();
   return p.routing;
 }
+/** What changed on OSM since flagstop's copy, for a route you open: its relations and its stops, read live
+ *  (like iD), a request or two. Kept on the pattern for its page to say, with the changesets that did it. */
+async function liveCheck(p) {
+  const rels = p.relations.map(a => a.id);
+  const nodes = [...new Set(p.stops.map(sid => matchedOsm(D.stops[sid])).filter(o => o && o.id[0] === 'n').map(o => osmNumId(o)))];
+  const known = {};
+  for (const a of p.relations) known['r' + a.id] = {v: a.version, name: a.name || 'r' + a.id};
+  for (const n of nodes) { const o = D.osm_stops['n' + n]; known['n' + n] = {v: o.version, name: o.tags.name || 'n' + n}; }
+  const read = async (kind, ids) => {
+    const out = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const r = await fetch(`${OSM_API}/api/0.6/${kind}s.json?${kind}s=${ids.slice(i, i + 100).join(',')}`);
+      if (r.ok) out.push(...(await r.json()).elements);
+    }
+    return out;
+  };
+  try {
+    const now = [...(rels.length ? await read('relation', rels) : []), ...(nodes.length ? await read('node', nodes) : [])];
+    p.live = {at: Date.now(), changed: now.filter(e => known[e.type[0] + e.id] && e.version > known[e.type[0] + e.id].v)
+      .map(e => ({key: e.type[0] + e.id, name: known[e.type[0] + e.id].name, from: known[e.type[0] + e.id].v, to: e.version, gone: e.visible === false, user: e.user, changeset: e.changeset, date: (e.timestamp || '').slice(0, 10)}))};
+  } catch (e) { p.live = null; }   // offline: the copy is all there is
+  if (S.pattern === p.id) render();
+}
+/** Bring a route's changes on OSM in: those changesets, from OSM's API, then the review rebuilt (seconds). */
+async function bringIn(changesets) {
+  try {
+    let st = await (await fetch('/api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
+    if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
+    toast('Reading those edits from OSM and rebuilding…', 60000);
+    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('/api/refresh')).json(); }
+    if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
+    location.reload();
+  } catch (e) { toast('Needs tool/serve.py running (' + e.message + ')', 6000); }
+}
 /** Route every itinerary in the background, one at a time, so the list fills in while you work. */
 async function routeAll() {
   for (const p of D.patterns) {
@@ -630,11 +664,20 @@ function selectPattern(id) {
   const p = patternById(id);
   fit(p.shape.length ? p.shape : p.stops.map(s => [D.stops[s].lon, D.stops[s].lat]));
   if (!p.routed) ensureRouted(p).then(() => { if (S.pattern === id) { render(); draw(); } });
+  if (!p.live || Date.now() - p.live.at > 60000) liveCheck(p);   // anything changed on OSM since flagstop's copy?
 }
 
 function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
   P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
+  if (p.live && p.live.changed.length) {
+    const c = p.live.changed, cs = [...new Set(c.map(x => x.changeset))];
+    P.append(el('div', {class: 'note warn'}, el('b', {}, `Changed on OSM since flagstop's copy: ${c.length}`),
+      ...c.slice(0, 6).map(x => el('div', {class: 'small'}, `${x.name}: ${x.gone ? 'deleted' : `v${x.from} → v${x.to}`} by ${x.user}, ${x.date} (`,
+        el('a', {href: `https://www.openstreetmap.org/changeset/${x.changeset}`, target: '_blank'}, x.changeset), ')')),
+      c.length > 6 ? el('div', {class: 'small muted'}, `and ${c.length - 6} more`) : null,
+      el('button', {class: 'b primary tiny', style: 'margin-top:4px', onclick: () => bringIn(cs)}, 'Bring them in')));
+  }
   if (!p.routed) P.append(el('div', {class: 'note'}, p.routing || !p.routeError ? "Loading this route's roads from OSM…" : `Couldn't load this route's roads: ${p.routeError}. `,
     !p.routing && p.routeError ? el('button', {class: 'b tiny', onclick: () => { p.routeError = null; ensureRouted(p).then(() => { render(); draw(); }); render(); }}, 'Try again') : null));
   const d = el('div', {class: 'detail'});
