@@ -45,18 +45,7 @@ const Merge = {
     const now = new Set(stops.filter(x => x.o).map(x => osmNumId(x.o)));
     const stale = [...had.keys()].filter(id => !now.has(id)).map(id => D.osm_stops['n' + id] || {id: 'n' + id, tags: {}});
     const splits = (p.chain_breaks || []).filter(b => b.kind === 'split');
-    // the timetable the OSM way, as tags on the one relation: when it runs (first departure from its first stop
-    // to last arrival), and how often (the busiest days' usual gap as interval, the other days' as
-    // interval:conditional; where the gap drifts through the day, the usual one, said so in the card)
-    const svc = (p.services || []).filter(x => x.trips && x.days), main = [...svc].sort((a, b) => b.trips - a.trips)[0];
-    const timetable = svc.length ? {opening_hours: svc.map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ')} : {};
-    if (main && main.every) {
-      timetable.interval = hhmm(main.every);
-      const cond = svc.filter(x => x !== main && x.every && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
-      if (cond.length) timetable['interval:conditional'] = cond.join('; ');
-    }
-    // OSM's own values, where they differ: a question, not an overwrite
-    const clash = Object.keys(timetable).filter(k => rels.some(a => a.tags[k] && a.tags[k] !== timetable[k]));
+    const {tags: timetable, clash, uneven} = this.timetable(p, rels);
     // stops this merge leaves: in the relations now but not on the route, and candidates not picked. Those no
     // stop in the agency's data uses may be gone for real: offered for removal from OSM (after a look).
     // which stop in the agency's data each OSM stop is the likeliest match for
@@ -66,7 +55,6 @@ const Merge = {
     const picked = new Set(stops.filter(x => x.o).map(x => x.o.id));
     const unpicked = decide.filter(q => q.kind === 'which' && q.answer).flatMap(q => q.cands.map(c => ({o: c.o, sid: q.s.id}))).filter(x => !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
     const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
-    const uneven = svc.some(x => x.every && !x.steady);
     return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
@@ -191,6 +179,23 @@ const Merge = {
         el('button', {class: 'b', onclick: () => { this.close(); toast('Left as OSM has it'); }}, 'Not right')),
       el('div', {class: 'muted small'}, 'Not right? If the days really do run different streets or stops, they should stay separate relations: one per way the route is run.'));
     P.append(d);
+  },
+
+  /** The timetable the OSM way, as tags on the route's relation: when it runs (first departure from its first
+   *  stop to last arrival), and how often (the busiest days' usual gap as interval, the other days' as
+   *  interval:conditional; where the gap drifts through the day, the usual one, and uneven says so).
+   *  clash: the keys where OSM (any of rels) already has another value, a question rather than an overwrite. */
+  timetable(p, rels) {
+    const svc = (p.services || []).filter(x => x.trips && x.days), main = [...svc].sort((a, b) => b.trips - a.trips)[0];
+    const tags = svc.length ? {opening_hours: svc.map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ')} : {};
+    if (main && main.every) {
+      tags.interval = hhmm(main.every);
+      const cond = svc.filter(x => x !== main && x.every && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
+      if (cond.length) tags['interval:conditional'] = cond.join('; ');
+    }
+    const clash = Object.keys(tags).filter(k => rels.some(a => a.tags[k] && a.tags[k] !== tags[k]));
+    const uneven = svc.some(x => x.every && !x.steady);
+    return {tags, clash, uneven, first: D.stops[p.stops[0]]};
   },
 
   /** Timetable tags: in by default, unless OSM already has other values (then it's the user's call). */

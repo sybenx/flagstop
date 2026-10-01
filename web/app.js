@@ -615,7 +615,27 @@ function renderAudit(a, p) {
   if (a.ways.off_shape.length) issues.push(el('li', {}, `${a.ways.off_shape.length} member ways are off the line: `, ...a.ways.off_shape.slice(0, 8).flatMap(w => [el('a', {href: '#', title: w.name, onclick: e => { e.preventDefault(); map.flyTo({center: [w.lon, w.lat], zoom: 16}); }}, `w${w.way}`), ' ']), a.ways.off_shape.length > 8 ? '…' : ''));
   for (const t of a.tag_issues) issues.push(el('li', {}, el('code', {}, t.key), ': ', t.osm ? el('span', {}, el('span', {style: 'color:var(--rel)'}, t.osm), ' → ') : 'add ', el('span', {style: 'color:var(--shape)'}, t.gtfs)));
   box.append(issues.length ? el('ul', {style: 'margin:6px 0 0;padding-left:18px'}, ...issues) : el('div', {style: 'color:var(--ok)'}, 'Members and tags agree with the feed.'));
+  if (!a.duplicate && !a.both_directions && !p.temporary) box.append(timetableLine(a, p, op));
   return box;
+}
+
+/** The route's timetable as tags on its relation (opening_hours, interval): what OSM has, what the agency's
+ *  timetable says, and a button to put it in Changes. A relation mapped twice gets it through the merge. */
+function timetableLine(a, p, op) {
+  const t = Merge.timetable(p, [a]), keys = Object.keys(t.tags);
+  if (!keys.length) return null;
+  const cur = op && op.kind !== 'delete' ? op.tags : a.tags;
+  if (keys.every(k => cur[k] === t.tags[k])) return el('div', {class: 'muted', style: 'margin-top:6px'}, op && keys.some(k => a.tags[k] !== t.tags[k]) ? 'Timetable: in Changes.' : 'Timetable: as the agency has it.');
+  const code = tags => el('code', {}, Object.entries(tags).map(([k, v]) => `${k}=${v}`).join('  '));
+  const had = Object.fromEntries(keys.filter(k => a.tags[k]).map(k => [k, a.tags[k]]));
+  return el('div', {style: 'margin-top:6px'},
+    el('div', {}, el('b', {}, 'Timetable'), ` (times at its first stop, ${t.first.name}): `, code(t.tags)),
+    Object.keys(had).length ? el('div', {class: 'muted'}, 'OSM has ', code(had), '.') : el('div', {class: 'muted'}, 'OSM has none. In OSM the times go on the route as tags like these, not as a relation per day.'),
+    t.uneven ? el('div', {class: 'muted'}, 'The gap between buses drifts through the day here; the interval is the usual one.') : null,
+    el('button', {class: 'b tiny', style: 'margin-top:4px', onclick: () => {
+      Edits.modify('relation', a.id, relBase(a), {tags: t.tags}, op ? null : p.id);
+      toast(`Timetable for r${a.id} in Changes`); render();
+    }}, Object.keys(had).length ? "Use the agency's" : 'Add to changes'));
 }
 
 /** Build the relation op(s) for a pattern from the routed ways and matched platforms. */
