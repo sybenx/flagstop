@@ -52,12 +52,20 @@ const Merge = {
   /** Stops the route can't be right without settling, each with its choice, in the card. */
   decisions(x) {
     const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, `Decide first: ${x.decide.length} stop${x.decide.length > 1 ? 's' : ''}`));
-    const set = (sid, choice, pick) => { S.merge.answers = {...(S.merge.answers || {}), [sid]: {choice, pick}}; render(); draw(); };
+    // choosing the chosen answer again takes it back
+    const set = (sid, choice, pick) => {
+      const a = {...(S.merge.answers || {})}, cur = a[sid];
+      if (cur && cur.choice === choice && cur.pick === pick) delete a[sid]; else a[sid] = {choice, pick};
+      S.merge.answers = a; render(); draw();
+    };
     for (const q of x.decide) {
       // the choice waits until the stop has been looked at on the map: a move isn't decided from text
       const seen = looked(q.s.id);
-      const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''),
-        disabled: seen ? null : '', title: seen ? '' : 'Look at it on the map first', onclick: () => set(q.s.id, choice, pick)}, label);
+      const btn = (label, choice, pick) => {
+        const on = q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick);
+        return el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? (on ? 'Chosen: click again to take it back' : '') : 'Show it on the map first',
+          onclick: () => set(q.s.id, choice, pick)}, (on ? '✓ ' : '') + label);
+      };
       const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, el('b', {}, q.s.name)));
       const look = () => el('div', {style: 'margin:4px 0'}, lookButtons(q.s, q.o || (q.cands && q.cands[0] && q.cands[0].o)));
       if (q.kind === 'where') {

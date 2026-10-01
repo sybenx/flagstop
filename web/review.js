@@ -115,8 +115,8 @@ const Review = {
             el('div', {}, el('b', {}, `? ${what}`), k === 'position' ? '' : ` ${from} → ${to}`), el('div', {class: 'why'}, dk.why),
             k === 'position' ? el('div', {style: 'margin:4px 0'}, lookButtons(s, o)) : null,
             el('span', {class: 'btns'},
-              el('button', {class: 'b tiny' + (v === 'agency' ? ' primary' : ''), ...off, onclick: () => { pk[k] = 'agency'; render(); draw(); }}, k === 'position' ? "move to the agency's point" : "agency's"),
-              el('button', {class: 'b tiny' + (v === 'keep' ? ' primary' : ''), ...off, onclick: () => { pk[k] = 'keep'; render(); draw(); }}, k === 'position' ? 'leave it' : "keep OSM's"),
+              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? "move to the agency's point" : "agency's")),
+              el('button', {class: 'b tiny' + (v === 'keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'keep' ? null : 'keep'; render(); draw(); }}, (v === 'keep' ? '✓ ' : '') + (k === 'position' ? 'leave it' : "keep OSM's")),
               k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
         } else {
           // one chip per difference: filled = the agency's value goes in, outlined = OSM's stays. Click flips it;

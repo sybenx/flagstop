@@ -170,3 +170,6 @@ button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
 .changehead { display: flex; gap: 8px; align-items: flex-start; }
 .changehead .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .changehead > button, .changehead > .chip { flex: none; }
+/* an answer that has been chosen: not the blue of something still to do */
+button.b.chosen { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+button.b.chosen:hover { color: var(--panel); opacity: .85; }
