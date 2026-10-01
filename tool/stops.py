@@ -271,7 +271,7 @@ def proposed_tags(feed, s, conv=None):
     conv = conv or {}
     agency = feed.agency.get('agency_name', '')
     t = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes',
-         'name': s.name, 'ref': s.ref, 'gtfs:stop_id': s.id}
+         'name': spelled(s.name, lang_of(feed)), 'ref': s.ref, 'gtfs:stop_id': s.id}
     if s.code:
         t['gtfs:stop_code'] = s.code
     for k in ('operator', 'network', 'network:wikidata', 'operator:wikidata'):
@@ -295,8 +295,9 @@ def diff(feed, s, o):
     """What a reviewer would want to look at, GTFS side by OSM side. Only real differences."""
     t = o['tags']
     out = {}
-    if (t.get('name') or '') != s.name:
-        out['name'] = {'gtfs': s.name, 'osm': t.get('name', '')}
+    name = spelled(s.name, lang_of(feed))   # the agency's address, written the OSM way
+    if (t.get('name') or '') != name:
+        out['name'] = {'gtfs': name, 'osm': t.get('name', '')}
     if t.get('ref', '') != s.ref:
         out['ref'] = {'gtfs': s.ref, 'osm': t.get('ref', '')}
     if not t.get('gtfs:stop_id'):
@@ -329,6 +330,43 @@ def bearing(lat1, lon1, lat2, lon2):
 # ---------- what to do about each difference, and why: the reviewer checks these, flagstop doesn't apply them ----------
 ABBR = {'st': 'street', 'ave': 'avenue', 'av': 'avenue', 'dr': 'drive', 'rd': 'road', 'hwy': 'highway', 'ln': 'lane', 'blvd': 'boulevard',
         'pkwy': 'parkway', 'ctr': 'center', 'cir': 'circle', 'ct': 'court', 'pl': 'place', 'n': 'north', 's': 'south', 'e': 'east', 'w': 'west'}
+
+
+DIRECTIONS = {'n': 'North', 's': 'South', 'e': 'East', 'w': 'West'}
+ALWAYS = {'hwy': 'Highway', 'pkwy': 'Parkway', 'blvd': 'Boulevard'}
+AT_END = {'st': 'Street', 'dr': 'Drive', 'ave': 'Avenue', 'av': 'Avenue', 'rd': 'Road', 'ln': 'Lane', 'cir': 'Circle', 'ct': 'Court', 'pl': 'Place', 'ctr': 'Center'}
+
+
+def spelled(name, lang='en'):
+    """A stop name with its abbreviations spelled out, as OSM writes names: '2470 N Main St, N Logan' ->
+    '2470 North Main Street, North Logan'. English only (the list is). Careful with the ambiguous ones: a
+    lone letter is a direction only next to a number or before a place name ('1600 N', 'N Logan', not
+    'Building E'); St, Dr and the like only at the end of the street ('Main St,', not 'St Thomas')."""
+    if not (lang or 'en').lower().startswith('en') or not name:
+        return name
+    toks = re.findall(r"[A-Za-z]+\.?|\d+\w*|[^\w\s]+|\s+", name)
+    words = [i for i, t in enumerate(toks) if not t.isspace()]
+    out = list(toks)
+    for n, i in enumerate(words):
+        t = toks[i]
+        if not t[0].isalpha():
+            continue
+        w = t.rstrip('.').lower()
+        prev = toks[words[n - 1]] if n else None
+        nxt = toks[words[n + 1]] if n + 1 < len(words) else None
+        end = nxt is None or nxt[0] in ',-(/;'
+        num = lambda x: bool(x) and x[0].isdigit()
+        if w in DIRECTIONS and len(t.rstrip('.')) == 1 and t[0].isupper() and (num(prev) or num(nxt) or (nxt and nxt[0].isupper())):
+            out[i] = DIRECTIONS[w]
+        elif w in ALWAYS:
+            out[i] = ALWAYS[w]
+        elif w in AT_END and (end or (w not in ('st', 'dr') and num(nxt))):
+            out[i] = AT_END[w]
+    return re.sub(r'\s+([,)])', r'\1', re.sub(r'\s{2,}', ' ', ''.join(out))).strip()
+
+
+def lang_of(feed):
+    return feed.agency.get('agency_lang') or getattr(feed, 'info', {}).get('feed_lang', '') or ''
 
 
 # a stop_desc with a date or a time in it is someone's note ("(Detour) added 10/13/2025 11:58:27"), not what the bus announces
@@ -396,11 +434,11 @@ def decide(s, o, diff, side=None, others=None):
             g, m = v['gtfs'], v['osm']
             if not m:
                 out[k] = {'pick': 'agency', 'why': 'OSM has no name'}
-            # The agency's name is its address for the stop, and it's right: only the way it's written is OSM's
-            # call (spelled out: Street, not St). A landmark or note added to OSM's name goes; the agency's
+            # The agency's name is its address for the stop, and it's right; written the OSM way (spelled out:
+            # Street, not St), which g already is. A landmark or note added to OSM's name goes; the agency's
             # announcement goes in description.
             elif same_address(g, m) and not extra(m):
-                out[k] = {'pick': 'keep', 'why': 'same address, written differently'}
+                out[k] = {'pick': 'agency', 'why': "the same address, as the agency writes it, spelled out the OSM way"}
             elif same_address(g, m):
                 out[k] = {'pick': 'agency', 'why': f"same address; OSM's name adds '{extra(m)}', which isn't part of a name" + (f" (the agency announces '{s.desc}', which goes in description)" if s.desc else '')}
             elif set(re.sub(r"[^\w\s]", ' ', m.lower()).split()) <= set(re.sub(r"[^\w\s]", ' ', g.lower()).split()) | {'and'}:

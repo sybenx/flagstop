@@ -1,0 +1,4103 @@
+{
+ "patterns": {
+  "5714:0:19560:20": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2516833
+   ],
+   "services": [
+    "Mo-Fr 22260-74640 every 1800",
+    "Sa 37800-67440 every 3600"
+   ]
+  },
+  "5715:0:19734:26": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2516850
+   ],
+   "services": [
+    "Mo-Fr 22260-74610 every 1800",
+    "Sa 36660-66300 every 3600"
+   ]
+  },
+  "5716:0:31200:22": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2435767
+   ],
+   "services": [
+    "Mo-Fr 21900-74700 every 1800",
+    "Sa 36300-66120 every 3600"
+   ]
+  },
+  "5718:0:19738:22": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2435759
+   ],
+   "services": [
+    "Mo-Fr 22140-74460 every 1800",
+    "Sa 37800-67260 every 3600"
+   ]
+  },
+  "5721:0:25192:16": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2435757
+   ],
+   "services": [
+    "Mo-Fr 21960-74460 every 1800",
+    "Sa 36360-66120 every 3600"
+   ]
+  },
+  "5722:0:19792:34": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12720634
+   ],
+   "services": [
+    "Mo-Fr 21900-75780 every 960 (drifts)",
+    "Sa 36000-68340 every 1530 (drifts)"
+   ]
+  },
+  "5723:0:32000:35": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12720664
+   ],
+   "services": [
+    "Mo-Fr 21900-75720 every 960 (drifts)",
+    "Sa 36000-68160 every 1380 (drifts)"
+   ]
+  },
+  "5731:0:30386:24+5731:1:31365:17": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12720821,
+    17014960
+   ],
+   "services": [
+    "Mo-Fr 19800-73320 every 3600",
+    "Sa 37800-66120 every 3600"
+   ]
+  },
+  "5734:0:27490:24": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12721122
+   ],
+   "services": [
+    "Mo-Fr 59640-66900 every 3600"
+   ]
+  },
+  "5734:1:27489:18": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    17015540
+   ],
+   "services": [
+    "Mo-Fr 63600-70200 every 3600"
+   ]
+  },
+  "5735:0:19035:36+5735:1:19036:32": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12720941,
+    17014999
+   ],
+   "services": [
+    "Mo-Fr 18000-73260 every 1800",
+    "Sa 34200-66060 every 5400"
+   ]
+  },
+  "5738:0:31903:24+5738:1:20937:23": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12720868
+   ],
+   "services": [
+    "Mo-Fr 18000-73320 every 1800",
+    "Sa 36000-67920 every 3600"
+   ]
+  },
+  "5739:0:27487:20": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    12721039
+   ],
+   "services": [
+    "Mo-Fr 18300-24900 every 3600"
+   ]
+  },
+  "5739:1:27488:21": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    17015539
+   ],
+   "services": [
+    "Mo-Fr 21600-28500 every 3600"
+   ]
+  },
+  "5741:0:29240:19": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2431265
+   ],
+   "services": [
+    "Mo-Fr 21960-74280 every 1800",
+    "Sa 37800-67080 every 3600"
+   ]
+  },
+  "5742:0:27002:19": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2435752
+   ],
+   "services": [
+    "Mo-Fr 22080-74310 every 1800",
+    "Sa 37800-67110 every 3600"
+   ]
+  },
+  "5743:0:28203:21": {
+   "chain_ok": true,
+   "divergences": 0,
+   "relations": [
+    2431287,
+    12720778
+   ],
+   "services": [
+    "Mo-Fr 22200-74520 every 1800",
+    "Sa 36600-66000 every 3600"
+   ]
+  }
+ },
+ "positions": {
+  "far": 15,
+  "typical": 5
+ },
+ "stops": {
+  "10628498": {
+   "name": "150 East 500 North - Route 7 (700)",
+   "osm": "n11582265885",
+   "picks": {
+    "name": "agency: 150 East 500 North - Route 7 (700)",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "10628499": {
+   "name": "150 East 500 North - Route 8 (800)",
+   "osm": "n11582265881",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 8 (800)",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "11053147": {
+   "name": "649 North 200 West",
+   "osm": "n11504801875",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "moved"
+  },
+  "11442505": {
+   "name": "1042 North 1000 West",
+   "osm": "n12110408069",
+   "picks": {
+    "description": "ask"
+   },
+   "status": "matched"
+  },
+  "12239355": {
+   "name": "574 East 200 North (Temp Stop)",
+   "osm": null,
+   "picks": {},
+   "status": "missing"
+  },
+  "12341568": {
+   "name": "285 West 1700 South (Temp Stop)",
+   "osm": null,
+   "picks": {},
+   "status": "missing"
+  },
+  "12532091": {
+   "name": "214 West 300 North (Temp Stop)",
+   "osm": "n14239846477",
+   "picks": {},
+   "status": "matched"
+  },
+  "7503601": {
+   "name": "150 East 500 North - Route 1",
+   "osm": "n3756748837",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 1",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7503602": {
+   "name": "1574 East 1500 North",
+   "osm": "n3755336650",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7504414": {
+   "name": "1521 North 800 East",
+   "osm": "n11507014064",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7504862": {
+   "name": "150 East 500 North - Route 2",
+   "osm": "n3756748840",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 2",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7505312": {
+   "name": "1111 North 800 East",
+   "osm": "n9216618227",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1111 North 800 East",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "ask",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7505649": {
+   "name": "150 East 500 North - Route 3",
+   "osm": "n3756748842",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 3",
+    "operator": "agency: Connect Public Transit",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7506235": {
+   "name": "296 East Center St",
+   "osm": "n4643556552",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7506835": {
+   "name": "2470 North Main St, N Logan",
+   "osm": "n11504801816",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2470 North Main Street, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7506836": {
+   "name": "150 East 500 North - Route 5",
+   "osm": "n11582265884",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 5",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7507542": {
+   "name": "2810 N Wolf Pack Way, N Logan",
+   "osm": "n11504801803",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2810 North Wolf Pack Way, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7507813": {
+   "name": "2371 North 400 East, N Logan",
+   "osm": "n11504801807",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2371 North 400 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7509446": {
+   "name": "150 East 500 North - Route 12",
+   "osm": "n3756748839",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 12",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7511256": {
+   "name": "100 E 1600 N",
+   "osm": "n11504801829",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 100 East 1600 North",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7511617": {
+   "name": "36 West 1200 South",
+   "osm": "n11503983292",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7518680": {
+   "name": "181 East 400 North",
+   "osm": "n11503752152",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7518681": {
+   "name": "75 West 400 North",
+   "osm": "n11504801895",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518682": {
+   "name": "225 North 200 West",
+   "osm": "n11504801903",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518696": {
+   "name": "600 West 400 South",
+   "osm": "n11503983310",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518697": {
+   "name": "520 West 400 South",
+   "osm": "n11503983311",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518698": {
+   "name": "395 South 300 West",
+   "osm": "n11503983314",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518699": {
+   "name": "190 South 400 West",
+   "osm": "n11503752118",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518700": {
+   "name": "90 South 400 West",
+   "osm": "n11503752122",
+   "picks": {},
+   "status": "matched"
+  },
+  "7518701": {
+   "name": "186 North 400 West",
+   "osm": "n11504801902",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 186 North 400 West",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7518702": {
+   "name": "224 North 200 West",
+   "osm": "n11504801904",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7518703": {
+   "name": "50 West 400 North",
+   "osm": "n11504801896",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7537373": {
+   "name": "150 East 500 North - Route 11 & 16",
+   "osm": "n11582265883",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 11 & 16",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7542237": {
+   "name": "3155 South 500 West",
+   "osm": "n11503929855",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543009": {
+   "name": "185 South State, Franklin",
+   "osm": "n11504756752",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 185 South State, Franklin",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543011": {
+   "name": "202 East 300 North",
+   "osm": "n11504801909",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543012": {
+   "name": "320 East 300 North",
+   "osm": "n11504801910",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543013": {
+   "name": "255 North 400 East",
+   "osm": "n11504801913",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543014": {
+   "name": "351 East 200 North",
+   "osm": "n11504801912",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543015": {
+   "name": "175 North 300 East",
+   "osm": "n11504801911",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543016": {
+   "name": "49 North 100 East",
+   "osm": "n11503752126",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543017": {
+   "name": "430 East Center St",
+   "osm": "n11503752134",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543018": {
+   "name": "60 North 500 East",
+   "osm": "n11504801915",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543022": {
+   "name": "115 North Riverside Dr",
+   "osm": "n11503752145",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 115 North Riverside Drive",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543023": {
+   "name": "27 North Riverside Dr",
+   "osm": "n11503752144",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543032": {
+   "name": "589 East Center St",
+   "osm": "n11503752136",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543033": {
+   "name": "485 East Center St",
+   "osm": "n11503752135",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543034": {
+   "name": "369 East Center St",
+   "osm": "n11503752133",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7543036": {
+   "name": "240 North 100 East",
+   "osm": "n11504801908",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7543162": {
+   "name": "31 South 100 East, Preston",
+   "osm": "n11504756750",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 31 South 100 East, Preston",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546686": {
+   "name": "150 East 500 North - Route 15",
+   "osm": "n3756748838",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 15",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546688": {
+   "name": "157 West 600 South (Richmond)",
+   "osm": "n11504756762",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 157 West 600 South (Richmond)",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546689": {
+   "name": "539 South State, Richmond",
+   "osm": "n11504756761",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 539 South State, Richmond",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546690": {
+   "name": "319 South State (Richmond)",
+   "osm": "n11504756760",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 319 South State (Richmond)",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546691": {
+   "name": "193 South State, Richmond",
+   "osm": "n11504756759",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 193 South State, Richmond",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546692": {
+   "name": "39 S State, Richmond",
+   "osm": "n11504756758",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 39 South State, Richmond",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7546693": {
+   "name": "124 S Hwy 91, Richmond",
+   "osm": "n11504756755",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 124 South Highway 91, Richmond",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547676": {
+   "name": "453 West 100 North",
+   "osm": "n11503983296",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547677": {
+   "name": "950 South Main St",
+   "osm": "n11503983298",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547678": {
+   "name": "355 North Main",
+   "osm": "n11504801897",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 355 North Main",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547679": {
+   "name": "55 North Main",
+   "osm": "n11503752125",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 55 North Main",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547680": {
+   "name": "359 South Main",
+   "osm": "n11503752112",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 359 South Main",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547681": {
+   "name": "449 South Main",
+   "osm": "n11503752110",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 449 South Main",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547682": {
+   "name": "995 South Main",
+   "osm": "n11503983297",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 995 South Main",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547683": {
+   "name": "520 West 100 North",
+   "osm": "n11503983295",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547688": {
+   "name": "670 South Main St",
+   "osm": "n11503983303",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547689": {
+   "name": "354 South Main St",
+   "osm": "n11503752111",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547690": {
+   "name": "50 North Main St",
+   "osm": "n3756754358",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7547691": {
+   "name": "280 North Main St",
+   "osm": "n11504801898",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548549": {
+   "name": "3235 S Hwy 165, Nibley",
+   "osm": "n11503929860",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3235 South Highway 165, Nibley",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548550": {
+   "name": "3665 South Hwy 165",
+   "osm": "n11503929858",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548551": {
+   "name": "3835 South Hwy 165",
+   "osm": "n11503929856",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548552": {
+   "name": "387 North 800 East, Hyrum",
+   "osm": "n11503929840",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 387 North 800 East, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548553": {
+   "name": "79 North 800 East, Hyrum",
+   "osm": "n11503929838",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 79 North 800 East, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548554": {
+   "name": "725 East Main St, Hyrum",
+   "osm": "n11503929818",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 725 East Main Street, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548555": {
+   "name": "465 East Main St, Hyrum",
+   "osm": "n11503929819",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 465 East Main Street, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548556": {
+   "name": "75 East Main St, Hyrum",
+   "osm": "n11503929820",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 75 East Main Street, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548557": {
+   "name": "90 West Main St, Hyrum",
+   "osm": "n11503929828",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 90 West Main Street, Hyrum",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548558": {
+   "name": "46 North 200 West, Hyrum",
+   "osm": "n11503929827",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 46 North 200 West, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548559": {
+   "name": "186 North 200 West , Hyrum",
+   "osm": "n11503929826",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 186 North 200 West, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548560": {
+   "name": "380 North 200 West, Hyrum",
+   "osm": "n11503929825",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 380 North 200 West, Hyrum",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548561": {
+   "name": "220 West 400 North, Hyrum",
+   "osm": "n11503929824",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 220 West 400 North, Hyrum",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548562": {
+   "name": "375 North 400 West, Hyrum",
+   "osm": "n11503929823",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 375 North 400 West, Hyrum",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548563": {
+   "name": "275 North 400 West, Hyrum",
+   "osm": "n11503929822",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 275 North 400 West, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548564": {
+   "name": "45 North 400 West, Hyrum",
+   "osm": "n11503929821",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 45 North 400 West, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548565": {
+   "name": "83 W Main St, Hyrum",
+   "osm": "n11503929829",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 83 West Main Street, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548566": {
+   "name": "289 South Center St, Hyrum",
+   "osm": "n11503929830",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 289 South Center Street, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548567": {
+   "name": "190 East 300 South, Hyrum",
+   "osm": "n11503929831",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 190 East 300 South, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548568": {
+   "name": "424 East 300 South, Hyrum",
+   "osm": "n11503929832",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 424 East 300 South, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548569": {
+   "name": "608 East 300 South, Hyrum",
+   "osm": "n11503929833",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 608 East 300 South, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548570": {
+   "name": "850 East 300 South, Hyrum",
+   "osm": "n11503929834",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 850 East 300 South, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548571": {
+   "name": "270 South 1300 East, Hyrum",
+   "osm": "n11503929835",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 270 South 1300 East, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548572": {
+   "name": "102 South 1300 East, Hyrum",
+   "osm": "n11503929836",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 102 South 1300 East, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548573": {
+   "name": "959 East Hwy 101, Hyrum",
+   "osm": "n11503929837",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 959 East Highway 101, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548574": {
+   "name": "923 E Highway 101, Hyrum",
+   "osm": "n11503929817",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 923 East Highway 101, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548575": {
+   "name": "310 N 800 E, Hyrum",
+   "osm": "n11503929839",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 310 North 800 East, Hyrum",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548576": {
+   "name": "3806 South Hwy 165, Millville",
+   "osm": "n11503929857",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3806 South Highway 165, Millville",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548577": {
+   "name": "3604 South Hwy 165, Millville",
+   "osm": "n11503929859",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3604 South Highway 165, Millville",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7548578": {
+   "name": "3230 S Hwy 165, Millville",
+   "osm": "n11503929861",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3230 South Highway 165, Millville",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549359": {
+   "name": "1235 S Hwy 165",
+   "osm": "n11503983294",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549360": {
+   "name": "2620 South Hwy 165",
+   "osm": "n11503929864",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549362": {
+   "name": "2835 South Hwy 165",
+   "osm": "n11503929863",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549363": {
+   "name": "2850 South Hwy 165, Millville",
+   "osm": "n11503929862",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2850 South Highway 165, Millville",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549364": {
+   "name": "2520 South Hwy 165, Millville",
+   "osm": "n11503929865",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2520 South Highway 165, Millville",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7549365": {
+   "name": "1300 S Hwy 165, Providence",
+   "osm": "n11503983293",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1300 South Highway 165, Providence",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565651": {
+   "name": "341 South 100 East",
+   "osm": "n11503752113",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565652": {
+   "name": "640 South 100 East",
+   "osm": "n11503983330",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565653": {
+   "name": "715 South Gateway Drive",
+   "osm": "n11503983329",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 715 South Gateway Drive",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565654": {
+   "name": "357 North Gateway Drive",
+   "osm": "n11503983327",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565655": {
+   "name": "45 West 1200 South",
+   "osm": "n11503983291",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565656": {
+   "name": "1305 South Talon Dr",
+   "osm": "n11503983288",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565657": {
+   "name": "443 West 1700 South",
+   "osm": "n11503983284",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565659": {
+   "name": "1771 Hyclone Dr",
+   "osm": "n11503983282",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565660": {
+   "name": "1129 West 1800 South",
+   "osm": "n11503983279",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565661": {
+   "name": "1776 South 1280 West",
+   "osm": "n11503983277",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1776 South 1280 West",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565726": {
+   "name": "1260 West 1610 South",
+   "osm": "n11503983276",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565727": {
+   "name": "1776 South 1200 West",
+   "osm": "n11503983278",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565729": {
+   "name": "1118 West Nibley Park Ave",
+   "osm": "n11503929844",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1118 West Nibley Park Avenue",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565730": {
+   "name": "860 West Nibley Park Ave",
+   "osm": "n11503929845",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 860 West Nibley Park Avenue",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565731": {
+   "name": "740 West 2600 South",
+   "osm": "n11503929847",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565732": {
+   "name": "2639 South 600 West",
+   "osm": "n11503929849",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565733": {
+   "name": "2775 South 600 West",
+   "osm": "n11503929850",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2775 South 600 West",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565734": {
+   "name": "2963 South 600 West",
+   "osm": "n11503929851",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565736": {
+   "name": "625 West 3200 South",
+   "osm": "n11503929854",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565737": {
+   "name": "965 West 3200 South",
+   "osm": "n11503929853",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565738": {
+   "name": "2930 South 1000 West",
+   "osm": "n11503929852",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565739": {
+   "name": "2710 South 1000 West",
+   "osm": "n11503929848",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565740": {
+   "name": "2560 South 1000 West",
+   "osm": "n11503929846",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565741": {
+   "name": "1129 West Nibley Park Ave",
+   "osm": "n11503929843",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565742": {
+   "name": "1285 W Nibley Park Ave",
+   "osm": "n11503929841",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565909": {
+   "name": "410 West 1700 South",
+   "osm": "n11503983285",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565910": {
+   "name": "1556 South Talon Drive",
+   "osm": "n11503983287",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565911": {
+   "name": "1250 South Talon Drive",
+   "osm": "n11503983289",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565912": {
+   "name": "1240 South Legrand St",
+   "osm": "n11503983290",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565913": {
+   "name": "358 North Gateway Dr",
+   "osm": "n11503983326",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565914": {
+   "name": "760 South Gateway Dr",
+   "osm": "n11503983328",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 760 South Gateway Drive",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565915": {
+   "name": "690 South 100 East",
+   "osm": "n11503752109",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565916": {
+   "name": "290 South 100 East",
+   "osm": "n11503752114",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565917": {
+   "name": "10 South 100 East",
+   "osm": "n11503752128",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565918": {
+   "name": "1559 South Talon Dr",
+   "osm": "n11503983286",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565919": {
+   "name": "31 South 300 East",
+   "osm": "n11503752131",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7565920": {
+   "name": "280 South 300 East",
+   "osm": "n11503752130",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7567310": {
+   "name": "813 West 200 South",
+   "osm": "n11503752119",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7567311": {
+   "name": "444 North 1000 West",
+   "osm": "n11504801889",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 444 North 1000 West",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568044": {
+   "name": "150 East 500 North - Route 9",
+   "osm": "n3756748843",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 150 East 500 North - Route 9",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568045": {
+   "name": "390 West 1800 North",
+   "osm": "n11504801822",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568621": {
+   "name": "250 West 1800 North",
+   "osm": "n11504801823",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568622": {
+   "name": "1711 North 200 West",
+   "osm": "n11504801824",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568623": {
+   "name": "1425 North 200 West",
+   "osm": "n11504801832",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568624": {
+   "name": "1331 North 200 West",
+   "osm": "n11504801844",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568625": {
+   "name": "1197 North 200 West",
+   "osm": "n11504801846",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568626": {
+   "name": "987 North 200 West",
+   "osm": "n11504801853",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568629": {
+   "name": "62 West 500 North",
+   "osm": "n11504801878",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568630": {
+   "name": "61 West 500 North",
+   "osm": "n11504801877",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568631": {
+   "name": "566 North 200 West",
+   "osm": "n11504801876",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568632": {
+   "name": "740 North 200 West",
+   "osm": "n11504801855",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568633": {
+   "name": "928 North 200 West",
+   "osm": "n11504801852",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "moved"
+  },
+  "7568634": {
+   "name": "1185 North 200 West",
+   "osm": "n11504801847",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568635": {
+   "name": "1320 North 200 West",
+   "osm": "n11504801845",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568636": {
+   "name": "285 West 1400 North",
+   "osm": "n11504801833",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568637": {
+   "name": "450 West 1400 North",
+   "osm": "n11504801834",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 450 West 1400 North",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568638": {
+   "name": "1420 North 600 West",
+   "osm": "n11504801879",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7568639": {
+   "name": "560 West 1800 North",
+   "osm": "n11504801821",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569072": {
+   "name": "310 East 500 North",
+   "osm": "n11504801874",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569073": {
+   "name": "508 East 500 North",
+   "osm": "n3756754360",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569074": {
+   "name": "980 East 700 North",
+   "osm": "n11507014051",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569075": {
+   "name": "890 North 1200 East",
+   "osm": "n2673556850",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569076": {
+   "name": "1110 North 1200 East",
+   "osm": "n11507014047",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569077": {
+   "name": "1210 East 1400 North",
+   "osm": "n11507014058",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569078": {
+   "name": "1450 East 1500 North",
+   "osm": "n11507014057",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569080": {
+   "name": "251 West 400 North",
+   "osm": "n11504801893",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569081": {
+   "name": "239 North 400 West",
+   "osm": "n11504801899",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 239 North 400 West",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569082": {
+   "name": "100 North 600 West",
+   "osm": "n11504801900",
+   "picks": {
+    "name": "agency: 100 North 600 West",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569083": {
+   "name": "125 South 600 West",
+   "osm": "n11503752120",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569084": {
+   "name": "730 North 1000 West",
+   "osm": "n11504801888",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569086": {
+   "name": "1330 North 1000 West",
+   "osm": "n11504801886",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569087": {
+   "name": "750 West 1400 North",
+   "osm": "n11504801880",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 750 West 1400 North",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569088": {
+   "name": "1301 North 600 West",
+   "osm": "n11504801881",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569089": {
+   "name": "941 North 600 West",
+   "osm": "n11504801882",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569090": {
+   "name": "675 North 600 West",
+   "osm": "n11504801883",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569091": {
+   "name": "542 West 400 North",
+   "osm": "n11504801890",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569092": {
+   "name": "428 West 400 North",
+   "osm": "n11504801891",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569093": {
+   "name": "272 West 400 North",
+   "osm": "n11504801892",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569109": {
+   "name": "1295 North 1600 East",
+   "osm": "n3755336651",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569110": {
+   "name": "1225 North 1600 East",
+   "osm": "n11507014056",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569111": {
+   "name": "1075 North 1600 East",
+   "osm": "n11507014055",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569112": {
+   "name": "989 North 1500 East",
+   "osm": "n11507014054",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569113": {
+   "name": "1500 East Maple Drive",
+   "osm": "n11507014053",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569115": {
+   "name": "1071 East 700 North",
+   "osm": "n3756748835",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1071 East 700 North",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569116": {
+   "name": "903 East 700 North",
+   "osm": "n11507014052",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569117": {
+   "name": "489 East 500 North",
+   "osm": "n11504801872",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569118": {
+   "name": "285 East 500 North",
+   "osm": "n11504801873",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569907": {
+   "name": "115 W Golf Course Rd",
+   "osm": "n11503983300",
+   "picks": {
+    "description": "agency"
+   },
+   "status": "matched"
+  },
+  "7569908": {
+   "name": "290 West Golf Course Rd",
+   "osm": "n11503983299",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569909": {
+   "name": "679 South 300 West",
+   "osm": "n11503983301",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569911": {
+   "name": "206 South 100 West",
+   "osm": "n11503752116",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569912": {
+   "name": "50 South 100 West",
+   "osm": "n11503752127",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569913": {
+   "name": "32 North 100 West",
+   "osm": "n11503752124",
+   "picks": {
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569914": {
+   "name": "50 West 200 North",
+   "osm": "n11504801906",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569917": {
+   "name": "51 West 200 North",
+   "osm": "n11504801905",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569919": {
+   "name": "45 North 100 West",
+   "osm": "n11503752123",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569920": {
+   "name": "280 South 100 West",
+   "osm": "n11503752115",
+   "picks": {
+    "description": "agency",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "7569923": {
+   "name": "1450 North 1200 East",
+   "osm": "n11507014059",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569924": {
+   "name": "1680 North 1200 East, N Logan",
+   "osm": "n11507014062",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1680 North 1200 East, North Logan",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569925": {
+   "name": "2046 N 1200 E, N Logan",
+   "osm": "n11504801808",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2046 North 1200 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569926": {
+   "name": "1121 East 2100 North, N Logan",
+   "osm": "n11504801810",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1121 East 2100 North, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569927": {
+   "name": "2230 North 800 East, N Logan",
+   "osm": "n11504801812",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2230 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569928": {
+   "name": "2480 North 800 East, N Logan",
+   "osm": "n11504801801",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2480 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569929": {
+   "name": "2740 North 800 East, N Logan",
+   "osm": "n11504801800",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2740 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569930": {
+   "name": "670 South 250 East, Hyde Park",
+   "osm": "n11504801797",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 670 South 250 East, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569931": {
+   "name": "220 South 250 East, Hyde Park",
+   "osm": "n11504801796",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 220 South 250 East, Hyde Park",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569932": {
+   "name": "104 South 100 East, Hyde Park",
+   "osm": "n11504801793",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 104 South 100 East, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569933": {
+   "name": "67 E Hyde Park Lane, Hyde Park",
+   "osm": "n11504801791",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 67 East Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569934": {
+   "name": "185 West Hyde Park Lane, Hyde Park",
+   "osm": "n11504801789",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 185 West Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569935": {
+   "name": "655 West Hyde Park Lane, Hyde Park",
+   "osm": "n11504801787",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 655 West Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569936": {
+   "name": "4088 North Main, Hyde Park",
+   "osm": "n11504801784",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 4088 North Main, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569937": {
+   "name": "850 S Main, Smithfield",
+   "osm": "n11504801783",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 850 South Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569938": {
+   "name": "50 East 600 South, Smithfield",
+   "osm": "n11504801781",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 50 East 600 South, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569939": {
+   "name": "170 East 600 South, Smithfield",
+   "osm": "n11504801779",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 170 East 600 South, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569940": {
+   "name": "486 S 250 E, Smithfield",
+   "osm": "n11504801776",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 486 South 250 East, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569941": {
+   "name": "210 South 300 East, Smithfield",
+   "osm": "n11504801775",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 210 South 300 East, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569942": {
+   "name": "115 East 100 South, Smithfield",
+   "osm": "n11504801772",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 115 East 100 South, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569943": {
+   "name": "51 East 100 North, Smithfield",
+   "osm": "n11504801770",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 51 East 100 North, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569944": {
+   "name": "180 North Main, Smithfield",
+   "osm": "n11504801769",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 180 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569945": {
+   "name": "454 North Main, Smithfield",
+   "osm": "n11504756767",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 454 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569946": {
+   "name": "640 North Main, Smithfield",
+   "osm": "n11504756764",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 640 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569948": {
+   "name": "604 North 200 East",
+   "osm": "n11504801860",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569949": {
+   "name": "704 North 200 East",
+   "osm": "n11504801859",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569950": {
+   "name": "918 North 200 East",
+   "osm": "n11504801851",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569951": {
+   "name": "1206 North 200 East",
+   "osm": "n11504801841",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569952": {
+   "name": "1360 North 200 East",
+   "osm": "n11504801839",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569953": {
+   "name": "330 East 1400 North",
+   "osm": "n11504801838",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569954": {
+   "name": "465 East 1400 North",
+   "osm": "n11504801836",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569955": {
+   "name": "1500 North 600 East",
+   "osm": "n11504801862",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569956": {
+   "name": "1750 North Research Pkwy",
+   "osm": "n9285354822",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569957": {
+   "name": "1800 North 600 East",
+   "osm": "n11504801861",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569958": {
+   "name": "1775 North 800 East",
+   "osm": "n11507014065",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569959": {
+   "name": "1380 North 800 East",
+   "osm": "n11507014063",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569960": {
+   "name": "1200 North 800 East",
+   "osm": "n11507014045",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569961": {
+   "name": "695 East 1000 North",
+   "osm": "n11507014043",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569962": {
+   "name": "1090 North 600 East",
+   "osm": "n11504801864",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569963": {
+   "name": "1290 North 600 East",
+   "osm": "n11504801863",
+   "picks": {},
+   "status": "matched"
+  },
+  "7569964": {
+   "name": "545 East 1400 North",
+   "osm": "n11504801835",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569965": {
+   "name": "313 East 1400 North",
+   "osm": "n11504801837",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569966": {
+   "name": "1365 North 200 East",
+   "osm": "n11504801840",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569968": {
+   "name": "979 North 200 East",
+   "osm": "n11504801850",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569969": {
+   "name": "165 East 700 North",
+   "osm": "n11504801858",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7569971": {
+   "name": "1201 North 200 East",
+   "osm": "n10965842263",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1201 North 200 East",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7573958": {
+   "name": "150 East 500 North",
+   "osm": "n3756748841",
+   "picks": {},
+   "status": "ambiguous"
+  },
+  "7579425": {
+   "name": "750 North Main St",
+   "osm": "n11504801856",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 750 North Main Street",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7579426": {
+   "name": "1080 North Main St",
+   "osm": "n11504801848",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1080 North Main Street",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7579427": {
+   "name": "1300 North Main",
+   "osm": "n11504801843",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1300 North Main",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7579428": {
+   "name": "1730 North Main St, N Logan",
+   "osm": "n11504801826",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1730 North Main Street, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7579429": {
+   "name": "1980 North Main St, N Logan",
+   "osm": "n11504801820",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1980 North Main Street, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7579430": {
+   "name": "2250 North Main St, N Logan",
+   "osm": "n11504801818",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2250 North Main Street, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581239": {
+   "name": "190 East 2600 North, N Logan",
+   "osm": "n11504801804",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 190 East 2600 North, North Logan",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581240": {
+   "name": "380 East 2600 North, N Logan",
+   "osm": "n11504801805",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 380 East 2600 North, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581241": {
+   "name": "2489 North 400 East, N Logan",
+   "osm": "n11504801806",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2489 North 400 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581273": {
+   "name": "367 East 2200 North, N Logan",
+   "osm": "n11504801814",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 367 East 2200 North, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581274": {
+   "name": "2169 North 200 East, N Logan",
+   "osm": "n11504801819",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2169 North 200 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581275": {
+   "name": "1765 North 200 East, N Logan",
+   "osm": "n11504801827",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1765 North 200 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7581276": {
+   "name": "1581 North 200 East",
+   "osm": "n11504801830",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599719": {
+   "name": "112 West Main St, Richmond",
+   "osm": "n11504756757",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 112 West Main Street, Richmond",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599720": {
+   "name": "631 North Main, Smithfield",
+   "osm": "n11504756765",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 631 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599812": {
+   "name": "455 North Main, Smithfield",
+   "osm": "n11504756766",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 455 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599813": {
+   "name": "185 North Main, Smithfield",
+   "osm": "n11504756768",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 185 North Main, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599814": {
+   "name": "50 East 100 North, Smithfield",
+   "osm": "n11504801771",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 50 East 100 North, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599815": {
+   "name": "120 East 100 South, Smithfield",
+   "osm": "n11504801773",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 120 East 100 South, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599816": {
+   "name": "191 South 300 East, Smithfield",
+   "osm": "n11504801774",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 191 South 300 East, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599817": {
+   "name": "491 South 250 East, Smithfield",
+   "osm": "n11504801777",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 491 South 250 East, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599818": {
+   "name": "175 East 600 South, Smithfield",
+   "osm": "n11504801778",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 175 East 600 South, Smithfield",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599819": {
+   "name": "54 East 600 South, Smithfield",
+   "osm": "n11504801780",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599820": {
+   "name": "781 S Main, Smithfield",
+   "osm": "n11504801782",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599821": {
+   "name": "650 West Hyde Park Ln, Hyde Park",
+   "osm": "n11504801788",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 650 West Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599822": {
+   "name": "160 West Hyde Park Ln, Hyde Park",
+   "osm": "n11504801790",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 160 West Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599823": {
+   "name": "40 E Hyde Park Lane, Hyde Park",
+   "osm": "n11504801792",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 40 East Hyde Park Lane, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599824": {
+   "name": "105 South 100 East, Hyde Park",
+   "osm": "n11504801794",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 105 South 100 East, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599825": {
+   "name": "226 East 200 South, Hyde Park",
+   "osm": "n11504801795",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 226 East 200 South, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599826": {
+   "name": "710 South 250 East, Hyde Park",
+   "osm": "n11504801798",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 710 South 250 East, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599827": {
+   "name": "2755 North 800 East, N Logan",
+   "osm": "n11504801799",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2755 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599828": {
+   "name": "2481 North 800 East, N Logan",
+   "osm": "n11504801802",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2481 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599829": {
+   "name": "2175 North 800 East, N Logan",
+   "osm": "n11504801813",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2175 North 800 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599830": {
+   "name": "1124 East 2100 North, N Logan",
+   "osm": "n11504801811",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1124 East 2100 North, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599831": {
+   "name": "2041 North 1200 East, N Logan",
+   "osm": "n11504801809",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2041 North 1200 East, North Logan",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599832": {
+   "name": "1681 North 1200 East, N Logan",
+   "osm": "n11507014061",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1681 North 1200 East, North Logan",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599833": {
+   "name": "1375 North 1200 East",
+   "osm": "n11507014060",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599834": {
+   "name": "1111 North 1200 East",
+   "osm": "n11507014046",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7599835": {
+   "name": "875 North 1200 East",
+   "osm": "n11507014050",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "ask",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606913": {
+   "name": "162 East 400 North",
+   "osm": "n11503752153",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606914": {
+   "name": "432 East 400 North",
+   "osm": "n11503752150",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606915": {
+   "name": "630 East 400 North",
+   "osm": "n11503752149",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606916": {
+   "name": "650 North 1200 East",
+   "osm": "n11161765129",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 650 North 1200 East",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "ask",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606917": {
+   "name": "977 North 600 East",
+   "osm": "n11504801865",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606918": {
+   "name": "843 North 600 East",
+   "osm": "n11504801867",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606919": {
+   "name": "1580 North 200 East",
+   "osm": "n11504801831",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606920": {
+   "name": "105 East 1600 North",
+   "osm": "n11504801828",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 105 East 1600 North",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606921": {
+   "name": "1341 North Main",
+   "osm": "n11504801842",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1341 North Main",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606922": {
+   "name": "1045 North Main",
+   "osm": "n11504801849",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1045 North Main",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606923": {
+   "name": "745 North Main",
+   "osm": "n11504801857",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 745 North Main",
+    "network": "ask",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606924": {
+   "name": "735 North 600 East",
+   "osm": "n11504801868",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606925": {
+   "name": "585 North 600 East",
+   "osm": "n11504801871",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606926": {
+   "name": "150 East 442 North",
+   "osm": "n11582265886",
+   "picks": {},
+   "status": "ambiguous"
+  },
+  "7606945": {
+   "name": "590 North 600 East",
+   "osm": "n11504801870",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606946": {
+   "name": "710 North 600 East",
+   "osm": "n11504801869",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606947": {
+   "name": "890 North 600 East",
+   "osm": "n11504801866",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606948": {
+   "name": "640 East 1000 North",
+   "osm": "n11507014044",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606949": {
+   "name": "720 East 1000 North",
+   "osm": "n11507014042",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606950": {
+   "name": "665 North 1200 East",
+   "osm": "n9216618243",
+   "picks": {},
+   "status": "ambiguous"
+  },
+  "7606951": {
+   "name": "400 North 900 East",
+   "osm": "n10152640377",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606952": {
+   "name": "651 East 400 North",
+   "osm": "n11503752148",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606953": {
+   "name": "393 East 400 North",
+   "osm": "n11503752151",
+   "picks": {
+    "gtfs:stop_id": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606955": {
+   "name": "480 North Main",
+   "osm": "n11504801894",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 480 North Main",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606975": {
+   "name": "3730 North Main, Hyde Park",
+   "osm": "n11504801786",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3730 North Main, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606976": {
+   "name": "123 S Hwy 91, Richmond",
+   "osm": "n11504756756",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 123 South Highway 91, Richmond",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606977": {
+   "name": "901 North 200 West, Richmond",
+   "osm": "n11504756754",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 901 North 200 West, Richmond",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606978": {
+   "name": "50 West Center, Lewiston",
+   "osm": "n11504756753",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 50 West Center, Lewiston",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7606994": {
+   "name": "170 South State, Franklin",
+   "osm": "n11504756751",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 170 South State, Franklin",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7607773": {
+   "name": "3780 North Main, Hyde Park",
+   "osm": "n11504801785",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 3780 North Main, Hyde Park",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7607774": {
+   "name": "2427 North Main, N Logan",
+   "osm": "n11504801815",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2427 North Main, North Logan",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7607775": {
+   "name": "2281 N Main, N Logan",
+   "osm": "n11504801817",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 2281 North Main, North Logan",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7607789": {
+   "name": "1785 North Main, N Logan",
+   "osm": "n11504801825",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1785 North Main, North Logan",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7607790": {
+   "name": "1249 East 700 North",
+   "osm": "n11507014049",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "position": "ask",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "7730352": {
+   "name": "150 East 500 North - Route 6",
+   "osm": "n11582265882",
+   "picks": {
+    "name": "agency: 150 East 500 North - Route 6",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "8197015": {
+   "name": "1080 East 200 South, Lewiston",
+   "osm": "n11507014066",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 1080 East 200 South, Lewiston",
+    "network": "agency: Connect Public Transit",
+    "network:wikidata": "agency",
+    "operator": "agency: Connect Public Transit",
+    "position": "keep",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "9607861": {
+   "name": "850 West 1600 South",
+   "osm": "n11503983280",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "ask",
+    "position": "ask",
+    "ref": "agency",
+    "route_ref": "agency"
+   },
+   "status": "moved"
+  },
+  "9836875": {
+   "name": "920 West 600 South",
+   "osm": "n12097184927",
+   "picks": {
+    "name": "agency: 920 West 600 South",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "9836876": {
+   "name": "744 West 600 South",
+   "osm": "n12097184926",
+   "picks": {},
+   "status": "matched"
+  },
+  "9837980": {
+   "name": "559 South 100 West",
+   "osm": "n12097248286",
+   "picks": {
+    "name": "ask",
+    "position": "ask"
+   },
+   "status": "matched"
+  },
+  "9837981": {
+   "name": "731 South 100 West",
+   "osm": "n12097248287",
+   "picks": {
+    "name": "agency: 731 South 100 West",
+    "position": "keep"
+   },
+   "status": "matched"
+  },
+  "9837982": {
+   "name": "890 South 500 West",
+   "osm": "n12097250272",
+   "picks": {
+    "name": "ask",
+    "position": "ask"
+   },
+   "status": "matched"
+  },
+  "9837983": {
+   "name": "750 South 500 West",
+   "osm": "n12097250273",
+   "picks": {
+    "description": "agency",
+    "name": "ask",
+    "position": "ask"
+   },
+   "status": "matched"
+  },
+  "9837984": {
+   "name": "55 East 200 North",
+   "osm": "n11504801907",
+   "picks": {},
+   "status": "matched"
+  },
+  "9837985": {
+   "name": "700 West 200 North",
+   "osm": "n12089645618",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 700 West 200 North",
+    "position": "ask",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  },
+  "9837986": {
+   "name": "244 North 1000 West",
+   "osm": "n12089645619",
+   "picks": {
+    "description": "agency",
+    "gtfs:stop_id": "agency",
+    "name": "agency: 244 North 1000 West",
+    "position": "keep",
+    "route_ref": "agency"
+   },
+   "status": "matched"
+  }
+ }
+}
