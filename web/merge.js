@@ -53,7 +53,9 @@ const Merge = {
     for (const t of Object.values(D.stops)) for (const c of (t.match && t.match.osm || []).slice(0, 1)) (claim[c.id] = claim[c.id] || new Set()).add(t.id);
     const usedBy = (o, but) => [...(claim[o.id] || [])].some(id => id !== but);
     const picked = new Set(stops.filter(x => x.o).map(x => x.o.id));
-    const unpicked = decide.filter(q => q.kind === 'which' && q.answer).flatMap(q => q.cands.map(c => ({o: c.o, sid: q.s.id}))).filter(x => !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
+    // a stop OSM had twice: the one not picked (here, or earlier in Check stops or the Stops tab)
+    const unpicked = stops.filter(x => x.o && (x.s.match || {}).status === 'ambiguous')
+      .flatMap(x => x.s.match.osm.map(c => ({o: D.osm_stops[c.id], sid: x.s.id}))).filter(x => x.o && !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
     const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
     return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone};
   },
