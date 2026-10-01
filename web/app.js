@@ -945,7 +945,7 @@ function changesetComment() {
   if (stopBits.length) parts.push(stopBits.join(', ').replace(/^(\d+) (added|removed)$/, (_, k, w) => `${n(+k, 'stop')} ${w}`));
   if (tagged.length) {
     const keys = new Set(tagged.flatMap(o => Edits.diff(o).map(x => x.k)));
-    const what = [['ref', 'codes'], ['gtfs:stop_id', 'ids'], ['route_ref', 'routes'], ['name', 'names'], ['description', 'announcements'], ['network', 'network names']].filter(([k]) => keys.has(k)).map(([, w]) => w);
+    const what = [['ref', 'codes'], ['gtfs:stop_id', 'ids'], ['route_ref', 'routes'], ['name', 'names'], ['description', 'announcements'], ['network', 'network names'], ['operator', 'operator names']].filter(([k]) => keys.has(k)).map(([, w]) => w);
     parts.push(`${what.length ? list(what) : 'tags'} on ${n(tagged.length, 'stop')}`);
   }
   if (!routes.size) for (const o of nodes) for (const r of (D.stops[o.tags['gtfs:stop_id']] || {}).routes || []) routes.add((D.routes.find(x => x.id === r) || {}).short);
