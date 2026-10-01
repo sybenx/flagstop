@@ -43,7 +43,7 @@ The queries are in `tool/osm.py` (`PT_QUERY`, `ROADS_QUERY`).
 The page lists itineraries worst first. Open one:
 
 - **dashed orange** is the agency's shape; **blue** is where a bus can drive on OSM; **purple** is what the existing OSM relation contains. Where orange and blue part, something is wrong on one side, and the divergence says which ways are involved and why.
-- **Rings** are the agency's stop positions, **dots** are OSM nodes. Agency coordinates are routinely 10–30 m off; the node on the sign is usually right. Nothing moves unless you say so.
+- **Rings** are the agency's stop positions, **dots** are OSM nodes. How far the agency's points usually are from OSM's is measured per feed (here: 5 m); a stop well past that (three times it, at least 10 m) is a question to look at on the map. Nothing moves unless you say so.
 - *Fix relation → changes* rewrites the existing relation (or creates one) with the matched platforms in order and the routed ways, keeping the mapper's free-text tags and adding the GTFS scheme's. A relation that holds both directions is kept for one and a new one created for the other. Duplicates ("Weekday"/"Saturday") can be marked for deletion.
 - *Re-route via a point* when the routed path takes a wrong turn: click the map, the path re-traces through your via points, and the relation you then propose follows them (needs `tool/serve.py`).
 - A way's tags — a wrong `oneway`, a missing `bus=yes` — can be edited from the divergence popup.

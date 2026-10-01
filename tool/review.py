@@ -123,6 +123,11 @@ def main():
     paths = stop_paths(feed, traced)
 
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
+    typical, far = stopmatch.calibrate(match)
+    print(f'positions: usually {typical} m apart; the same spot within {far} m', file=sys.stderr)
+    for sid, m in match.items():   # what counts as a different position, now that it's known
+        if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
+            m['diff'] = stopmatch.diff(feed, feed.stops[sid], osm_stops[m['osm'][0]['id']])
     conv = stopmatch.conventions(feed, match, osm_stops)
     print(f'local conventions: {conv}', file=sys.stderr)
     aliases = osm.nsi_aliases(conv.get('network'), os.path.join(a.cache, 'nsi-bus.json'), a.refresh) if conv.get('network') else set()
@@ -199,6 +204,7 @@ def main():
         'generated': datetime.datetime.now().isoformat(timespec='minutes'),
         'agency': feed.agency, 'feed': {**feed.info, 'file': os.path.basename(a.feed), 'bbox': box}, 'osm_fetched': osm_fetched,
         # how current the data is: Overpass runs behind OSM, so this, not when it was fetched
+        'positions': {'typical': stopmatch.TYPICAL, 'far': stopmatch.FAR},
         'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw)]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user']} for k, v in osm_stops.items()},

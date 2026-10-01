@@ -92,6 +92,7 @@ function patternGrade(p) {
   return {chip: 'ok', cls: 'good', order: 5};
 }
 const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : p.routed;
+const FAR = () => (D.positions && D.positions.far) || 25;   // m: closer than this, the same spot (from the feed)
 const relBase = a => ({version: a.version, tags: a.tags, members: a.members});
 // Of an itinerary's relations, the one to keep: the oldest not marked for deletion (it carries the history).
 const keptRelation = p => p.relations.filter(a => (Edits.get('r' + a.id) || {}).kind !== 'delete').sort((a, b) => a.id - b.id)[0];
@@ -224,7 +225,7 @@ function stopFeatures(ids) {
       const at = on && S.stopDrag ? S.stopDrag : osmPos(o);
       solid.push(point(at, {id, color, label, on}));
       // the selected stop always shows the agency's point too, so there's something to drag towards
-      if (on || m(at, [s.lon, s.lat]) > 25) { rings.push(point([s.lon, s.lat], {id, color, on})); tethers.push(line([at, [s.lon, s.lat]])); }
+      if (on || m(at, [s.lon, s.lat]) > FAR()) { rings.push(point([s.lon, s.lat], {id, color, on})); tethers.push(line([at, [s.lon, s.lat]])); }
     } else {
       rings.push(point([s.lon, s.lat], {id, color, on, label}));
       if ((st === 'moved' || st === 'ambiguous') && s.match) for (const c of s.match.osm) { const x = D.osm_stops[c.id]; if (x) { solid.push(point([x.lon, x.lat], {id, color, label: x.tags.name || '', on: false})); tethers.push(line([[x.lon, x.lat], [s.lon, s.lat]])); } }
@@ -760,7 +761,8 @@ function renderStops(P) {
       el('span', {class: 'dotc matched'}), el('div', {class: 'grow'}, el('div', {class: 't'}, pl.stations[0].tags.name || 'station'),
         el('div', {class: 's'}, `${pl.bays.length} bays${pl.stations.length > 1 ? ` · ${pl.stations.length} station points` : ''}`)), el('span', {class: 'chip'}, 'how it\'s mapped')));
   }
-  P.append(el('div', {class: 'hint'}, 'Rings are the agency\'s positions — usually 10–30 m off. Dots are OSM nodes. Nothing moves unless you say so.'));
+  const pos = D.positions || {};
+  P.append(el('div', {class: 'hint'}, `Rings are the agency's positions${pos.typical != null ? `, usually within ${pos.typical} m of OSM's here` : ''}. Dots are OSM nodes. Nothing moves unless you say so.`));
   const rank = {missing: 0, moved: 1, ambiguous: 2, matched: 3};
   const list = Object.values(D.stops).filter(stopFilter).sort((a, b) => rank[stopStatus(a)] - rank[stopStatus(b)] || b.trips - a.trips);
   P.append(el('h2', {}, `${list.length} stops`));
@@ -845,12 +847,12 @@ function osmStopBox(s, o, c, pickable) {
   box.append(el('div', {class: 'muted mono'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
   const base = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
   const diff = base && {...base};
-  // The review only calls a position different past 25 m (closer is the same stop placed by two hands), but
+  // The review only calls a position different past FAR (closer is the same stop placed by two hands), but
   // moving it to the agency's point is always on offer, as long as there's a distance to speak of.
   // Measured from where the stop is now: moved in Changes (by hand, say), or as OSM has it.
   const cur = osmPos(o), d = m(cur, [s.lon, s.lat]), placed = cur[0] !== o.lon || cur[1] !== o.lat;
   if (diff) delete diff.position;
-  if (diff && d >= 2) diff.position = {gtfs: `${Math.round(d)} m ${compass(cur, [s.lon, s.lat])} of the OSM stop${placed ? ' as you placed it' : ''}`, osm: 'kept', near: d <= 25};
+  if (diff && d >= 2) diff.position = {gtfs: `${Math.round(d)} m ${compass(cur, [s.lon, s.lat])} of the OSM stop${placed ? ' as you placed it' : ''}`, osm: 'kept', near: d <= FAR()};
   if (diff && Object.keys(diff).length) {
     const g = el('div', {class: 'diff'}, el('span', {class: 'hd'}, 'use'), el('span', {class: 'hd'}, 'key'), el('span', {class: 'hd'}, 'agency says'), el('span', {class: 'hd'}, 'OSM has'));
     const checks = {};
@@ -1064,7 +1066,7 @@ function renderAbout(P) {
   const f = D.feed;
   P.append(el('div', {class: 'about'},
     el('p', {}, el('b', {}, D.agency.agency_name), el('br'), `feed ${f.file} · version "${f.feed_version || '?'}" · ${f.feed_start_date || ''}–${f.feed_end_date || ''}`, el('br'), `OSM data fetched ${D.osm_fetched} · review built ${D.generated}`),
-    el('p', {}, el('b', {}, 'What the agency is good for.'), ' Which stops exist, their codes, which routes call and in what order. What it is rough on: positions (10–30 m is normal — the OSM node on the sign is usually better), names (often an address), and shapes drawn by hand. flagstop treats identity as the agency\'s and everything else as your call.'),
+    el('p', {}, el('b', {}, 'What the agency is good for.'), ' Which stops exist, their codes and addresses (the stop names), which routes call and in what order. Positions vary by agency: flagstop measures how far this feed\'s points usually are from OSM\'s and asks about the ones well past that. Shapes are drawn by hand: the route follows OSM\'s roads, pulled toward the shape. Where the agency is the source, flagstop suggests its value; where it isn\'t sure, it asks.'),
     el('p', {}, 'The ', el('span', {style: 'color:var(--shape)'}, 'dashed orange line'), ' is the agency\'s drawn shape. The ', el('span', {style: 'color:var(--routed)'}, 'blue line'), ' is where a bus can drive on OSM\'s roads while hugging that shape (oneway, access and bus/psv tags honoured). Where they part, something is wrong on one side: a road missing or cut in OSM, a oneway the wrong way, or a sloppy shape. ', el('span', {style: 'color:var(--rel)'}, 'Purple'), ' is what OSM\'s route relation currently contains. Rings are agency stop positions, dots are OSM nodes.'),
     el('p', {}, el('b', {}, 'Editing.'), ' Stop and relation decisions go into Changes and leave as one changeset (your OSM login), an osmChange file for JOSM, or Level0 text. Way tags (oneway, access) can be edited from a divergence. Roads (map, top right) splits, reconnects, moves and adds road segments on live OSM data and repairs every route on them in the same changeset — what RapiD refuses when a route runs through. Shaping roads by eye is RapiD\'s: every "Open in RapiD" carries the agency line as an overlay and pre-fills the changeset comment.'),
     el('p', {}, el('b', {}, 'Detours.'), ' Map the regular route. A detour of days or weeks isn\'t mapped; OSM can\'t keep up and the churn is worse than the lag. A long one (months) is, with a note=* on the relation saying it\'s a diversion, reverted afterwards. Stops named Temp/Detour and itineraries run only by a short-dated service are marked temporary here and left out of proposals.'),

@@ -20,7 +20,21 @@ CLOSE = 40     # m: this near and nobody else's, it is the same stop even with n
 FOOTPRINT = 400  # m from any GTFS stop: an OSM stop further out is not this agency's business
 REF_FAR = 300    # m: a matching ref further than this is a stale code, not the stop
 MOVED = 300      # m: nothing near, but a stop of the same name/ref this far away has probably moved
-FAR = 25         # m: closer than this, GTFS and OSM positions are the same stop placed by two hands
+FAR = 25         # m: closer than this, GTFS and OSM positions are the same stop placed by two hands; set from
+                 # the feed by calibrate(), since how exact an agency's points are varies
+TYPICAL = None   # m: how far apart the agency's and OSM's points usually are, for this feed
+
+
+def calibrate(results):
+    """Set FAR from the feed: three times the usual (median) distance between a stop and the OSM stop it
+    matched by code or id, at least 10 m. An agency whose points sit on the sign gets a tight FAR; one whose
+    points are rough gets room. -> (typical, FAR)"""
+    global FAR, TYPICAL
+    ds = sorted(r['osm'][0]['dist'] for r in results.values() if r and r['status'] == 'matched' and r['osm'] and r['osm'][0]['how'] == 'ref')
+    if len(ds) >= 20:
+        TYPICAL = ds[len(ds) // 2]
+        FAR = max(10, 3 * TYPICAL)
+    return TYPICAL, FAR
 TEMP = re.compile(r'\b(temp(orary)?|detour|closed)\b', re.I)
 
 
@@ -396,7 +410,7 @@ def decide(s, o, diff, side=None, others=None):
     if wrong:
         out['position'] = {'pick': 'ask', 'why': f"OSM has it across the street from where buses going this way stop; the agency's point is on their side ({round(d)} m)"}
     elif d > FAR:
-        out['position'] = {'pick': 'ask', 'why': f"{round(d)} m apart: the agency's points are often 10–30 m off, but this is more"}
+        out['position'] = {'pick': 'ask', 'why': f"{round(d)} m apart" + (f": the agency's points are usually within {TYPICAL} m of OSM's" if TYPICAL else '')}
     elif d >= 2:
         out['position'] = {'pick': 'keep', 'why': f'{round(d)} m apart: the same spot, placed by two hands'}
     return out
