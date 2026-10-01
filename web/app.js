@@ -827,11 +827,10 @@ function renderChanges(P) {
   const ops = Object.entries(Edits.ops);
   const user = Edits.auth.user();
   const d = el('div', {class: 'detail'});
-  d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} change${ops.length > 1 ? 's' : ''} waiting` : 'No changes yet'));
+  d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} of ${UPLOAD_CAP} changes` : 'No changes yet'));
   d.append(el('div', {class: 'hint', style: 'padding-left:0'}, 'Everything you decided, as one changeset. Review each line; remove what you don\'t want. Upload sends it to OSM under your account. Or take it to JOSM as osmChange, or Level0 as text.'));
-  const sug = Review.suggestedInChanges();
-  if (sug) d.append(el('div', {class: 'small box' + (sug > SUGGEST_CAP ? ' bad' : '')}, el('b', {}, `${sug} / ${SUGGEST_CAP} checked suggestions`),
-    el('span', {class: 'muted'}, sug > SUGGEST_CAP ? ' — over the limit for one upload. Remove some, or undo a route.' : ' in this upload. At most 50 go up at a time, like RapiD\'s limit on AI suggestions: enough to check properly, small enough for others to review.')));
+  const over = ops.length > UPLOAD_CAP;
+  if (over) d.append(el('div', {class: 'small bad', style: 'margin:4px 0'}, `Over the limit of ${UPLOAD_CAP} per upload: undo or remove some.`));
   if (Edits.roads.length) d.append(el('div', {class: 'small box'}, el('b', {}, `${Edits.roads.length} road edit${Edits.roads.length > 1 ? 's' : ''}`),
     el('span', {class: 'muted'}, ' — each is several lines below (new nodes, ways, the relations repaired around them) that only work together: take one back with Undo (⌘Z / Ctrl+Z), not line by line.')));
   for (const [key, op] of ops) {
@@ -881,7 +880,7 @@ function renderChanges(P) {
     d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment, count);
     const status = el('div', {class: 'small muted', style: 'margin:6px 0'});
     const btns = el('div', {class: 'btns'});
-    if (user && sug > SUGGEST_CAP) btns.append(el('button', {class: 'b primary', disabled: ''}, `Upload (over the ${SUGGEST_CAP}-suggestion limit)`));
+    if (user && over) btns.append(el('button', {class: 'b primary', disabled: ''}, `Upload (over ${UPLOAD_CAP})`));
     else if (user) {
       btns.append(el('button', {class: 'b primary', onclick: async () => {
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;

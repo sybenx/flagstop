@@ -3,16 +3,16 @@
    tool/review.py decides each difference (stops.decide): take the agency's value, keep OSM's, or ask, with
    a reason. Nothing here is applied by itself: the reviewer goes down the route on the map, flips what's
    wrong, answers the questions, and adds the route to Changes. Like RapiD's cap on AI suggestions, at most
-   SUGGEST_CAP suggested objects go in one changeset; past that, upload first. */
+   UPLOAD_CAP changes go in one upload; past that, upload first. */
 'use strict';
 
-const SUGGEST_CAP = 50;
+const UPLOAD_CAP = 50;   // changes per upload, whatever they are: small enough for someone else to review
 const KEY_WORDS = {ref: 'code', 'gtfs:stop_id': 'GTFS id', route_ref: 'routes', description: 'announcement', name: 'name', position: 'position', wheelchair: 'wheelchair', tagging: 'PTv2 tags'};
 
 const Review = {
   picks: {},   // stop id -> {key: 'agency' | 'keep' | null}; null = a question not yet answered
 
-  suggestedInChanges() { return Object.values(Edits.ops).filter(o => o.suggested).length; },
+
   /** The route's stops in order, once each, with their decisions. */
   stops(p) {
     const seen = new Set(), out = [];
@@ -73,14 +73,14 @@ const Review = {
     const live = list.filter(st => st.o && !st.inChanges && (st.status === 'matched' || st.status === 'moved'));
     const changing = live.filter(st => this.change(st).any);
     const open = live.reduce((n, st) => n + Object.values(this.pick(st)).filter(v => v === null).length, 0);   // questions, not stops
-    const inBasket = this.suggestedInChanges(), after = inBasket + changing.length;
+    const inBasket = Edits.count(), after = inBasket + changing.length;
     P.append(el('button', {class: 'back', onclick: () => this.close()}, `← ${r.long || 'route ' + r.short}`));
     const d = el('div', {class: 'detail'});
     d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, 'Check the stops')),
       el('div', {class: 'hint', style: 'padding-left:0'}, 'flagstop has made a call on every difference between the agency and OSM, with its reason. Go down the route on the map: untick what\'s wrong, answer the questions, then add the route to Changes. Nothing is applied until you do.'),
       el('div', {class: 'kv'},
         el('span', {class: 'k'}, 'this route'), el('span', {}, `${changing.length} stop${changing.length === 1 ? '' : 's'} to change · ${open ? `${open} question${open > 1 ? 's' : ''} to answer` : 'no questions left'}`),
-        el('span', {class: 'k'}, 'changeset'), el('span', {class: after > SUGGEST_CAP ? 'bad' : ''}, `${inBasket} suggested change${inBasket === 1 ? '' : 's'} already in Changes, ${SUGGEST_CAP} at most per upload (like RapiD)`)),
+        el('span', {class: 'k'}, 'upload'), el('span', {class: after > UPLOAD_CAP ? 'bad' : ''}, `${after} of ${UPLOAD_CAP} changes with this route`)),
       el('div', {class: 'muted small'}, 'Keys: ↓ ↑ next / previous stop · A agency\'s · O keep OSM\'s'));
     const ul = el('div', {class: 'reviewlist'});
     let quiet = 0;
@@ -133,7 +133,7 @@ const Review = {
     if (quiet) ul.append(el('div', {class: 'muted small', style: 'padding:6px 0'}, `${quiet} more stop${quiet > 1 ? 's' : ''}: nothing to change (any differences are only in how they're written, or a few metres).`));
     d.append(ul);
     const why = open ? `Answer the ${open} question${open > 1 ? 's' : ''} first` : !changing.length ? 'Nothing to add' :
-      after > SUGGEST_CAP ? `That would make ${after} suggested changes in one upload (${SUGGEST_CAP} at most): upload what's in Changes first, or untick some` : null;
+      after > UPLOAD_CAP ? `That makes ${after} changes; ${UPLOAD_CAP} at most per upload. Upload what's in Changes first, or untick some.` : null;
     d.append(el('div', {class: 'reviewfoot'},
       el('button', {class: 'b primary', disabled: why ? '' : null, onclick: () => this.accept(p, changing)}, `Add ${changing.length} checked stop${changing.length === 1 ? '' : 's'} to Changes`),
       why ? el('div', {class: 'muted small'}, why) : null));
