@@ -437,14 +437,12 @@ function lookFeatures() {
   for (const x of c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
   return out;
 }
-/** 'Look at it' until it has been looked at; then where it is, and the imagery to judge by. */
+/** 'Show on map' (what enables the choice), and once shown, a small link to imagery to judge by. */
 function lookButtons(s, o) {
-  if (!looked(s.id)) return el('button', {class: 'b tiny primary', onclick: () => lookAt(s.id)}, 'Look at it on the map');
   const at = o ? osmPos(o) : [s.lon, s.lat];
-  return el('span', {class: 'btns', style: 'display:inline-flex;margin:0'},
-    el('button', {class: 'b tiny', onclick: () => lookAt(s.id)}, 'Show again'),
-    el('button', {class: 'b tiny', title: 'Aerial imagery shows where the shelter or sign is', onclick: () => openIn('rapid', {lon: (at[0] + s.lon) / 2, lat: (at[1] + s.lat) / 2, zoom: 19, select: o ? [o.id] : []})}, 'Imagery (RapiD)'),
-    el('button', {class: 'b tiny', onclick: () => showStop(s.id)}, 'Stop page'));
+  return el('span', {}, el('button', {class: 'b tiny' + (looked(s.id) ? '' : ' primary'), onclick: () => lookAt(s.id)}, 'Show on map'),
+    looked(s.id) ? el('a', {href: '#', class: 'muted small', style: 'margin-left:8px', title: 'Aerial imagery in RapiD: where the shelter or sign is',
+      onclick: e => { e.preventDefault(); openIn('rapid', {lon: (at[0] + s.lon) / 2, lat: (at[1] + s.lat) / 2, zoom: 19, select: o ? [o.id] : []}); }}, 'imagery') : null);
 }
 
 // ---------- undo / redo: every change to the basket, stop tags to road edits ----------

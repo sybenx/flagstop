@@ -58,28 +58,22 @@ const Merge = {
       const seen = looked(q.s.id);
       const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''),
         disabled: seen ? null : '', title: seen ? '' : 'Look at it on the map first', onclick: () => set(q.s.id, choice, pick)}, label);
-      const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, el('b', {}, q.s.name), ' ', lookButtons(q.s, q.o || (q.cands && q.cands[0] && q.cands[0].o))));
+      const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, el('b', {}, q.s.name)));
+      const look = () => el('div', {style: 'margin:4px 0'}, lookButtons(q.s, q.o || (q.cands && q.cands[0] && q.cands[0].o)));
       if (q.kind === 'where') {
         // what's different, in one go: where OSM has it, what it calls it, and the agency's, then the question
         const on = q.o.tags.name, nameQ = ((q.s.match.decide || {}).name || {});
         const dist = Math.round(m(osmPos(q.o), [q.s.lon, q.s.lat]));
-        row.append(el('div', {class: 'why'}, on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m from the agency's "${q.s.name}".` : `OSM has it ${dist} m from the agency's point.`),
-          el('div', {class: 'why'}, nameQ.pick === 'ask' && /address says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why),
-          el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
-        // moving it there: what else about it differs goes along by default (its address, its code), each one flippable
-        if (q.answer === 'move') {
-          const t = this.moveTags(q), chips = el('div', {class: 'chips'});
-          for (const [k, v] of Object.entries(t)) {
-            const d = q.s.match.diff[k];
-            chips.append(el('button', {class: 'pickchip' + (v ? ' take' : ''), title: v ? "Goes with it. Click to keep OSM's" : "Stays as OSM has it. Click to take the agency's",
-              onclick: () => { S.merge.answers[q.s.id].tags = {...t, [k]: !v}; render(); }}, v ? `✓ ${KEY_WORDS[k] || k}: ${d.osm || '—'} → ${d.gtfs}` : `${KEY_WORDS[k] || k} kept`));
-          }
-          if (chips.childNodes.length) row.append(el('div', {class: 'why'}, 'Moving it to the agency\'s spot, its address and codes go with it (click one to keep OSM\'s):'), chips);
-        }
+        const changes = Object.keys(this.moveTags(q)).length;
+        row.append(el('div', {class: 'why'}, (on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m away. ` : `OSM has it ${dist} m away. `) +
+            (nameQ.pick === 'ask' && /address says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why)),
+          look(),
+          el('div', {class: 'btns'}, btn('Move it here', 'move'), btn('Keep it', 'keep')),
+          changes ? el('div', {class: 'why'}, "Moving it also gives it the agency's address and codes.") : null);
       }
-      if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`),
+      if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
         el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
-      if (q.kind === 'missing') row.append(el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
+      if (q.kind === 'missing') row.append(look(), el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
           " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn("Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
       box.append(row);
     }
