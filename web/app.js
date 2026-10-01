@@ -484,13 +484,21 @@ function copyLink(o) {
 let hashRead = false;   // until the address has been read on load, it is not ours to overwrite
 function syncHash() {
   if (!hashRead) return;
-  const h = S.tab === 'stops' && S.stop ? linkTo({stop: S.stop}) : S.tab === 'routes' && S.review ? linkTo({review: S.review}) : S.tab === 'routes' && S.pattern ? linkTo({pattern: S.pattern, div: S.div}) : S.tab !== 'routes' ? linkTo({tab: S.tab}) : '';
+  // the merge card's answers survive a reload of this tab (not shared, not for later: sessionStorage)
+  try { if (S.merge) sessionStorage.setItem('flagstop.merge', JSON.stringify({merge: S.merge, looked: [...S.looked]})); } catch (e) { /* storage off */ }
+  const h = S.tab === 'stops' && S.stop ? linkTo({stop: S.stop}) : S.tab === 'routes' && S.merge && S.pattern ? linkTo({merge: S.pattern}) : S.tab === 'routes' && S.review ? linkTo({review: S.review}) : S.tab === 'routes' && S.pattern ? linkTo({pattern: S.pattern, div: S.div}) : S.tab !== 'routes' ? linkTo({tab: S.tab}) : '';
   if (h !== location.hash && !(h === '' && !location.hash)) history.replaceState(null, '', h || location.pathname);
 }
 function applyHash() {
   hashRead = true;
   const q = new URLSearchParams(location.hash.slice(1).replace(/\+/g, '%2B'));   // a loop's id has a '+': not a space
-  if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }
+  if (q.get('merge') && patternById(q.get('merge'))) {
+    const p = patternById(q.get('merge'));
+    let saved = null;   // read before opening: opening saves a fresh card over it
+    try { saved = JSON.parse(sessionStorage.getItem('flagstop.merge') || 'null'); } catch (e) { /* storage off */ }
+    selectPattern(p.id); Merge.open(p);
+    if (saved && saved.merge && saved.merge.pid === p.id) { S.merge = saved.merge; for (const k of saved.looked || []) S.looked.add(k); render(); draw(); }
+  } else if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }
   else if (q.get('pattern') && patternById(q.get('pattern'))) {
     selectPattern(q.get('pattern'));
     const dv = patternById(q.get('pattern')).routed.divergences[+q.get('div')];
