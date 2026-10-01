@@ -62,7 +62,7 @@ const Merge = {
         const on = q.o.tags.name, nameQ = ((q.s.match.decide || {}).name || {});
         const dist = Math.round(m(osmPos(q.o), [q.s.lon, q.s.lat]));
         row.append(el('div', {class: 'why'}, on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m from the agency's "${q.s.name}".` : `OSM has it ${dist} m from the agency's point.`),
-          el('div', {class: 'why'}, nameQ.pick === 'ask' && /name says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why),
+          el('div', {class: 'why'}, nameQ.pick === 'ask' && /address says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why),
           el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
         // moving it there: what else about it differs goes along by default (its address, its code), each one flippable
         if (q.answer === 'move') {
