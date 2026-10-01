@@ -797,7 +797,8 @@ function changesetComment() {
   const byRoute = {};
   const isRoad = o => String(o.note || '').startsWith('road: ');
   for (const o of ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o))) {
-    const r = o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : shortOf(patternById(o.note));
+    // the route this relation belongs to: recorded on it (a merge, Check stops), or from its note
+    const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : shortOf(patternById(o.note)));
     (byRoute[r || '?'] = byRoute[r || '?'] || []).push(o);
   }
   for (const [r, os] of Object.entries(byRoute)) {
