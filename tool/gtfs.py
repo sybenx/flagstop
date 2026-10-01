@@ -216,6 +216,8 @@ def load(path):
             deps = sorted(h.pop(4)) if len(h) > 4 else []
             gaps = sorted(b - a for a, b in zip(deps, deps[1:]) if b > a)
             h[3] = gaps[len(gaps) // 2] if gaps else None
+            # steady: nearly every gap within a quarter of the usual one (else one interval would mislead)
+            h.append(bool(gaps) and sum(abs(g - h[3]) <= h[3] / 4 for g in gaps) >= 0.8 * len(gaps))
     patterns = _join_loops(kept, trips, times, of_trip, shapes)
     # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
     def days(sid):
@@ -286,7 +288,7 @@ def _join_loops(patterns, trips, times, of_trip, shapes):
                            shape_id=sid, stops=a.stops + b.stops[1:], trips=min(a.trips, b.trips), service_ids=a.service_ids | b.service_ids,
                            direction_name=a.direction_name, variants=a.variants + b.variants, alt_shapes=a.alt_shapes + b.alt_shapes,
                            alt_stops=a.alt_stops + b.alt_stops, loop=[a.id, b.id], split_at=b.stops[0],
-                           hours={sid: [a.hours[sid][0], b.hours.get(sid, a.hours[sid])[1], a.hours[sid][2], a.hours[sid][3]] for sid in a.hours}))
+                           hours={sid: [a.hours[sid][0], b.hours.get(sid, a.hours[sid])[1], a.hours[sid][2], a.hours[sid][3], a.hours[sid][4]] for sid in a.hours}))
         joined |= {id(a), id(b)}
     return out
 

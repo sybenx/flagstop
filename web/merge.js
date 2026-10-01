@@ -45,13 +45,18 @@ const Merge = {
     const now = new Set(stops.filter(x => x.o).map(x => osmNumId(x.o)));
     const stale = [...had.keys()].filter(id => !now.has(id)).map(id => D.osm_stops['n' + id] || {id: 'n' + id, tags: {}});
     const splits = (p.chain_breaks || []).filter(b => b.kind === 'split');
-    // the timetable the OSM way, as tags on the one relation: when it runs, and how often (the busiest days'
-    // gap as interval, the other days' as interval:conditional)
+    // the timetable the OSM way, as tags on the one relation: when it runs (first departure from its first stop
+    // to last arrival), and how often (the busiest days' gap as interval, the other days' as interval:conditional;
+    // left out where buses don't come at a steady gap)
     const svc = (p.services || []).filter(x => x.trips && x.days), main = [...svc].sort((a, b) => b.trips - a.trips)[0];
     const timetable = svc.length ? {opening_hours: svc.map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ')} : {};
-    if (main && main.every) timetable.interval = hhmm(main.every);
-    const cond = svc.filter(x => x !== main && x.every && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
-    if (main && main.every && cond.length) timetable['interval:conditional'] = cond.join('; ');
+    if (main && main.every && main.steady) {
+      timetable.interval = hhmm(main.every);
+      const cond = svc.filter(x => x !== main && x.every && x.steady && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
+      if (cond.length) timetable['interval:conditional'] = cond.join('; ');
+    }
+    // OSM's own values, where they differ: a question, not an overwrite
+    const clash = Object.keys(timetable).filter(k => rels.some(a => a.tags[k] && a.tags[k] !== timetable[k]));
     // stops this merge leaves: in the relations now but not on the route, and candidates not picked. Those no
     // stop in the agency's data uses may be gone for real: offered for removal from OSM (after a look).
     // which stop in the agency's data each OSM stop is the likeliest match for
@@ -61,7 +66,7 @@ const Merge = {
     const picked = new Set(stops.filter(x => x.o).map(x => x.o.id));
     const unpicked = decide.filter(q => q.kind === 'which' && q.answer).flatMap(q => q.cands.map(c => ({o: c.o, sid: q.s.id}))).filter(x => !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
     const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
-    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, gone};
+    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, gone};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
   goneStops(x) {
@@ -133,7 +138,7 @@ const Merge = {
     const near = p.stops.map(id => D.stops[id]).reduce((best, s) => { const dd = m([s.lon, s.lat], [b.lon, b.lat]); return !best || dd < best.d ? {s, d: dd} : best; }, null);
     return `an unnamed ${t.highway || 'road'}${t.service ? ' (' + t.service + ')' : ''}${near ? ` by ${near.s.name}` : ''}`;
   },
-  open(p) { S.merge = {pid: p.id, view: 'proposed', hours: false, answers: {}}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
+  open(p) { S.merge = {pid: p.id, view: 'proposed', hours: null, answers: {}}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
   close() { S.merge = null; render(); draw(); },
   show(view) { S.merge.view = view; render(); draw(); },
   /** On the map: the stops the merge takes out, as red rings. */
@@ -167,8 +172,9 @@ const Merge = {
           el('li', {}, `give it the feed's ${x.stops.length} stops in order` + (x.stale.length ? `; ${x.stale.length} it has now aren't on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
           el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
-          Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: S.merge.hours ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
-            ' and put the timetable on it: ', el('code', {}, Object.entries(x.timetable).map(([k, v]) => `${k}=${v}`).join('  ')))) : null)),
+          Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: this.hours(x) ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
+            ` and put the timetable on it (times at its first stop, ${D.stops[p.stops[0]].name}): `, el('code', {}, Object.entries(x.timetable).map(([k, v]) => `${k}=${v}`).join('  ')),
+            x.clash.length ? el('div', {class: 'muted small'}, 'OSM has ', el('code', {}, [...new Set(x.rels.flatMap(a => x.clash.filter(k => a.tags[k]).map(k => `${k}=${a.tags[k]}`)))].join('  ')), '. Ticking replaces it.') : null)) : null)),
       ...[x.decide.length ? this.decisions(x) : null, x.gone.length ? this.goneStops(x) : null,
       x.questions.length ? el('div', {class: 'muted small', style: 'margin:6px 0'}, `${x.questions.length} other stop question${x.questions.length > 1 ? 's' : ''} on this route (names, codes) don't change the route; settle them in Check stops: `,
         ...x.questions.slice(0, 5).flatMap((q, i) => [i ? ', ' : '', el('a', {href: '#', title: q.why, onclick: e => { e.preventDefault(); showStop(q.s.id); }}, q.s.name)]), x.questions.length > 5 ? ', …' : '') : null].filter(Boolean));   // DOM append writes 'null' for null
@@ -185,9 +191,12 @@ const Merge = {
     P.append(d);
   },
 
+  /** Timetable tags: in by default, unless OSM already has other values (then it's the user's call). */
+  hours(x) { return S.merge.hours != null ? S.merge.hours : !x.clash.length; },
+
   /** Split where needed, re-route on that, check the roads join up, then write the one relation. */
   async accept() {
-    const p = patternById(S.merge.pid), x = this.plan(p), hours = S.merge.hours;
+    const p = patternById(S.merge.pid), x = this.plan(p), hours = this.hours(x);
     const say = m => toast(m, 8000);
     Edits.hold(`one relation for route ${x.r.short}`);   // the splits and the relation: one undo
     try {
