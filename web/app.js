@@ -127,7 +127,7 @@ function initMap() {
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
     setTimeout(applyHash);   // after the layers below exist
-    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad', 'stale']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
@@ -138,6 +138,7 @@ function initMap() {
     map.addLayer({id: 'fixroad', type: 'line', source: 'fixroad', layout: {'line-cap': 'round'}, paint: {'line-color': ['get', 'color'], 'line-width': 9, 'line-opacity': 0.75}});
     map.addLayer({id: 'fixarrows', type: 'symbol', source: 'fixroad', layout: {'symbol-placement': 'line', 'symbol-spacing': 28, 'text-field': '›', 'text-size': 22, 'text-font': ['Open Sans Semibold'], 'text-keep-upright': false, 'text-allow-overlap': true},
       paint: {'text-color': '#fff'}});
+    map.addLayer({id: 'stale', type: 'circle', source: 'stale', paint: {'circle-radius': 10, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': css('--miss'), 'circle-stroke-width': 3}});
     map.addLayer({id: 'tether', type: 'line', source: 'tether', paint: {'line-color': css('--muted'), 'line-width': 1, 'line-dasharray': [1, 1]}});
     // the agency's position: a soft hollow ring, deliberately not a hard dot
     map.addLayer({id: 'gtfs', type: 'circle', source: 'gtfs', paint: {'circle-radius': ['case', ['get', 'on'], 9, 7], 'circle-color': ['get', 'color'], 'circle-opacity': 0.12, 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.7}});
@@ -215,12 +216,15 @@ function draw() {
   const p = S.pattern && patternById(S.pattern);
   set('edits', editFeatures());
   set('fixroad', typeof Fix !== 'undefined' ? Fix.features() : []);
+  set('stale', typeof Merge !== 'undefined' ? Merge.staleFeatures() : []);
   Roads.drawAll();
   if (p) {
     const r = routedOf(p);
     set('shape', p.shape.length ? [line(p.shape)] : []);
-    set('routed', r.geometry.length ? [line(r.geometry)] : []);
-    set('rel', p.relations.flatMap(a => a.geometry.map(g => line(g, {id: a.id}))));
+    // proposing a merge: show the relations as they are, or the route as the one relation would have it
+    const mv = S.merge && S.merge.pid === p.id ? S.merge.view : null;
+    set('routed', r.geometry.length && mv !== 'now' ? [line(r.geometry)] : []);
+    set('rel', mv === 'proposed' ? [] : p.relations.flatMap(a => a.geometry.map(g => line(g, {id: a.id}))));
     set('div', r.divergences.map(d => point([d.lon, d.lat], {d: JSON.stringify({...d, shape: undefined, path: undefined})})));
     set('divpath', r.divergences.flatMap(d => [d.shape && d.shape.length > 1 ? line(d.shape) : null, d.path && d.path.length > 1 ? line(d.path) : null].filter(Boolean)));
     const f = stopFeatures(p.stops);
@@ -315,7 +319,7 @@ function render() {
   const P = $('#panel'); P.innerHTML = '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
-  if (S.tab === 'routes') S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
+  if (S.tab === 'routes') S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
   else if (S.tab === 'changes') renderChanges(P);
@@ -438,7 +442,7 @@ function showDivergence(dv) {
 }
 
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null;
+  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null;
   liveRoute();   // with road edits waiting in Changes, show the route as it would run
   render(); draw();
   const p = patternById(id);
@@ -451,6 +455,11 @@ function renderPattern(P, p) {
   const d = el('div', {class: 'detail'});
   d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
   d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · ${p.loop && p.loop.length ? 'loop' : 'direction ' + p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
+  {
+    const live = p.relations.filter(a => (Edits.get('r' + a.id) || {}).kind !== 'delete');
+    if (live.length > 1) d.append(el('div', {class: 'note'}, el('b', {}, `${live.length} OSM relations for this one route. `),
+      'Probably one per timetable; GTFS says it\'s the same route every day. ', el('button', {class: 'b primary tiny', onclick: () => Merge.open(p)}, 'See the proposed merge')));
+  }
   if (p.loop && p.loop.length) d.append(el('div', {class: 'note'}, `One loop, run by one bus: the feed splits each trip in two at ${D.stops[p.split_at] ? D.stops[p.split_at].name : 'a stop'}, but the bus carries straight on and passengers ride through. In OSM it's one round-trip relation.`));
   if (p.temporary) d.append(el('div', {class: 'note warn'}, 'Only run by a short-dated service: a detour or a special. Usually not mapped; see ? for the convention.'));
   const sc = rt.score || {};

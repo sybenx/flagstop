@@ -31,7 +31,8 @@ const Edits = {
   save() {
     const now = this.state();
     if (this.committed != null && now !== this.committed) {
-      if (!this.batching) {
+      if (!this.batching && !this.held) {
+        if (this.holding) this.held = true;   // the first save of a held action makes its one undo step
         this.history.push({state: this.committed, label: this.nextLabel});
         if (this.history.length > 200) this.history.shift();
         this.future = [];
@@ -46,8 +47,13 @@ const Edits = {
     try { localStorage.setItem(this.key, now); } catch (e) {}
     this.listeners.forEach(f => f());
   },
-  /** Name the action about to be saved, for the undo toast ("Undone: split 500 North"). */
-  label(text) { this.nextLabel = text; },
+  /** Name the action about to be saved, for the undo toast ("Undone: split 500 North"). Inside a held
+      action, its own name stands. */
+  label(text) { if (!this.holding) this.nextLabel = text; },
+  /** One action in several steps over time (splits, then a relation): every save until release() is
+      one undo step, named `text`. */
+  hold(text) { this.nextLabel = text; this.holding = true; this.held = false; },
+  release() { this.holding = false; this.held = false; this.nextLabel = null; },
   restore(json) { const s = JSON.parse(json); this.ops = s.ops; this.nextId = s.nextId; this.decisions = s.decisions; this.roads = s.roads || []; this.committed = json; this.persist(json); },
   /** What changed between two states, in a few words, when the action had no name. */
   describe(a, b) {

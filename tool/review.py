@@ -16,6 +16,24 @@ import gtfs, osm, stops as stopmatch, routes as routing, compare
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def days_of(c):
+    """calendar.txt row -> 'Mo-Fr', 'Sa', 'Mo,We', … in OSM's opening_hours spelling."""
+    if not c:
+        return ''
+    names = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+    on = [c.get(k) == '1' for k in ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')]
+    out, i = [], 0
+    while i < 7:
+        if not on[i]:
+            i += 1; continue
+        j = i
+        while j + 1 < 7 and on[j + 1]:
+            j += 1
+        out.append(names[i] if i == j else f'{names[i]}{"-" if j > i + 1 else ","}{names[j]}')
+        i = j + 1
+    return ','.join(out)
+
+
 def stop_sides(feed, traced, match, osm_stops, kerb=3):
     """Where each stop sits relative to the buses calling there: 'right' (the kerb they pull into; traffic
     drives on the right), 'left' (across the street), or None (on the line, or no path). Judged on the path
@@ -118,6 +136,7 @@ def main():
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
             'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops, 'loop': p.loop, 'split_at': p.split_at,
+            'services': [{'id': sid, 'days': days_of(feed.calendar.get(sid)), 'first': h[0], 'last': h[1], 'trips': h[2]} for sid, h in sorted(p.hours.items())],
             'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
             'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
             'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},

@@ -65,6 +65,7 @@ class Pattern:
     alt_stops: list = field(default_factory=list)    # stops only those runs call at (a different terminal bay)
     loop: list = field(default_factory=list)         # joined from these patterns: one bus runs them back to back
     split_at: str = ''                               # ... and the feed splits the trip at this stop
+    hours: dict = field(default_factory=dict)        # service_id -> [first departure s, last arrival s, trips]
 
 
 @dataclass
@@ -195,6 +196,15 @@ def load(path):
             parent.alt_stops.extend(x for x in p.stops if x not in parent.stops)
         else:
             kept.append(p)
+    for tid, p in of_trip.items():
+        xs = sorted(times.get(tid, []))
+        if not p or not xs:
+            continue
+        dep, arr = xs[0][2] if xs[0][2] is not None else xs[0][1], xs[-1][1] if xs[-1][1] is not None else xs[-1][2]
+        if dep is None or arr is None:
+            continue
+        h = p.hours.setdefault(trips[tid].get('service_id', ''), [dep, arr, 0])
+        h[0], h[1], h[2] = min(h[0], dep), max(h[1], arr), h[2] + 1
     patterns = _join_loops(kept, trips, times, of_trip, shapes)
     # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
     def days(sid):
@@ -264,7 +274,8 @@ def _join_loops(patterns, trips, times, of_trip, shapes):
         out.append(Pattern(id=f'{a.id}+{b.id}', route_id=a.route_id, direction='loop', headsign=a.headsign or b.headsign,
                            shape_id=sid, stops=a.stops + b.stops[1:], trips=min(a.trips, b.trips), service_ids=a.service_ids | b.service_ids,
                            direction_name=a.direction_name, variants=a.variants + b.variants, alt_shapes=a.alt_shapes + b.alt_shapes,
-                           alt_stops=a.alt_stops + b.alt_stops, loop=[a.id, b.id], split_at=b.stops[0]))
+                           alt_stops=a.alt_stops + b.alt_stops, loop=[a.id, b.id], split_at=b.stops[0],
+                           hours={sid: [a.hours[sid][0], b.hours.get(sid, a.hours[sid])[1], a.hours[sid][2]] for sid in a.hours}))
         joined |= {id(a), id(b)}
     return out
 
