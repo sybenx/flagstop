@@ -4,6 +4,7 @@ A relation is paired with the pattern whose shape its ways cover best (ref agree
 one). Then, for the pair: stops the relation lacks or has extra, stops out of order, ways off the
 shape, tags to add (the GTFS tagging scheme), and duplicates (two relations for one pattern).
 """
+import re
 from routes import Polyline, DIVERGE, metres
 
 MASTER_TAGS = ('ref', 'name', 'network', 'operator', 'colour')
@@ -272,12 +273,18 @@ def proposed_relation_tags(feed, p, stop_match, conv=None):
     t = {'type': 'route', 'route': {'0': 'tram', '1': 'subway', '2': 'train', '3': 'bus', '11': 'trolleybus'}.get(route.type, 'bus'),
          'public_transport:version': '2', 'ref': route.short, 'operator': conv.get('operator') or agency,
          'from': first.desc or first.name, 'to': last.desc or last.name,
-         'gtfs:route_id': p.route_id, 'gtfs:shape_id': p.shape_id}
+         'gtfs:route_id': p.route_id, 'gtfs:shape_id': p.shape_id.replace('+', ';')}
+    if p.loop or p.stops[0] == p.stops[-1]:
+        t['roundtrip'] = 'yes'   # one bus round and back to where it started (a loop the feed splits in two included)
     for k in ('network', 'network:wikidata', 'operator:wikidata'):
         if conv.get(k):
             t[k] = conv[k]
     name = f"{'Bus' if t['route'] == 'bus' else t['route'].title()} {route.short}"
-    if p.headsign:
+    directional = re.compile(r'^(north|south|east|west)bound$|\b(in|out)bound\b|^route \d+$', re.I)
+    if p.loop:
+        # a loop has no direction to name it by: the places it serves ('Hyrum, Millville, Providence')
+        name += ': ' + next((x for x in (route.desc, p.headsign, route.long) if x and not directional.search(x)), route.long or route.short)
+    elif p.headsign:
         name += f': {p.headsign}'
     elif p.direction_name:
         name += f': {p.direction_name}'

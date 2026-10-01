@@ -13,6 +13,7 @@
 'use strict';
 
 const PT_ROUTES = new Set(['bus', 'trolleybus', 'share_taxi', 'minibus', 'coach', 'tram', 'light_rail']);
+const DIRECTIONAL = /:(forward|backward|left|right)\b|^direction$|:direction$|^incline$/;   // tags that mean something relative to a way's direction
 const PATHS = new Set(['footway', 'path', 'steps', 'cycleway', 'pedestrian', 'bridleway', 'corridor', 'platform', 'track']);
 const MIN_ZOOM = 17;       // the map call is capped at 0.25 square degrees and 50,000 nodes; a few streets is plenty
 const GAP_LIMIT = 800;     // m: longest stretch a repair may fill between two members of a route
@@ -315,9 +316,15 @@ const Roads = {
     for (const [id, w] of Object.entries(t.ways).map(([k, v]) => [+k, v])) {
       if (w.created) Edits.createWay(w.tags, w.nodes, note, id);
       else if (id < 0) { const op = Edits.get('new:w' + id); op.nodes = w.nodes; op.note = note; }
-      else this.modifyWay(id, {nodes: w.nodes}, note);
+      else {
+        const before = this.way(id).tags || {};
+        const changes = {nodes: w.nodes};
+        if (JSON.stringify(before) !== JSON.stringify(w.tags)) { changes.tags = w.tags; changes.removeTags = Object.keys(before).filter(k => !(k in w.tags)); }
+        this.modifyWay(id, changes, note);
+      }
     }
     for (const id of t.del) Edits.delete('node', id, this.baseNode(id), note);
+    if (this.undoes && Edits.get('w' + this.undoes.wid)) Edits.get('w' + this.undoes.wid).undoes = this.undoes.info;
     for (const r of repairs) {
       if (r.id < 0) { const op = Edits.get('new:r' + r.id); op.members = r.members; continue; }
       const b = this.rels[r.id];
@@ -349,6 +356,7 @@ const Roads = {
     } catch (e) { toast(e.message, 6000); console.error(e); }
     this.pick = null; this.sel = null; map.getCanvas().style.cursor = ''; this.card(null);
     render(); draw(); this.drawAll(); this.status();
+    liveRoute();
   },
 
 
@@ -387,6 +395,69 @@ const Roads = {
     });
   },
   /** A new road between two snapped spots. */
+  /** Turn a road round: its nodes the other way, and the tags that are relative to its direction swapped
+      (forward/backward, left/right), as iD does — so a one-way runs the other way and its lanes and sides
+      still describe the same road. */
+  async reverse(wid, context = null) {
+    // already changed in Changes: an ordinary reversal of that; otherwise, check whether this undoes someone's
+    const w = this.way(wid), back = Edits.get('w' + wid) ? null : await this.reversedFrom(wid);
+    const what = back ? `Turn ${this.label(w)} (w${wid}) back, as before changeset ${back.changeset}` : `Reverse ${this.label(w)} (w${wid})`;
+    // undoing someone's edit: remember whose, on the edit itself, so after upload they can be told
+    this.undoes = back ? {wid, info: {user: back.user, date: back.date, changeset: back.changeset, way: wid, name: this.label(w),
+      their: this.ways[wid] && this.ways[wid].version, restored: back.version, tags: Object.entries(w.tags).filter(([k]) => ['highway', 'junction', 'oneway'].includes(k)).map(([k, v]) => `${k}=${v}`).join(', '),
+      was: this.direction(w), now: this.direction({...w, ...this.turned(w, back)}), ...(context || {})}} : null;
+    await this.run(what, t => {
+      const cur = t.way(wid);
+      t.ways[wid] = {...cur, ...this.turned(cur, back)};
+      t.touched.add(wid);
+    });
+    this.undoes = null;
+  },
+  /** A road turned round -> {nodes, tags}. Undoing someone's reversal (back: the version before it), that
+      version's direction tags come back as they were; otherwise the direction tags swap, as iD does. */
+  turned(cur, back) {
+    let tags = {};
+    if (back) {
+      tags = {...cur.tags};
+      for (const k of new Set([...Object.keys(cur.tags), ...Object.keys(back.tags)])) if (DIRECTIONAL.test(k)) { if (k in back.tags) tags[k] = back.tags[k]; else delete tags[k]; }
+    } else {
+      const swap = k => k.replace(/:(forward|backward|left|right)\b/g, (_, x) => ':' + {forward: 'backward', backward: 'forward', left: 'right', right: 'left'}[x]);
+      for (const [k, v] of Object.entries(cur.tags)) {
+        let nv = v;
+        if (k === 'direction' || k.endsWith(':direction')) nv = {forward: 'backward', backward: 'forward'}[v] || v;
+        if (k === 'incline') nv = {up: 'down', down: 'up'}[v] || (/^-?\d/.test(v) ? (v.startsWith('-') ? v.slice(1) : '-' + v) : v);
+        tags[swap(k)] = nv;
+      }
+    }
+    return {nodes: [...cur.nodes].reverse(), tags};
+  },
+  turnedBy: {},   // way -> the version before someone reversed it: {version, tags, user, date, changeset}
+  /** Was this way, as it is now, made by reversing an earlier version? Then that's what turning it round restores. */
+  async reversedFrom(wid) {
+    if (wid < 0 || wid in this.turnedBy) return this.turnedBy[wid];
+    this.turnedBy[wid] = null;
+    try {
+      const r = await fetch(`${OSM_API}/api/0.6/way/${wid}/history.json`);
+      const vs = (await r.json()).elements, cur = vs[vs.length - 1];
+      for (let i = vs.length - 2; i >= 0; i--) {
+        if (JSON.stringify(vs[i].nodes) === JSON.stringify([...cur.nodes].reverse())) {
+          const by = vs.find(v => v.version > vs[i].version && JSON.stringify(v.nodes) === JSON.stringify(cur.nodes));
+          this.turnedBy[wid] = {version: vs[i].version, tags: vs[i].tags || {}, user: by.user, date: by.timestamp.slice(0, 10), changeset: by.changeset};
+          break;
+        }
+      }
+    } catch (e) { /* no history to go on: an ordinary reversal */ }
+    return this.turnedBy[wid];
+  },
+  /** Which way a road lets traffic go, as a word: 'one-way north', 'two-way'. */
+  direction(w) {
+    const d = this.dir(w.tags);
+    if (!d) return 'two-way';
+    const t = this.tx(), a = t.node(w.nodes[0]), b = t.node(w.nodes[w.nodes.length - 1]);
+    if (!a || !b) return 'one-way';
+    const [p, q] = d > 0 ? [a, b] : [b, a];
+    return 'one-way ' + compass([p.lon, p.lat], [q.lon, q.lat]);
+  },
   segment(a, b, tags) {
     return this.run(`Add ${tags.highway || 'road'}${tags.name ? ' ' + tags.name : ''}`, t => {
       const na = this.nodeFor(t, a), nb = this.nodeFor(t, b);
@@ -411,6 +482,10 @@ const Roads = {
     map.addLayer({id: 'roadarms', type: 'line', source: 'roadarms', filter: ['!', ['get', 'through']], layout: {'line-cap': 'round'},
       paint: {'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'hover'], 12, 8], 'line-opacity': ['case', ['get', 'dragging'], 0.25, 1]}}, below);
     map.addLayer({id: 'roadarms-thru', type: 'line', source: 'roadarms', filter: ['get', 'through'], paint: {'line-color': ['get', 'color'], 'line-width': 7, 'line-opacity': 0.9, 'line-dasharray': [1.2, 0.8]}}, below);
+    // which way one-way roads go, as arrows along them: a road pointing the wrong way shows
+    map.addLayer({id: 'roadarrows', type: 'symbol', source: 'roads', filter: ['!=', ['get', 'oneway'], 0], minzoom: 16,
+      layout: {'symbol-placement': 'line', 'symbol-spacing': 45, 'text-field': ['case', ['>', ['get', 'oneway'], 0], '›', '‹'], 'text-size': 18, 'text-font': ['Open Sans Semibold'],
+        'text-keep-upright': false, 'text-allow-overlap': true}, paint: {'text-color': ['case', ['get', 'route'], css('--rel'), '#2b2b2b'], 'text-halo-color': '#fff', 'text-halo-width': 1.5}}, below);
     map.addLayer({id: 'roadnodes', type: 'circle', source: 'roadnodes', paint: {'circle-radius': ['case', ['get', 'sel'], 8, ['get', 'junction'], 5, 3.5], 'circle-color': ['case', ['get', 'edited'], css('--edit'), '#fff'],
       'circle-stroke-color': ['case', ['get', 'sel'], '#1c1b18', '#2b2b2b'], 'circle-stroke-width': ['case', ['get', 'sel'], 3, 1.5]}}, below);
     // while dragging: the road as it would be, its end following the pointer
@@ -508,11 +583,16 @@ const Roads = {
       if (!w || !w.nodes || !w.tags.highway || w.outside) continue;
       const path = PATHS.has(w.tags.highway);
       const coords = w.nodes.map(n => t.node(n)).filter(Boolean).map(n => [n.lon, n.lat]);
-      if (coords.length > 1) lines.push(line(coords, {id, path, route: inRel.has(id), edited: edited.has(id)}));
+      if (coords.length > 1) lines.push(line(coords, {id, path, route: inRel.has(id), edited: edited.has(id), oneway: path ? 0 : this.dir(w.tags)}));
       if (!path) for (const n of w.nodes) used[n] = (used[n] || 0) + 1;
     }
     const pts = [];
+    // dots only where something can be done: junctions and road ends (and every point of a selected road),
+    // not every bend
+    const ends = new Set(), selWay = this.sel && this.sel.way != null && t.way(this.sel.way);
+    for (const id of t.wayIds()) { const w = t.way(id); if (w && w.nodes && w.tags.highway && !PATHS.has(w.tags.highway)) { ends.add(w.nodes[0]); ends.add(w.nodes[w.nodes.length - 1]); } }
     if (map.getZoom() >= MIN_ZOOM - 1) for (const [id, k] of Object.entries(used)) {
+      if (k < 2 && !ends.has(+id) && !(selWay && selWay.nodes.includes(+id)) && !(this.sel && this.sel.node === +id)) continue;
       const n = t.node(+id); if (!n) continue;
       pts.push(point([n.lon, n.lat], {id: +id, junction: k > 1, sel: this.sel && this.sel.node === +id, edited: !!(Edits.get('n' + id) || Edits.get('new:n' + id))}));
     }
@@ -722,15 +802,25 @@ const Roads = {
   },
   selectWay(wid, ll) {
     const w = this.way(wid), s = this.snap(ll);
+    // if someone turned this road round, say so on the button, and turning it back restores what it was
+    if (this.dir(w.tags) && !Edits.get('w' + wid)) this.reversedFrom(wid).then(b => {
+      const btn = $('#reversebtn');
+      if (b && btn && this.sel && this.sel.way === wid) {
+        btn.textContent = `⇄ turn it back to ${this.direction({...w, nodes: [...w.nodes].reverse()})}, as before ${b.user}'s edit (${b.date})`;
+        btn.title = `Version ${b.version} ran the other way; changeset ${b.changeset} reversed it. Turning it back restores version ${b.version}'s direction and side tags.`;
+      }
+    });
     this.sel = {way: wid}; this.drawAll();
     const rc = this.routeCount(wid);
     this.card(el('div', {},
-      el('div', {}, el('b', {}, this.label(w)), ' ', wid > 0 ? el('a', {href: `https://www.openstreetmap.org/way/${wid}`, target: '_blank', class: 'muted'}, `w${wid}`) : el('span', {class: 'muted'}, '(new)'), rc ? el('span', {class: 'muted'}, ' · ' + rc) : null),
+      el('div', {}, el('b', {}, this.label(w)), ' ', wid > 0 ? el('a', {href: `https://www.openstreetmap.org/way/${wid}`, target: '_blank', class: 'muted'}, `w${wid}`) : el('span', {class: 'muted'}, '(new)'),
+        el('span', {class: 'muted'}, ' · ' + this.direction(w)), rc ? el('span', {class: 'muted'}, ' · ' + rc) : null),
       el('div', {class: 'muted mono', style: 'margin:4px 0'}, Object.entries(w.tags).map(([k, v]) => `${k}=${v}`).join('  ')),
       el('div', {class: 'roadhint'}, 'Click one of its white points to reconnect or move it.'),
       el('div', {class: 'btns'},
         s && s.way === wid && w.nodes[0] !== w.nodes[w.nodes.length - 1] ? el('button', {class: 'b tiny', title: 'where you clicked', onclick: () => this.splitHere(s)}, '✂ split where I clicked') : null,
         s && s.way === wid ? el('button', {class: 'b tiny', onclick: () => this.startPick({kind: 'segment', from: s, hint: 'Click where the new road ends'})}, '+ road from here') : null,
+        this.dir(w.tags) ? el('button', {class: 'b tiny', id: 'reversebtn', title: 'Turn it round: traffic goes the other way. Routes on it are checked.', onclick: () => this.reverse(wid)}, `⇄ make it ${this.direction({...w, nodes: [...w.nodes].reverse()})}`) : null,
         wid > 0 ? el('button', {class: 'b tiny', onclick: () => wayTagEditor(wid, w.tags, [ll.lng, ll.lat], {version: this.ways[wid].version, tags: this.ways[wid].tags, nodes: this.ways[wid].nodes})}, 'edit tags') : null)));
   },
   segmentForm(from, to, ll) {

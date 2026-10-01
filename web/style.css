@@ -148,3 +148,16 @@ button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
 .pickchip:hover { border-color: var(--accent); }
 .reviewrow .kept { display: inline-flex; gap: 4px; margin: 0; }
 .reviewrow .kept .pickchip { border-style: dashed; }
+
+/* a proposed fix: OSM now / why / should be */
+.fixcard .fixstep { margin: 10px 0; padding: 8px 10px; border-radius: 6px; border-left: 4px solid var(--line); background: color-mix(in srgb, var(--line) 25%, transparent); }
+.fixcard .fixstep .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+.fixcard .fixstep.now { border-left-color: var(--miss); }
+.fixcard .fixstep.want { border-left-color: var(--ok); }
+.fixcard .fixstep > div + div { margin-top: 4px; }
+.fixcard .seg { display: inline-flex; margin: 6px 0 4px; }
+.fixcard .seg button.b { border-radius: 0; }
+.fixcard .seg button.b:first-child { border-radius: 5px 0 0 5px; }
+.fixcard .seg button.b:last-child { border-radius: 0 5px 5px 0; border-left: none; }
+.fixcard .seg button.b.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.note { margin: 8px 0; padding: 6px 8px; border-radius: 5px; background: color-mix(in srgb, var(--edit) 14%, transparent); font-size: 12px; }

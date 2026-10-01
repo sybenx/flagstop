@@ -190,6 +190,17 @@ const Edits = {
     token() { return localStorage.getItem('flagstop.osm.token') || ''; },
     user() { try { return JSON.parse(localStorage.getItem('flagstop.osm.user') || 'null'); } catch (e) { return null; } },
     signOut() { localStorage.removeItem('flagstop.osm.token'); localStorage.removeItem('flagstop.osm.user'); },
+    /** Does OSM still take the stored sign-in? Once per page load; forgets it if not. -> true/false/null (can't tell) */
+    async check() {
+      if (!this.token()) return false;
+      if (this.checked != null) return this.checked;
+      try {
+        const r = await fetch(OSM_API + '/api/0.6/user/details.json', {headers: {Authorization: 'Bearer ' + this.token()}});
+        if (r.status === 401) { this.signOut(); this.checked = false; this.lost = true; return false; }
+        if (r.ok) { localStorage.setItem('flagstop.osm.user', JSON.stringify((await r.json()).user)); this.checked = true; return true; }
+      } catch (e) { /* offline: can't tell */ }
+      return null;
+    },
     redirect() { return location.origin + location.pathname; },
     async signIn() {
       const id = this.clientId();
@@ -223,6 +234,9 @@ const Edits = {
   // --- upload ------------------------------------------------------------
   async api(path, opts = {}) {
     const r = await fetch(OSM_API + path, {...opts, headers: {Authorization: 'Bearer ' + this.auth.token(), ...(opts.headers || {})}});
+    // 401: OSM no longer takes this sign-in (the app was revoked or re-registered, or the token expired).
+    // Forget it, so the page asks for a fresh one instead of sending the dead one again; the changes stay.
+    if (r.status === 401) { this.auth.signOut(); throw Object.assign(new Error("OSM didn't accept the sign-in: it was revoked or has expired"), {signedOut: true}); }
     if (!r.ok) throw new Error(`${opts.method || 'GET'} ${path}: ${r.status} ${(await r.text()).slice(0, 300)}`);
     return r;
   },
@@ -276,10 +290,13 @@ const Edits = {
     // in a way): the diffResult then gives it a new_id instead of none. Those stay in the basket.
     const skipped = Object.entries(this.ops).filter(([, op]) => op.kind === 'delete' &&
       [...diff.getElementsByTagName(op.type)].some(e => e.getAttribute('old_id') === String(op.id) && e.hasAttribute('new_id'))).map(([key]) => key);
+
+    // edits of someone else's that this changeset undid: the page offers a record to leave on theirs
+    const undid = Object.values(this.ops).filter(op => op.undoes).map(op => op.undoes);
     for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
     this.roads = [];
     this.save();
     this.history = []; this.future = [];   // what went to OSM isn't taken back from here
-    return {id, skipped};
+    return {id, skipped, undid};
   },
 };

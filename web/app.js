@@ -127,13 +127,17 @@ function initMap() {
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
     setTimeout(applyHash);   // after the layers below exist
-    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
     map.addLayer({id: 'leg', type: 'line', source: 'leg', paint: {'line-color': css('--accent'), 'line-width': 8, 'line-opacity': 0.3}});
     map.addLayer({id: 'divpath', type: 'line', source: 'divpath', paint: {'line-color': css('--div'), 'line-width': 5, 'line-opacity': 0.6}});
     map.addLayer({id: 'div', type: 'circle', source: 'div', paint: {'circle-radius': 11, 'circle-color': css('--div'), 'circle-opacity': 0.25, 'circle-stroke-color': css('--div'), 'circle-stroke-width': 2}});
+    // a proposed fix: the road, red as OSM has it or green as it would be, arrows the way traffic may go
+    map.addLayer({id: 'fixroad', type: 'line', source: 'fixroad', layout: {'line-cap': 'round'}, paint: {'line-color': ['get', 'color'], 'line-width': 9, 'line-opacity': 0.75}});
+    map.addLayer({id: 'fixarrows', type: 'symbol', source: 'fixroad', layout: {'symbol-placement': 'line', 'symbol-spacing': 28, 'text-field': '›', 'text-size': 22, 'text-font': ['Open Sans Semibold'], 'text-keep-upright': false, 'text-allow-overlap': true},
+      paint: {'text-color': '#fff'}});
     map.addLayer({id: 'tether', type: 'line', source: 'tether', paint: {'line-color': css('--muted'), 'line-width': 1, 'line-dasharray': [1, 1]}});
     // the agency's position: a soft hollow ring, deliberately not a hard dot
     map.addLayer({id: 'gtfs', type: 'circle', source: 'gtfs', paint: {'circle-radius': ['case', ['get', 'on'], 9, 7], 'circle-color': ['get', 'color'], 'circle-opacity': 0.12, 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.7}});
@@ -210,6 +214,7 @@ function draw() {
   if (!map || !map.getSource('stops')) return;
   const p = S.pattern && patternById(S.pattern);
   set('edits', editFeatures());
+  set('fixroad', typeof Fix !== 'undefined' ? Fix.features() : []);
   Roads.drawAll();
   if (p) {
     const r = routedOf(p);
@@ -245,15 +250,23 @@ function popupOsm(id, ll) {
     el('b', {}, t.name || '(no name)'), el('div', {class: 'muted'}, `${id} · ${Object.entries(t).filter(([k]) => ['ref', 'route_ref', 'highway', 'public_transport', 'operator', 'network'].includes(k)).map(([k, v]) => k + '=' + v).join(' · ')}`),
     el('div', {}, el('a', {href: osmLink(id), target: '_blank'}, 'osm.org'), ' · ', editorButtons({lon: o.lon, lat: o.lat, select: [id]}, {small: true})))).addTo(map);
 }
+// What a divergence means, in words: the map stopping the bus, not the bus going somewhere else.
+const divTitle = d => d.kind === 'no-path' ? 'no way through on the map' : d.kind === 'uncovered' ? 'line not followed' : "bus can't follow the line";
 function popupDiv(d, ll) {
   const box = el('div', {});
-  box.append(el('b', {}, d.kind === 'no-path' ? 'no path' : d.kind === 'uncovered' ? 'line not followed' : 'detour'), ` · ${d.length} m${d.max ? ` (up to ${d.max} m off)` : ''}`, el('div', {}, d.why));
+  box.append(el('b', {}, divTitle(d)), ` · ${d.length} m${d.max ? ` (up to ${d.max} m off)` : ''}`, el('div', {}, d.why),
+    d.kind === 'detour' ? el('div', {class: 'muted', style: 'margin-top:4px'}, 'The blue line goes round because of this: it\'s the nearest way a bus could legally drive on the map as it is, not a suggested route. Fix the map and it follows the orange line again.') : null);
+  // the fix first: flagstop's proposal, shown as before and after, for a yes or no
+  if (d.fix && S.routedBy !== 'changes') box.append(el('div', {style: 'margin-top:8px'}, el('button', {class: 'b primary', onclick: () => Fix.open(d)}, `See the fix: ${d.fix.name} ${d.fix.want}`)));
+  // the roads under it, for looking closer: folded away
+  const list = el('details', {class: 'small', style: 'margin-top:6px'}, el('summary', {}, `the ${d.ways.length} road${d.ways.length === 1 ? '' : 's'} here`));
   for (const w of d.ways) {
     const t = (d.way_tags || {})[w] || {};
-    const row = el('div', {class: 'small', style: 'margin-top:4px'}, el('a', {href: 'https://www.openstreetmap.org/way/' + w, target: '_blank'}, 'w' + w), ' ', el('span', {class: 'muted'}, `${t.highway || ''} ${t.name || ''} ${t.oneway ? 'oneway=' + t.oneway : ''} ${t.access ? 'access=' + t.access : ''}`));
+    const row = el('div', {style: 'margin-top:3px'}, el('a', {href: 'https://www.openstreetmap.org/way/' + w, target: '_blank'}, 'w' + w), ' ', el('span', {class: 'muted'}, `${t.highway || ''} ${t.name || ''} ${t.oneway ? 'oneway=' + t.oneway : ''} ${t.access ? 'access=' + t.access : ''}`));
     row.append(' ', el('a', {href: '#', onclick: e => { e.preventDefault(); wayTagEditor(w, t, [d.lon, d.lat]); }}, 'edit tags'));
-    box.append(row);
+    list.append(row);
   }
+  if (d.ways.length) box.append(list);
   box.append(el('div', {style: 'margin-top:6px'}, el('button', {class: 'b primary tiny', style: 'margin-right:4px', onclick: () => { document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); Roads.editAt([d.lon, d.lat]); }}, 'Edit roads here'),
     editorButtons({lon: d.lon, lat: d.lat, zoom: 17, select: d.ways.map(w => 'w' + w), pattern: patternById(S.pattern), pts: d.shape, comment: `Bus route ${routeOf(patternById(S.pattern)).short}: ${d.why.slice(0, 80)}`}, {small: true})));
   new maplibregl.Popup({closeButton: true, maxWidth: '360px'}).setLngLat(ll).setDOMContent(box).addTo(map);
@@ -290,12 +303,8 @@ function wayTagEditor(wid, tags, at, base) {
 async function addVia(v) { S.vias.push(v); await retrace(); }
 async function retrace() {
   const p = patternById(S.pattern);
-  const q = new URLSearchParams({pattern: p.id});
-  for (const v of S.vias) q.append('via', v.join(','));
   try {
-    const r = await fetch('/api/trace?' + q.toString());
-    if (!r.ok) throw new Error((await r.json()).error || r.status);
-    S.routed = await r.json();
+    S.routed = await traceWith(p.id, {}, S.vias); S.routedBy = 'vias';   // with what's in Changes, too
     toast(`Re-routed through ${S.vias.length} via point${S.vias.length === 1 ? '' : 's'}: ${S.routed.ways.length} ways`);
   } catch (e) { toast('Re-routing needs tool/serve.py running with the feed loaded (' + e.message + ')', 5000); S.vias.pop(); }
   render(); draw();
@@ -306,7 +315,7 @@ function render() {
   const P = $('#panel'); P.innerHTML = '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
-  if (S.tab === 'routes') S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
+  if (S.tab === 'routes') S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
   else if (S.tab === 'changes') renderChanges(P);
@@ -344,6 +353,31 @@ function renderRoutes(P) {
   }
 }
 
+/** After undoing someone's edit: a record of it for their changeset. It reads as what it is, tool output:
+    facts (ids, versions, changesets, effect), no greeting, no thanks. The reviewer posts it, or doesn't. */
+function revertNote(u, newId) {
+  const dir = u.now.replace('one-way ', '');
+  const text = `[flagstop] Reverted direction of way ${u.way} (${u.name}) in changeset ${newId}. This edit made it ${u.was}, leaving no ${dir}bound way here.${u.route ? ` Used by bus route ${u.route}.` : ''}`;
+  const ta = el('textarea', {rows: 3, style: 'width:100%;margin-top:4px'}); ta.value = text;
+  return el('div', {class: 'note', style: 'margin-top:10px'},
+    el('b', {}, `Record for ${u.user}'s changeset ${u.changeset}`), el('div', {class: 'muted'}, 'This upload undid part of it. To leave a record there, copy this into the comment box on their changeset:'),
+    ta, el('div', {class: 'btns'},
+      el('button', {class: 'b tiny', onclick: () => navigator.clipboard.writeText(ta.value).then(() => toast('Copied'))}, 'Copy'),
+      el('a', {class: 'b tiny', href: `https://www.openstreetmap.org/changeset/${u.changeset}`, target: '_blank', style: 'text-decoration:none'}, `Open changeset ${u.changeset}`)));
+}
+
+/** Fetch OSM again and rebuild the review on the server, then show it. */
+async function refreshOSM() {
+  try {
+    let st = await (await fetch('/api/refresh', {method: 'POST'})).json();
+    if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
+    toast('Fetching OSM again and rebuilding the review: a minute or two…', 120000);
+    while (st.running) { await new Promise(r => setTimeout(r, 3000)); st = await (await fetch('/api/refresh')).json(); }
+    if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
+    location.reload();
+  } catch (e) { toast('Refreshing needs tool/serve.py running (' + e.message + ')', 6000); }
+}
+
 // ---------- undo / redo: every change to the basket, stop tags to road edits ----------
 function undoRedo(which) {
   const what = which === 'undo' ? Edits.undo() : Edits.redo();
@@ -351,6 +385,7 @@ function undoRedo(which) {
   toast(`${which === 'undo' ? 'Undone' : 'Redone'}: ${what}`);
   if (Roads.sel) Roads.deselect();   // what was selected may be gone (a new node) or somewhere else now
   render(); draw(); Roads.status();
+  liveRoute();
 }
 function undoBar() {
   const b = $('#undobar'); if (!b) return;
@@ -387,19 +422,24 @@ function syncHash() {
 }
 function applyHash() {
   hashRead = true;
-  const q = new URLSearchParams(location.hash.slice(1));
+  const q = new URLSearchParams(location.hash.slice(1).replace(/\+/g, '%2B'));   // a loop's id has a '+': not a space
   if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }
   else if (q.get('pattern') && patternById(q.get('pattern'))) {
     selectPattern(q.get('pattern'));
     const dv = patternById(q.get('pattern')).routed.divergences[+q.get('div')];
-    if (q.get('div') != null && dv) { S.div = +q.get('div'); render(); showDivergence(dv); }
+    if (q.get('div') != null && dv) { S.div = +q.get('div'); render(); map.once('moveend', () => showDivergence(dv)); }
   } else if (q.get('stop') && D.stops[q.get('stop')]) showStop(q.get('stop'));
   else if (['stops', 'extra', 'changes', 'about'].includes(q.get('tab'))) { S.tab = q.get('tab'); render(); draw(); }
 }
-function showDivergence(dv) { fit(dv.shape && dv.shape.length ? dv.shape : [[dv.lon, dv.lat]], 120); popupDiv(dv, [dv.lon, dv.lat]); }
+function showDivergence(dv) {
+  document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
+  fit(dv.shape && dv.shape.length ? dv.shape : [[dv.lon, dv.lat]], 120);
+  map.once('moveend', () => popupDiv(dv, [dv.lon, dv.lat]));   // open it where it lands, not mid-flight
+}
 
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null;
+  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null;
+  liveRoute();   // with road edits waiting in Changes, show the route as it would run
   render(); draw();
   const p = patternById(id);
   fit(p.shape.length ? p.shape : p.stops.map(s => [D.stops[s].lon, D.stops[s].lat]));
@@ -410,7 +450,8 @@ function renderPattern(P, p) {
   P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
   const d = el('div', {class: 'detail'});
   d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
-  d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · direction ${p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
+  d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · ${p.loop && p.loop.length ? 'loop' : 'direction ' + p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
+  if (p.loop && p.loop.length) d.append(el('div', {class: 'note'}, `One loop, run by one bus: the feed splits each trip in two at ${D.stops[p.split_at] ? D.stops[p.split_at].name : 'a stop'}, but the bus carries straight on and passengers ride through. In OSM it's one round-trip relation.`));
   if (p.temporary) d.append(el('div', {class: 'note warn'}, 'Only run by a short-dated service: a detour or a special. Usually not mapped; see ? for the convention.'));
   const sc = rt.score || {};
   d.append(el('div', {class: 'kv'},
@@ -419,6 +460,7 @@ function renderPattern(P, p) {
     (!S.routed && (p.chain_breaks || []).length) ? el('span', {class: 'k'}, 'chain') : null,
     (!S.routed && (p.chain_breaks || []).length) ? el('span', {}, `${p.chain_breaks.filter(b => b.kind === 'split').length} ways to split (Roads, on the map) before the relation validates `, ...chainLinks(p.chain_breaks.filter(b => b.kind !== 'split')), el('details', {style: 'display:inline'}, el('summary', {style: 'display:inline;cursor:pointer'}, 'where'), ' ', ...chainLinks(p.chain_breaks.filter(b => b.kind === 'split')))) : null));
 
+  if (S.routedBy === 'changes') d.append(el('div', {class: 'note'}, 'Shown with your road edits waiting in Changes: the route as it will run once they\'re uploaded.'));
   const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
   btns.append(el('button', {class: 'b primary', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
@@ -435,11 +477,11 @@ function renderPattern(P, p) {
   d.append(btns);
 
   if (rt.divergences.length) {
-    d.append(el('h2', {style: 'margin-left:0'}, `Where the map and the line disagree (${rt.divergences.length})`));
+    d.append(el('h2', {style: 'margin-left:0'}, `Where a bus can't follow the agency's line on the map (${rt.divergences.length})`));
     const ul = el('ul', {class: 'plain'});
     rt.divergences.forEach((dv, i) => {
       ul.append(el('li', {class: 'item click' + (S.div === i && !S.routed ? ' on' : ''), onclick: () => { if (!S.routed) { S.div = i; syncHash(); } showDivergence(dv); }},
-        el('div', {}, el('b', {}, dv.kind === 'no-path' ? 'no path' : dv.kind === 'uncovered' ? 'line not followed' : 'detour'), ` · ${dv.length} m`, dv.max ? el('span', {class: 'muted'}, ` · up to ${dv.max} m off`) : null,
+        el('div', {}, el('b', {}, divTitle(dv)), ` · ${dv.length} m`, dv.max ? el('span', {class: 'muted'}, ` · up to ${dv.max} m off`) : null,
           dv.leg != null ? el('span', {class: 'muted'}, ` · after stop ${dv.leg + 1}`) : null,
           S.routed ? null : el('a', {href: linkTo({pattern: p.id, div: i}), class: 'muted', style: 'float:right', title: 'link to this place', onclick: e => { e.stopPropagation(); e.preventDefault(); copyLink({pattern: p.id, div: i}); }}, 'link')),
         el('div', {class: 'why'}, dv.why)));
@@ -779,7 +821,8 @@ function changesetComment() {
   if (!routes.size) for (const o of nodes) for (const r of (D.stops[o.tags['gtfs:stop_id']] || {}).routes || []) routes.add((D.routes.find(x => x.id === r) || {}).short);
   // Road edits say what they did (split, reconnect, move, add); relations they repaired aren't listed again.
   const road = [...new Set(ops.filter(isRoad).map(o => o.note.slice(6)))];
-  if (road.length) parts.unshift(`${list(road.map(x => x.replace(/^\w/, c => c.toLowerCase())), 3)}; routes on them repaired`);
+  const repaired = ops.filter(o => o.type === 'relation' && isRoad(o)).length;
+  if (road.length) parts.unshift(`${list(road.map(x => x.replace(/^\w/, c => c.toLowerCase())), 3)}${repaired ? `; ${repaired} route relation${repaired > 1 ? 's' : ''} on them repaired` : ''}`);
   const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && Edits.diff(o).some(x => x.k !== 'nodes'));
   if (ways.length) parts.push(`${plural(ways.length, 'way')}: ${tagWords(ways.flatMap(o => Edits.diff(o)))}`);
   const rs = [...routes].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
@@ -820,6 +863,14 @@ function renderChanges(P) {
     }
     d.append(box);
   }
+  // the stored sign-in may have been revoked on OSM: check once, and say so rather than fail at upload
+  if (user && Edits.auth.checked == null) Edits.auth.check().then(ok => { if (ok === false) render(); });
+  if (Edits.auth.lost) d.append(el('div', {class: 'note', style: 'background:color-mix(in srgb, var(--miss) 14%, transparent)'},
+    el('b', {}, 'Signed out: '), "OSM didn't accept flagstop's sign-in any more (the app was revoked or re-registered on OSM, or the sign-in expired). Your changes are all still here. Sign in again below; if you registered flagstop again on OSM, paste its new client ID under \"Set up upload\" first."));
+  const undoing = ops.map(([, o]) => o.undoes).filter(Boolean);
+  if (undoing.length) d.append(el('div', {class: 'note'}, el('b', {}, 'Undoes someone\'s edit: '),
+    ...undoing.flatMap((u, i) => [i ? '; ' : '', `${u.name} as ${u.user} left it (`, el('a', {href: `https://www.openstreetmap.org/changeset/${u.changeset}`, target: '_blank'}, `changeset ${u.changeset}`), `, ${u.date})`]),
+    '. After upload you get a record of it to post on their changeset.'));
   if (ops.length) {
     const comment = el('input', {placeholder: 'changeset comment', value: S.comment || changesetComment(), style: 'width:100%', oninput: e => S.comment = e.target.value});
     d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment);
@@ -830,19 +881,23 @@ function renderChanges(P) {
       btns.append(el('button', {class: 'b primary', onclick: async () => {
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
         try {
-          const {id, skipped} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
-          status.innerHTML = `Uploaded: <a href="https://www.openstreetmap.org/changeset/${id}" target="_blank">changeset ${id}</a>. Re-run tool/review.py to see the map with your changes.`;
+          const {id, skipped, undid} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
+          status.innerHTML = `Uploaded: <a href="https://www.openstreetmap.org/changeset/${id}" target="_blank">changeset ${id}</a>. `;
+          for (const u of undid || []) status.append(revertNote(u, id));
+          status.append(el('div', {}, 'flagstop is still showing OSM from before the upload. ', el('button', {class: 'b primary tiny', onclick: () => refreshOSM()}, 'Refresh from OSM'),
+            el('span', {class: 'muted'}, ' (a minute or two; OSM\'s copy for this can lag a few minutes behind an upload)')));
           if (skipped.length) status.append(el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${skipped.join(', ')}: something still uses ${skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). ${skipped.length > 1 ? 'They stay' : 'It stays'} in Changes; remove the parent's reference, then upload again.`));
           render();
         } catch (e) {
           status.textContent = '';
           if (e.conflicts) { status.append(el('div', {style: 'color:var(--miss)'}, 'Not uploaded — these changed on OSM since flagstop looked:'), el('ul', {}, ...e.conflicts.map(c => el('li', {}, `${c.key}: ${c.why}`))), el('div', {}, 'Remove those lines or refresh the OSM data (tool/review.py --refresh) and decide again.')); }
+          else if (e.signedOut) { Edits.auth.lost = true; render(); }   // shows why, and the sign-in button
           else status.textContent = 'Upload failed: ' + e.message;
         }
       }}, `Upload to OSM as ${user.display_name}`));
       btns.append(el('button', {class: 'b', onclick: () => { Edits.auth.signOut(); render(); }}, 'sign out'));
     } else {
-      btns.append(el('button', {class: 'b primary', onclick: () => Edits.auth.signIn().catch(e => toast(e.message))}, 'Sign in to OSM to upload'));
+      btns.append(el('button', {class: 'b primary', onclick: () => { Edits.auth.lost = false; Edits.auth.signIn().catch(e => toast(e.message)); }}, 'Sign in to OSM to upload'));
     }
     btns.append(el('button', {class: 'b', onclick: () => download('flagstop.osc', Edits.osc(), 'application/xml')}, 'Download .osc (JOSM)'));
     btns.append(el('button', {class: 'b', onclick: () => { navigator.clipboard.writeText(Edits.level0()).then(() => toast('Level0 text copied — paste at level0.osmz.ru')); }}, 'Copy Level0 text'));
@@ -851,7 +906,7 @@ function renderChanges(P) {
   }
   // OAuth setup
   const cid = Edits.auth.clientId();
-  d.append(el('details', {class: 'small', open: (!cid && ops.length) ? '' : null}, el('summary', {}, user ? `Signed in as ${user.display_name}` : 'Set up upload (once)'),
+  d.append(el('details', {class: 'small', open: ((!cid || Edits.auth.lost) && ops.length) ? '' : null}, el('summary', {}, user ? `Signed in as ${user.display_name}` : 'Set up upload (once)'),
     el('p', {}, 'Uploading uses OSM\'s own login (OAuth 2). Register flagstop as an application on your account: ', el('a', {href: 'https://www.openstreetmap.org/oauth2/applications/new', target: '_blank'}, 'osm.org → OAuth 2 applications → Register'), '. Name: flagstop. Redirect URI: ', el('code', {}, Edits.auth.redirect()), '. Untick "Confidential application". Permissions: read user preferences, modify the map. Paste the client ID here:'),
     el('div', {class: 'btns'}, el('input', {value: cid, placeholder: 'client id', style: 'flex:1', onchange: e => { Edits.auth.setClientId(e.target.value); toast('saved'); }}))));
   P.append(d);
@@ -878,7 +933,8 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   Edits.load(d.agency.agency_name);
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();
-  $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.slice(0, 10)}`;
+  $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.replace('T', ' ')} `;
+  $('#agency').append(el('a', {href: '#', title: 'Fetch OSM again and rebuild the review: after an upload, to see it', onclick: e => { e.preventDefault(); refreshOSM(); }}, 'refresh'));
   try { if (await Edits.auth.complete()) { S.tab = 'changes'; toast('Signed in to OSM'); } } catch (e) { toast('Sign-in failed: ' + e.message, 8000); }
   render();
   try { initMap(); } catch (e) { toast('Map failed to start: ' + e.message, 8000); console.error(e); }

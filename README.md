@@ -58,7 +58,9 @@ Identity and structure: that a stop exists, its code, which routes call at it an
 
 ## Detours
 
-Map the regular route. A detour of days or weeks is not mapped: OSM can't keep up, and the churn is worse than the lag. A long one (months) is worth mapping, with a `note=*` on the relation saying it is a diversion and what the normal route is, reverted afterwards. Stops named Temp/Detour and itineraries run only by a short-dated service are marked *temporary* and left out of proposals.
+Short detours (days) aren't mapped: OSM can't keep up, and the churn is worse than the lag. Long ones (weeks and more) are worth mapping while they last, since apps route on OSM: put a `note=*` on the relation saying it's a diversion and what the normal route is, with a `check_date`, and revert it afterwards.
+
+flagstop follows the routes the feed gives. Some agencies only publish a detour in GTFS when it'll last weeks or more (CVTD does), and then the feed is the route to map. If yours publishes every short detour, check before following it. Stops named Temp/Detour and itineraries run only by a short-dated service are marked *temporary* and left out of proposals either way.
 
 ## Uploading from the page
 

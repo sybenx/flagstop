@@ -117,7 +117,7 @@ def main():
         patterns_out.append({
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
-            'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops,
+            'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops, 'loop': p.loop, 'split_at': p.split_at,
             'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
             'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
             'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
@@ -163,6 +163,11 @@ def main():
         'summary': summary(feed, match, extra, patterns_out, unpaired),
     }
     os.makedirs(a.out, exist_ok=True)
+    # files from itineraries that aren't in this run (two halves now joined into a loop, a route gone)
+    keep = {f'rel-{safe(p.id)}.osm' for p in feed.patterns} | {f'shape-{safe(p.id)}.gpx' for p in feed.patterns}
+    for f in os.listdir(a.out):
+        if (f.startswith('rel-') and f.endswith('.osm') or f.startswith('shape-') and f.endswith('.gpx')) and f not in keep:
+            os.remove(os.path.join(a.out, f))
     json.dump(out, open(os.path.join(a.out, 'review.json'), 'w'), separators=(',', ':'))
     s = out['summary']
     print(f"stops: {s['stops']}  patterns: {s['patterns']}  → {os.path.join(a.out, 'review.json')}", file=sys.stderr)
