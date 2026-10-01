@@ -299,7 +299,7 @@ function popupDiv(d, ll) {
     list.append(row);
   }
   if (d.ways.length) box.append(list);
-  box.append(el('div', {style: 'margin-top:6px'}, el('button', {class: 'b primary tiny', style: 'margin-right:4px', onclick: () => { document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); Roads.editAt([d.lon, d.lat]); }}, 'Edit roads here'),
+  box.append(el('div', {style: 'margin-top:6px'},
     editorButtons({lon: d.lon, lat: d.lat, zoom: 17, select: d.ways.map(w => 'w' + w), pattern: patternById(S.pattern), pts: d.shape, comment: `Bus route ${routeOf(patternById(S.pattern)).short}: ${d.why.slice(0, 80)}`}, {small: true})));
   new maplibregl.Popup({closeButton: true, maxWidth: '360px'}).setLngLat(ll).setDOMContent(box).addTo(map);
 }
@@ -307,7 +307,7 @@ function popupDiv(d, ll) {
 function wayTagEditor(wid, tags, at, base) {
   const cur = Edits.get('w' + wid);
   const t = {...(cur ? cur.tags : tags)};
-  const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags. To split or reconnect it, turn on Roads (map, top right).'));
+  const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags. Its shape is for RapiD or iD.'));
   const grid = el('div', {class: 'kv', style: 'grid-template-columns:max-content 1fr auto'});
   const rows = {};
   const addRow = (k, v) => {

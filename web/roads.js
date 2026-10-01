@@ -529,13 +529,10 @@ const Roads = {
       else if (this.pick) { this.pick = null; this.status(); map.getCanvas().style.cursor = ''; }
       else if (this.sel) this.deselect();
     });
-    const ctl = el('div', {class: 'maplibregl-ctrl maplibregl-ctrl-group'}, el('button', {id: 'roadsbtn', class: 'roadsbtn', title: 'Edit roads here: split, reconnect, move, add; routes on them are repaired', onclick: () => this.toggle()}, 'Edit roads'));
-    map.addControl({onAdd: () => ctl, onRemove: () => ctl.remove()}, 'top-right');
-    // undo/redo where the editing happens: under Edit roads, saying what they'd take back
-    const ur = el('div', {id: 'roadundo', class: 'maplibregl-ctrl maplibregl-ctrl-group'},
-      el('button', {id: 'roadundobtn', onclick: () => undoRedo('undo')}), el('button', {id: 'roadredobtn', onclick: () => undoRedo('redo')}));
-    map.addControl({onAdd: () => ur, onRemove: () => ur.remove()}, 'top-right');
-    this.undoCtl();
+    // The free-hand road editor (reconnect, move a junction, draw, split anywhere) has no button any more:
+    // shaping roads by click and drag, with every relation on them repaired out of sight, is RapiD's and iD's
+    // job. What's left runs only from a card that showed it first: a merge's splits, a station's stop
+    // positions, turning back a one-way someone turned round.
     // like iD: once zoomed in, the roads in view load by themselves
     map.on('moveend', () => { if (this.on && !this.pick && !this.drag && !this.loading && map.getZoom() >= MIN_ZOOM - 0.01 && !this.covers()) this.reload(); else if (this.on && !this.drag) this.status(); });
   },
@@ -745,6 +742,7 @@ const Roads = {
   },
   /** The map's undo/redo: shown while editing roads, or whenever there's something to take back. */
   undoCtl() {
+    if (!$('#roadundobtn')) return;
     const box = $('#roadundo'), u = $('#roadundobtn'), r = $('#roadredobtn');
     if (!box) return;
     const last = Edits.history[Edits.history.length - 1], next = Edits.future[Edits.future.length - 1];

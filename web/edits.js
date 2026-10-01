@@ -288,8 +288,12 @@ const Edits = {
         if (changed.length) conflicts.push({key, why: `tags differ from what flagstop saw: ${changed.join(', ')}`, current: el});
         else { op.base.version = el.version; if (op.type === 'way' && !op.nodes) op.nodes = el.nodes; }
       }
-      if (op.type === 'way' && !op.nodes) op.nodes = el.nodes;
-      if (op.type === 'node' && op.lat == null) { op.lat = el.lat; op.lon = el.lon; }
+      // what flagstop didn't change goes up as OSM has it now: a tag edit must not carry an old node list or
+      // member list back over someone else's newer edit to the road's shape or the relation's members
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      if (op.type === 'way' && (!op.nodes || !op.base || !op.base.nodes || same(op.nodes, op.base.nodes))) op.nodes = el.nodes;
+      if (op.type === 'relation' && (!op.members || !op.base || !op.base.members || same(op.members, op.base.members))) op.members = el.members.map(m => ({type: m.type, ref: m.ref, role: m.role}));
+      if (op.type === 'node' && (op.lat == null || !op.base || (op.lat === op.base.lat && op.lon === op.base.lon))) { op.lat = el.lat; op.lon = el.lon; }
     }
     return {versions, conflicts};
   },

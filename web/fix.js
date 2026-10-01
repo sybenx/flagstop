@@ -2,8 +2,8 @@
 
    A problem flagstop can explain comes with a proposed fix (tool/routes.py: a one-way pointing against the
    agency's line -> turn it round). This shows the road as OSM has it and as it would be, with the bus route
-   re-routed both ways (tool/serve.py, on a copy of the roads), and asks. Looks right -> Changes. Let me edit
-   it -> the road editor on that road. Not right -> nothing.
+   re-routed both ways (tool/serve.py, on a copy of the roads), and asks. Looks right -> Changes (only to undo an
+   edit that turned the road round: its history says so). Otherwise, or to edit it: RapiD. Not right -> nothing.
 
    Also: any route on screen is re-routed with the road edits waiting in Changes, so a fixed problem stops
    showing as one before it's uploaded. */
@@ -88,11 +88,9 @@ const Fix = {
     render(); draw();
     if (p) fit(x.d.shape && x.d.shape.length ? x.d.shape : [[x.d.lon, x.d.lat]], 120);
   },
-  async edit() {
-    const x = S.fix;
-    S.fix = null; S.routed = null; S.routedBy = null; render(); draw();
-    await Roads.editAt([x.d.lon, x.d.lat]);
-    Roads.selectWay(x.f.way, {lng: x.d.lon, lat: x.d.lat});
+  edit() {
+    const x = S.fix, p = patternById(S.pattern);
+    openIn('rapid', {lon: x.d.lon, lat: x.d.lat, zoom: 18, select: ['w' + x.f.way], pattern: p, comment: `Bus route ${routeOf(p).short}: ${x.f.name}`});
   },
 
   render(P) {
@@ -119,10 +117,13 @@ const Fix = {
       el('div', {class: 'muted small'}, x.view === 'fixed' ? 'On the map: the road in green, arrows the way it would go; the blue line is the bus route with it.' : 'On the map: the road in red, arrows the way OSM has it; the blue line is the bus route now.'));
     d.append(el('h2', {style: 'margin-left:0'}, 'Does this look right?'),
       el('div', {class: 'btns'},
-        el('button', {class: 'b primary', onclick: () => this.accept()}, 'Looks right: add to Changes'),
-        el('button', {class: 'b', onclick: () => this.edit()}, 'Let me edit it'),
+        // flagstop turns a road round only to undo an edit that turned it: a one-way against the line with no
+        // such history may be right (a contraflow bus lane, a detour drawn as the line), and a mistake sends every car the wrong way
+        x.back ? el('button', {class: 'b primary', onclick: () => this.accept()}, 'Looks right: add to Changes') : null,
+        el('button', {class: x.back ? 'b' : 'b primary', onclick: () => this.edit()}, x.back ? 'Let me edit it (RapiD)' : 'Look in RapiD'),
         el('button', {class: 'b', onclick: () => { this.close(); toast('Left as OSM has it'); }}, 'Not right')),
-      el('div', {class: 'muted small'}, 'Not right? Then the bus may really go another way here: the agency\'s line could be a detour, or drawn off the street.'));
+      x.back ? el('div', {class: 'muted small'}, 'Not right? Then the bus may really go another way here: the agency\'s line could be a detour, or drawn off the street.')
+        : el('div', {class: 'note'}, "Nothing in this road's history says it ran the other way, so flagstop leaves it to you. If buses may go against the one-way here, it wants oneway:bus=no (edit tags, from the place on the route); if the road itself is wrong, fix it in RapiD."));
     P.append(d);
   },
 };
