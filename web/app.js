@@ -859,6 +859,15 @@ function renderChanges(P) {
   if (user && Edits.auth.checked == null) Edits.auth.check().then(ok => { if (ok === false) render(); });
   if (Edits.auth.lost) d.append(el('div', {class: 'note', style: 'background:color-mix(in srgb, var(--miss) 14%, transparent)'},
     el('b', {}, 'Signed out: '), "OSM didn't accept flagstop's sign-in any more (the app was revoked or re-registered on OSM, or the sign-in expired). Your changes are all still here. Sign in again below; if you registered flagstop again on OSM, paste its new client ID under \"Set up upload\" first."));
+  // the last upload: its changeset, until the next one replaces it
+  let last = null; try { last = JSON.parse(localStorage.getItem('flagstop.lastUpload') || 'null'); } catch (e) {}
+  if (last) d.append(el('div', {class: 'note'}, el('b', {}, 'Last upload: '),
+    el('a', {href: `https://www.openstreetmap.org/changeset/${last.id}`, target: '_blank'}, `changeset ${last.id}`),
+    ` · ${last.n} change${last.n === 1 ? '' : 's'} · ${new Date(last.at).toLocaleString()}`, el('div', {class: 'muted'}, `"${last.comment}"`),
+    (last.skipped || []).length ? el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${last.skipped.join(', ')}: something still uses ${last.skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). Still in Changes: remove the parent's reference, then upload again.`) : null,
+    ...(last.undid || []).map(u => revertNote(u, last.id)),
+    el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => refreshOSM()}, 'Refresh from OSM to see it'),
+      el('span', {class: 'muted small', style: 'align-self:center'}, "flagstop shows OSM as it was before; OSM's copy for this can lag a few minutes"))));
   const undoing = ops.map(([, o]) => o.undoes).filter(Boolean);
   if (undoing.length) d.append(el('div', {class: 'note'}, el('b', {}, 'Undoes someone\'s edit: '),
     ...undoing.flatMap((u, i) => [i ? '; ' : '', `${u.name} as ${u.user} left it (`, el('a', {href: `https://www.openstreetmap.org/changeset/${u.changeset}`, target: '_blank'}, `changeset ${u.changeset}`), `, ${u.date})`]),
@@ -877,12 +886,14 @@ function renderChanges(P) {
       btns.append(el('button', {class: 'b primary', onclick: async () => {
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
         try {
+          const n = ops.length;
           const {id, skipped, undid} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
-          status.innerHTML = `Uploaded: <a href="https://www.openstreetmap.org/changeset/${id}" target="_blank">changeset ${id}</a>. `;
-          for (const u of undid || []) status.append(revertNote(u, id));
-          status.append(el('div', {}, 'flagstop is still showing OSM from before the upload. ', el('button', {class: 'b primary tiny', onclick: () => refreshOSM()}, 'Refresh from OSM'),
-            el('span', {class: 'muted'}, ' (a minute or two; OSM\'s copy for this can lag a few minutes behind an upload)')));
-          if (skipped.length) status.append(el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${skipped.join(', ')}: something still uses ${skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). ${skipped.length > 1 ? 'They stay' : 'It stays'} in Changes; remove the parent's reference, then upload again.`));
+          // remembered, so the changeset stays findable after the page redraws or reloads
+          // remembered with what goes with it (records for undone edits, deletes OSM skipped), so it all
+          // survives the redraw that follows, and a reload
+          try { localStorage.setItem('flagstop.lastUpload', JSON.stringify({id, comment: comment.value, n, at: new Date().toISOString(), undid: undid || [], skipped})); } catch (e) {}
+          S.comment = null;
+          toast(`Uploaded: changeset ${id}`, 6000);
           render();
         } catch (e) {
           status.textContent = '';
