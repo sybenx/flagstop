@@ -13,6 +13,7 @@ Each GTFS stop ends up in one bucket:
 and OSM stops nobody claimed, inside the feed's footprint, are 'extra' (another operator's, moved, or gone).
 """
 import math, re
+from collections import Counter
 
 NEAR = 60      # m: a stop across the street is ~20-30 m away, so beyond this the name has to carry it
 CLOSE = 40     # m: this near and nobody else's, it is the same stop even with no name to go on
@@ -105,13 +106,28 @@ def match(feed, osm_stops):
                         out.append((d, o))
         return sorted(out, key=lambda x: x[0])
 
+    # A stop is matched to its platform, where people wait: not the stop_position on the road (where the bus
+    # halts) or a station (the whole place). Those stay in the data for the relations, not as candidates.
+    def platform(o):
+        t = o['tags']
+        return t.get('highway') == 'bus_stop' or t.get('public_transport') == 'platform'
+
+    # The agency's networks as OSM names them (often several: CVTD, its new brand, a shared shuttle's): every
+    # network on a platform that already carries one of the feed's codes or ids. A platform tagged with another network (an intercity coach's stop in the same
+    # transit centre) is probably someone else's stop: it ranks below the agency's own nearby. Not ruled out:
+    # network tags are messy (CVTD, Cache Valley Transit District, a stop shared with a university shuttle).
+    nets = Counter(o['tags'].get('network') for s in feed.stops.values()
+                   for o in by_gtfs_id.get(s.id, []) + by_ref.get(s.code, []) if platform(o) and o['tags'].get('network'))
+    def other_network(o):
+        return bool(nets) and o['tags'].get('network') and o['tags']['network'] not in nets
+
     results, claimed = {}, {}
     for s in feed.stops.values():
         if s.location_type not in ('0', ''):
             continue  # stations, entrances: not a platform to match
         cands, notes = [], []
         ids = by_gtfs_id.get(s.id, []) + by_ref.get(s.code, []) + (by_ref.get(s.id, []) if s.id != s.code else [])
-        for o in ids:
+        for o in filter(platform, ids):
             d = dist(s.lat, s.lon, o['lat'], o['lon'])
             if d <= REF_FAR:
                 cands.append({'id': o['id'], 'dist': round(d), 'score': 1.0, 'how': 'ref'})
@@ -120,10 +136,10 @@ def match(feed, osm_stops):
         if not any(c['how'] == 'ref' for c in cands):
             for d, o in near(s.lat, s.lon, NEAR):
                 sim = alike(_gtfs_text(s), _osm_text(o))
-                if o['type'] != 'node' and o['tags'].get('amenity') == 'bus_station':
-                    continue  # a station area is not the platform
+                if not platform(o):
+                    continue
                 if d <= CLOSE or sim >= 0.5:
-                    cands.append({'id': o['id'], 'dist': round(d), 'score': round(0.5 * (1 - d / NEAR) + 0.5 * sim, 3), 'how': 'close' if d <= CLOSE else 'name'})
+                    cands.append({'id': o['id'], 'dist': round(d), 'score': round(0.5 * (1 - d / NEAR) + 0.5 * sim - (0.2 if other_network(o) else 0), 3), 'how': 'close' if d <= CLOSE else 'name'})
         cands.sort(key=lambda c: -c['score'])
         seen, uniq = set(), []
         for c in cands:
@@ -178,7 +194,7 @@ def match(feed, osm_stops):
     for lat, lon in gt:
         ggrid.setdefault((int(lat / 0.004), int(lon / 0.004)), []).append((lat, lon))
     for o in osm:
-        if o['id'] in used or o['tags'].get('public_transport') == 'stop_position':
+        if o['id'] in used or not platform(o):
             continue
         ci, cj = int(o['lat'] / 0.004), int(o['lon'] / 0.004)
         close = any(dist(o['lat'], o['lon'], la, lo) <= FOOTPRINT for i in (ci - 1, ci, ci + 1) for j in (cj - 1, cj, cj + 1) for la, lo in ggrid.get((i, j), []))
@@ -190,7 +206,7 @@ def match(feed, osm_stops):
 def conventions(feed, results, osm_stops):
     """What the local mappers already write for operator/network on this agency's stops: the value most
     of the matched stops carry, if a clear majority does. Proposals follow the mappers, not the feed."""
-    from collections import Counter
+    from collections import Counter, Counter
     out = {}
     matched = [osm_stops[r['osm'][0]['id']] for r in results.values() if r['status'] == 'matched' and r['osm']]
     for k in ('operator', 'network', 'network:wikidata', 'operator:wikidata'):

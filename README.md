@@ -95,7 +95,7 @@ web/merge.js      two relations for one route -> one, explained and shown
 
 - Turn restrictions aren't honoured by the router.
 - A divergence over a road OSM has as `highway=footway`/`track` etc. reads as "no road here"; the roads query only fetches classes a bus can use.
-- Stations (`location_type=1`) and `stop_position` nodes are ignored; only platforms are matched.
+- Stations (`location_type=1`) and `stop_position` nodes are ignored; only platforms are matched. A platform tagged with a network none of the agency's coded stops use (an intercity coach's bay) ranks below the agency's own.
 - Deleting a stop is only offered in a merge, for a stop the route no longer uses, after you've looked; other OSM-only stops are listed for you to look at.
 - The via-point re-route doesn't persist across reloads.
 
