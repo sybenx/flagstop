@@ -45,8 +45,39 @@ const Merge = {
     const now = new Set(stops.filter(x => x.o).map(x => osmNumId(x.o)));
     const stale = [...had.keys()].filter(id => !now.has(id)).map(id => D.osm_stops['n' + id] || {id: 'n' + id, tags: {}});
     const splits = (p.chain_breaks || []).filter(b => b.kind === 'split');
-    const hours = (p.services || []).filter(x => x.trips && x.days).map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ');
-    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, hours};
+    // the timetable the OSM way, as tags on the one relation: when it runs, and how often (the busiest days'
+    // gap as interval, the other days' as interval:conditional)
+    const svc = (p.services || []).filter(x => x.trips && x.days), main = [...svc].sort((a, b) => b.trips - a.trips)[0];
+    const timetable = svc.length ? {opening_hours: svc.map(x => `${x.days} ${hhmm(x.first)}-${hhmm(x.last)}`).join('; ')} : {};
+    if (main && main.every) timetable.interval = hhmm(main.every);
+    const cond = svc.filter(x => x !== main && x.every && x.every !== main.every).map(x => `${hhmm(x.every)} @ (${x.days})`);
+    if (main && main.every && cond.length) timetable['interval:conditional'] = cond.join('; ');
+    // stops this merge leaves: in the relations now but not on the route, and candidates not picked. Those no
+    // stop in the agency's data uses may be gone for real: offered for removal from OSM (after a look).
+    // which stop in the agency's data each OSM stop is the likeliest match for
+    const claim = {};
+    for (const t of Object.values(D.stops)) for (const c of (t.match && t.match.osm || []).slice(0, 1)) (claim[c.id] = claim[c.id] || new Set()).add(t.id);
+    const usedBy = (o, but) => [...(claim[o.id] || [])].some(id => id !== but);
+    const picked = new Set(stops.filter(x => x.o).map(x => x.o.id));
+    const unpicked = decide.filter(q => q.kind === 'which' && q.answer).flatMap(q => q.cands.map(c => ({o: c.o, sid: q.s.id}))).filter(x => !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
+    const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
+    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, gone};
+  },
+  /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
+  goneStops(x) {
+    const box = el('div', {class: 'fixstep'}, el('div', {class: 'k'}, `Not on any route now: ${x.gone.length} stop${x.gone.length > 1 ? 's' : ''}`),
+      el('div', {class: 'why'}, "Leaving the relation either way. If one isn't there any more, it can come out of OSM too."));
+    const g = S.merge.gone || (S.merge.gone = {});
+    for (const o of x.gone) {
+      const seen = S.looked.has('osm:' + o.id), on = g[o.id] === 'remove';
+      box.append(el('div', {class: 'decide'}, el('div', {}, el('b', {}, o.tags.name || o.id), el('span', {class: 'muted'}, ` (${o.id})`)),
+        el('div', {style: 'margin:4px 0'}, el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: () => { S.looked.add('osm:' + o.id); S.lookStop = null; render(); draw(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); }}, 'Show on map'),
+          seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:8px', onclick: e => { e.preventDefault(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null),
+        el('div', {class: 'btns'},
+          el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: () => { g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone: remove it from OSM"),
+          el('button', {class: 'b tiny' + (!on ? ' chosen' : ''), onclick: () => { g[o.id] = null; render(); }}, (!on ? '✓ ' : '') + 'Leave it'))));
+    }
+    return box;
   },
   /** Stops the route can't be right without settling, each with its choice, in the card. */
   decisions(x) {
@@ -129,15 +160,16 @@ const Merge = {
         ...rels.map(a => el('div', {}, el('a', {href: `https://www.openstreetmap.org/relation/${a.id}`, target: '_blank'}, a.name || `r${a.id}`),
           el('span', {class: 'muted'}, ` · ${a.stops.in_relation ? `${a.stops.in_relation} stops` : 'no stops'} · ${a.ways.chain_breaks.length ? `${a.ways.chain_breaks.length} places its roads don't join up` : 'roads join up'}`)))),
       el('div', {class: 'fixstep why'}, el('div', {class: 'k'}, `Why ${rels.length === 2 ? 'two' : rels.length}`),
-        el('div', {}, `Probably one per timetable: ${days}. Both days use the same ${p.stops.length} stops and streets, though, and OSM maps routes, not timetables, so it should be one relation.`)),
+        el('div', {}, `Probably one per timetable: ${days}. In OSM a route is one relation (one per direction, or one for a loop), and its timetable goes on it as tags, not as a relation per day. Both days use the same ${p.stops.length} stops and streets here, so it should be one relation.`)),
       el('div', {class: 'fixstep want'}, el('div', {class: 'k'}, 'flagstop would'),
         el('ul', {class: 'mergelist'},
           el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"`),
           el('li', {}, `give it the feed's ${x.stops.length} stops in order` + (x.stale.length ? `; ${x.stale.length} it has now aren't on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
           el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
-          x.hours ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: S.merge.hours ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}), ` and say when it runs: opening_hours=${x.hours}`)) : null)),
-      ...[x.decide.length ? this.decisions(x) : null,
+          Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: S.merge.hours ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
+            ' and put the timetable on it: ', el('code', {}, Object.entries(x.timetable).map(([k, v]) => `${k}=${v}`).join('  ')))) : null)),
+      ...[x.decide.length ? this.decisions(x) : null, x.gone.length ? this.goneStops(x) : null,
       x.questions.length ? el('div', {class: 'muted small', style: 'margin:6px 0'}, `${x.questions.length} other stop question${x.questions.length > 1 ? 's' : ''} on this route (names, codes) don't change the route; settle them in Check stops: `,
         ...x.questions.slice(0, 5).flatMap((q, i) => [i ? ', ' : '', el('a', {href: '#', title: q.why, onclick: e => { e.preventDefault(); showStop(q.s.id); }}, q.s.name)]), x.questions.length > 5 ? ', …' : '') : null].filter(Boolean));   // DOM append writes 'null' for null
     d.append(el('div', {class: 'seg'},
@@ -183,7 +215,19 @@ const Merge = {
       }
       const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};
       const members = [...x.stops.map(plat), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
-      const tags = {...x.tags, ...(hours && x.hours ? {opening_hours: x.hours} : {})};
+      const tags = {...x.tags, ...(hours ? x.timetable : {})};
+      // stops gone for real: only if nothing else on OSM uses them (another relation); a stop that's a point on a
+      // sidewalk line loses its bus stop tags instead of being deleted (deleting it would break the line)
+      const kept = [], stopKeys = /^(highway|public_transport|bus|name|ref|local_ref|route_ref|network|network:wikidata|operator|description|shelter|bench|bin|lit|tactile_paving|departures_board|wheelchair|gtfs:.*)$/;
+      for (const o of x.gone.filter(o => (S.merge.gone || {})[o.id] === 'remove')) {
+        const n = osmNumId(o), mine = new Set(x.rels.map(a => a.id));
+        const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
+        if (rels.length) { kept.push(`${o.tags.name || o.id} (also in ${rels.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
+        const ways = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/ways.json`)).json()).elements;
+        if (ways.length) Edits.modify('node', n, nodeBase(o), {removeTags: Object.keys(o.tags).filter(k => stopKeys.test(k))}, `${o.tags.name || o.id}: stop gone (point kept: it's on a way)`);
+        else Edits.delete('node', n, nodeBase(o), `${o.tags.name || o.id}: stop gone`);
+      }
+      if (kept.length) say(`Not removed, something else uses them: ${kept.join('; ')}`);
       const key = Edits.modify('relation', x.keep.id, relBase(x.keep), {tags, members}, `${x.r.short}: one relation for one route`);
       Edits.ops[key].suggested = true; Edits.ops[key].route = x.r.short;
       for (const a of x.drop) {

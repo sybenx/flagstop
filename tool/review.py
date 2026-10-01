@@ -136,7 +136,7 @@ def main():
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
             'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops, 'loop': p.loop, 'split_at': p.split_at,
-            'services': [{'id': sid, 'days': days_of(feed.calendar.get(sid)), 'first': h[0], 'last': h[1], 'trips': h[2]} for sid, h in sorted(p.hours.items())],
+            'services': [{'id': sid, 'days': days_of(feed.calendar.get(sid)), 'first': h[0], 'last': h[1], 'trips': h[2], 'every': h[3]} for sid, h in sorted(p.hours.items())],
             'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
             'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
             'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},

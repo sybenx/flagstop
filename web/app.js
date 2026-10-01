@@ -860,15 +860,17 @@ function changesetComment() {
   if (dropped && kept.length) parts.push(`merged ${n(dropped + kept.length, 'relation')} into ${kept.length === 1 ? 'one' : kept.length}`);
   else if (dropped) parts.push(`removed ${n(dropped, 'duplicate relation')}`);
   const rebuilt = kept.filter(o => Edits.diff(o).some(x => x.k === 'members')).length;
+  if (kept.some(o => Edits.diff(o).some(x => x.k === 'opening_hours'))) parts.push('timetable hours added');
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
   const nodes = ops.filter(o => o.type === 'node' && !isRoad(o));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
-  const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position'));
-  const stopBits = [moved ? `${n(moved, 'stop')} moved` : null, added ? `${added} added` : null].filter(Boolean);
-  if (stopBits.length) parts.push(stopBits.join(', ').replace(/^(\d+) added$/, (_, k) => `${n(+k, 'stop')} added`));
+  const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
+  const removed = nodes.filter(o => o.kind === 'delete' || (o.kind === 'modify' && !Edits.diff(o).some(x => x.k === 'position') && Edits.diff(o).every(x => x.after == null))).length;
+  const stopBits = [moved ? `${n(moved, 'stop')} moved` : null, added ? `${added} added` : null, removed ? `${removed} removed` : null].filter(Boolean);
+  if (stopBits.length) parts.push(stopBits.join(', ').replace(/^(\d+) (added|removed)$/, (_, k, w) => `${n(+k, 'stop')} ${w}`));
   if (tagged.length) {
     const keys = new Set(tagged.flatMap(o => Edits.diff(o).map(x => x.k)));
     const what = [['ref', 'codes'], ['gtfs:stop_id', 'ids'], ['route_ref', 'routes'], ['name', 'names'], ['description', 'announcements']].filter(([k]) => keys.has(k)).map(([, w]) => w);

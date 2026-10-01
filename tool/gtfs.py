@@ -65,7 +65,7 @@ class Pattern:
     alt_stops: list = field(default_factory=list)    # stops only those runs call at (a different terminal bay)
     loop: list = field(default_factory=list)         # joined from these patterns: one bus runs them back to back
     split_at: str = ''                               # ... and the feed splits the trip at this stop
-    hours: dict = field(default_factory=dict)        # service_id -> [first departure s, last arrival s, trips]
+    hours: dict = field(default_factory=dict)        # service_id -> [first departure s, last arrival s, trips, typical gap between departures s]
 
 
 @dataclass
@@ -203,8 +203,19 @@ def load(path):
         dep, arr = xs[0][2] if xs[0][2] is not None else xs[0][1], xs[-1][1] if xs[-1][1] is not None else xs[-1][2]
         if dep is None or arr is None:
             continue
-        h = p.hours.setdefault(trips[tid].get('service_id', ''), [dep, arr, 0])
+        h = p.hours.setdefault(trips[tid].get('service_id', ''), [dep, arr, 0, None, []])
         h[0], h[1], h[2] = min(h[0], dep), max(h[1], arr), h[2] + 1
+        h[4].append(dep)
+    # how often: the typical (median) gap between one departure and the next, per service
+    seen = set()
+    for p in of_trip.values():
+        if not p or id(p) in seen:
+            continue
+        seen.add(id(p))
+        for sid, h in p.hours.items():
+            deps = sorted(h.pop(4)) if len(h) > 4 else []
+            gaps = sorted(b - a for a, b in zip(deps, deps[1:]) if b > a)
+            h[3] = gaps[len(gaps) // 2] if gaps else None
     patterns = _join_loops(kept, trips, times, of_trip, shapes)
     # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
     def days(sid):
@@ -275,7 +286,7 @@ def _join_loops(patterns, trips, times, of_trip, shapes):
                            shape_id=sid, stops=a.stops + b.stops[1:], trips=min(a.trips, b.trips), service_ids=a.service_ids | b.service_ids,
                            direction_name=a.direction_name, variants=a.variants + b.variants, alt_shapes=a.alt_shapes + b.alt_shapes,
                            alt_stops=a.alt_stops + b.alt_stops, loop=[a.id, b.id], split_at=b.stops[0],
-                           hours={sid: [a.hours[sid][0], b.hours.get(sid, a.hours[sid])[1], a.hours[sid][2]] for sid in a.hours}))
+                           hours={sid: [a.hours[sid][0], b.hours.get(sid, a.hours[sid])[1], a.hours[sid][2], a.hours[sid][3]] for sid in a.hours}))
         joined |= {id(a), id(b)}
     return out
 
