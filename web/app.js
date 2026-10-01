@@ -791,7 +791,7 @@ function renderStop(P, s) {
     s.desc ? el('span', {class: 'k'}, 'announced') : null, s.desc ? el('span', {}, s.desc) : null,
     s.tts ? el('span', {class: 'k'}, 'tts name') : null, s.tts ? el('span', {}, s.tts) : null,
     el('span', {class: 'k'}, 'routes'), el('span', {}, s.routes.map(rid => (D.routes.find(r => r.id === rid) || {short: rid}).short).join(', ') + ` · ${s.trips} trips`),
-    s.wheelchair && s.wheelchair !== '0' ? el('span', {class: 'k'}, 'wheelchair') : null, s.wheelchair && s.wheelchair !== '0' ? el('span', {}, {1: 'yes', 2: 'no'}[s.wheelchair]) : null,
+    s.wheelchair && s.wheelchair !== '0' ? el('span', {class: 'k'}, 'wheelchair') : null, s.wheelchair && s.wheelchair !== '0' ? el('span', {}, {1: 'yes', 2: "no, says the agency (not put in OSM: too often wrong)"}[s.wheelchair]) : null,
     s.platform_code ? el('span', {class: 'k'}, 'platform') : null, s.platform_code ? el('span', {}, s.platform_code) : null));
   if (s.match && s.match.notes && s.match.notes.length) d.append(el('div', {class: 'note warn'}, ...s.match.notes.map(n => el('div', {}, n))));
   const place = Station.ofStop(s);

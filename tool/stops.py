@@ -277,10 +277,10 @@ def proposed_tags(feed, s, conv=None):
     routes = sorted({feed.routes[r].short for r in s.routes if r in feed.routes}, key=lambda x: (len(x), x))
     if routes:
         t['route_ref'] = ';'.join(routes)
+    # An agency's 'not accessible' (2) isn't trusted: it's too often wrong (a default, an old survey). Only
+    # 'yes' is taken from the feed.
     if s.wheelchair == '1':
         t['wheelchair'] = 'yes'
-    elif s.wheelchair == '2':
-        t['wheelchair'] = 'no'
     if s.desc:
         t['description'] = s.desc
     return t
@@ -300,7 +300,7 @@ def diff(feed, s, o):
     have = ';'.join(sorted((t.get('route_ref') or '').split(';'), key=lambda x: (len(x), x))) if t.get('route_ref') else ''
     if want != have:
         out['route_ref'] = {'gtfs': want, 'osm': t.get('route_ref', '')}
-    w = {'1': 'yes', '2': 'no'}.get(s.wheelchair)
+    w = {'1': 'yes'}.get(s.wheelchair)   # never 'no' from the feed: see proposed_tags
     if w and t.get('wheelchair') != w:
         out['wheelchair'] = {'gtfs': w, 'osm': t.get('wheelchair', '')}
     if s.desc and (t.get('description') or '') != s.desc:
