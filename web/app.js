@@ -329,6 +329,18 @@ function render() {
 const tile = (n, label, cls = '') => el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
 const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
 
+/** What's waiting in Changes for an itinerary (not uploaded yet): a merge, its relation, its stops. */
+function pending(p) {
+  const rels = p.relations.map(a => Edits.get('r' + a.id)).filter(Boolean);
+  const osm = new Set(p.stops.map(id => { const s = D.stops[id], o = matchedOsm(s) || (s.match && s.match.osm && s.match.osm[0] && D.osm_stops[s.match.osm[0].id]); return o && osmNumId(o); }).filter(Boolean));
+  const stops = Object.values(Edits.ops).filter(o => o.type === 'node' && (osm.has(o.id) || (o.kind === 'create' && p.stops.includes(o.tags['gtfs:stop_id'])))).length;
+  const bits = [rels.some(o => o.kind === 'delete') ? 'merge' : rels.length ? 'relation' : null, stops ? `${stops} stop${stops > 1 ? 's' : ''}` : null].filter(Boolean);
+  return bits;
+}
+function pendingChip(p) {
+  const bits = pending(p);
+  return bits.length ? el('span', {class: 'chip edit', title: 'Waiting in Changes, not uploaded yet'}, `in Changes: ${bits.join(', ')}`) : null;
+}
 function renderRoutes(P) {
   const s = D.summary;
   P.append(el('div', {class: 'tiles'},
@@ -344,6 +356,7 @@ function renderRoutes(P) {
       el('div', {class: 'grow'}, el('div', {class: 't'}, p.headsign || p.direction_name || r.long || ('direction ' + p.direction)),
         el('div', {class: 's'}, `${p.stops.length} stops · ${p.trips} trips${nd ? ` · ${nd} place${nd > 1 ? 's' : ''} to look at` : ''}${p.chain_ok ? '' : ' · path broken'}`)),
       el('span', {class: 'pct' + (sc < 0.97 ? ' low' : ''), title: 'share of the agency line drivable on OSM roads'}, pct(sc)),
+      pendingChip(p),
       el('span', {class: 'chip ' + g.cls}, g.chip)));
   }
   if (D.unpaired_relations.length) {
@@ -453,7 +466,7 @@ function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
   P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
   const d = el('div', {class: 'detail'});
-  d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
+  d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, p.headsign || p.direction_name || r.long), pendingChip(p), el('span', {class: 'muted small'}, `shape ${p.shape_id}`)));
   d.append(el('div', {class: 'muted small'}, `${r.long}${r.desc ? ' — ' + r.desc : ''} · ${p.loop && p.loop.length ? 'loop' : 'direction ' + p.direction} · ${p.stops.length} stops · ${p.trips} trips${p.variants ? ` · ${p.variants} short or end-of-day variants folded in` : ''}`));
   {
     const live = p.relations.filter(a => (Edits.get('r' + a.id) || {}).kind !== 'delete');
