@@ -11,7 +11,7 @@ import math, argparse, datetime, json, os, sys
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gtfs, osm, stops as stopmatch, routes as routing, compare
+import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -147,6 +147,7 @@ def main():
     roads_raw = osm.load(a.osm_roads) if a.osm_roads else osm.cached(os.path.join(a.cache, f'{slug}-osm-roads.json'), osm.fetch_roads, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
+    feed_changes = feeddiff.track(feed, a.cache, slug)   # what changed since the last feed version reviewed
     osm_stops, rels, masters, rel_ways, coords = osm.parse_pt(pt_raw)
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 
@@ -249,6 +250,7 @@ def main():
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user'],
                           **({'nodes': v['nodes']} if v.get('nodes') else {})} for k, v in osm_stops.items()},
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
+        'feed_changes': feed_changes,
         'extra_stops': extra,
         'extra_owner': {k: stopmatch.owner(feed, osm_stops[k], conv, aliases) for k in extra if k in osm_stops},
         'unpaired_relations': unpaired,

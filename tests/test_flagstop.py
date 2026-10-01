@@ -164,6 +164,23 @@ class Turns(unittest.TestCase):
         self.assertNotEqual(self.path(self.graph({'restriction': 'only_straight_on'}, to=11))[:2], [10, 12])
 
 
+class FeedChanges(unittest.TestCase):
+    def test_diff(self):
+        import feeddiff
+        stop = lambda name, lat=41.74, routes=('9',): {'name': name, 'code': '1', 'lat': lat, 'lon': -111.83, 'routes': list(routes)}
+        old = {'version': 'v1', 'stops': {'a': stop('928 North 200 West'), 'b': stop('987 North 200 West'), 'c': stop('Old stop')},
+               'routes': {'9': [{'headsign': '', 'stops': ['a', 'b', 'c']}], '4': [{'headsign': '', 'stops': ['c']}]}}
+        new = {'version': 'v2', 'stops': {'a': stop('930 North 200 West', lat=41.7402), 'b': stop('987 North 200 West'), 'd': stop('New stop')},
+               'routes': {'9': [{'headsign': '', 'stops': ['a', 'b', 'd']}]}}
+        d = feeddiff.diff(old, new)
+        self.assertEqual([s['id'] for s in d['stops_added']], ['d'])
+        self.assertEqual([s['id'] for s in d['stops_removed']], ['c'])
+        self.assertEqual([(s['id'], s['m']) for s in d['stops_moved']], [('a', 22)])
+        self.assertEqual(d['stops_renamed'], [{'id': 'a', 'from': '928 North 200 West', 'to': '930 North 200 West'}])
+        self.assertEqual(d['routes_removed'], ['4'])
+        self.assertEqual(d['routes_changed'][0]['stops_added'], ['d'])
+
+
 class Positions(unittest.TestCase):
     def test_same_spot_distance_comes_from_the_feed(self):
         res = {str(i): {'status': 'matched', 'osm': [{'dist': 5, 'how': 'ref'}]} for i in range(30)}

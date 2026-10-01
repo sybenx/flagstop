@@ -379,11 +379,33 @@ function pendingChip(p) {
   const bits = pending(p);
   return bits.length ? el('span', {class: 'chip edit', title: 'Waiting in Changes, not uploaded yet'}, `in Changes: ${bits.join(', ')}`) : null;
 }
+/** What changed since the last feed version reviewed: where to look first after the agency publishes. */
+function feedChanges() {
+  const c = D.feed_changes;
+  if (!c) return null;
+  const n = c.stops_added.length + c.stops_removed.length + c.stops_moved.length + c.stops_renamed.length + c.routes_added.length + c.routes_removed.length + c.routes_changed.length;
+  const box = el('details', {class: 'note' + (n ? ' warn' : ''), open: n ? '' : null}, el('summary', {}, n ? `Since the last feed (${c.since || c.since_start}): ${n} change${n > 1 ? 's' : ''}` : `No changes since the last feed (${c.since || c.since_start})`));
+  const stop = (id, label) => D.stops[id] ? el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(id); }}, label || D.stops[id].name) : el('span', {}, label || id);
+  const line = (title, items) => items.length ? el('div', {style: 'margin:4px 0'}, el('b', {}, `${title}: `), ...items.flatMap((x, i) => [i ? ', ' : '', x])) : null;
+  box.append(...[
+    line('New stops', c.stops_added.map(s => stop(s.id, `${s.name} (${s.routes.join(', ')})`))),
+    line('Stops gone', c.stops_removed.map(s => el('span', {}, `${s.name} (code ${s.code})`))),
+    c.stops_removed.length ? el('div', {class: 'muted small'}, 'A stop gone from the feed shows up in OSM only, to remove after a look.') : null,
+    line('Stops moved', c.stops_moved.map(s => stop(s.id, `${s.name} (${s.m} m)`))),
+    line('Renamed', c.stops_renamed.map(s => stop(s.id, `${s.from} → ${s.to}`))),
+    line('New routes', c.routes_added.map(r => el('span', {}, r))),
+    line('Routes gone', c.routes_removed.map(r => el('span', {}, r))),
+    line('Routes with different stops', c.routes_changed.map(r => el('span', {}, `${r.route} (+${r.stops_added.length} −${r.stops_removed.length})`))),
+  ].filter(Boolean));
+  return box;
+}
 function renderRoutes(P) {
   const s = D.summary;
   P.append(el('div', {class: 'tiles'},
     tile(D.patterns.filter(p => !p.temporary).length, 'itineraries'), tile(s.patterns['no relation'] || 0, 'no OSM relation', s.patterns['no relation'] ? 'bad' : ''), tile((s.patterns['duplicate relations'] || 0), 'mapped twice', s.patterns['duplicate relations'] ? 'warn' : ''),
     tile(s.stops.matched || 0, 'stops matched'), tile((s.stops.ambiguous || 0) + (s.stops.moved || 0), 'to decide', 'warn'), tile(s.stops.missing || 0, 'not in OSM', s.stops.missing ? 'bad' : '')));
+  const fc = feedChanges();
+  if (fc) P.append(fc);
   P.append(el('h2', {}, 'Itineraries, worst first'), el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
   const rows = D.patterns.map(p => ({p, g: patternGrade(p), sc: p.routed.score ? p.routed.score.shape_covered : 0}));
   rows.sort((a, b) => a.g.order - b.g.order || a.sc - b.sc || b.p.trips - a.p.trips);

@@ -56,6 +56,10 @@ The page lists itineraries worst first. Open one:
 - **OSM only** lists bus stops in OSM that no stop in the agency's data claims. This agency's (by network or operator, old names included, or tagged with neither) can be shown on the map and, if gone, removed: a stop another relation still uses is left and said, one that's a point in a sidewalk loses only its stop tags. Other operators' are listed, never touched.
 - **Changes** holds everything you decided, with a before/after per object. It leaves as one changeset uploaded with your OSM login, as an osmChange file for JOSM, or as Level0 text. Before uploading, every touched object is re-read from OSM and the upload stops if someone edited it since flagstop looked.
 
+## A new feed
+
+Each build keeps a short summary of the feed version it reviewed (in `cache/`). When the agency publishes a new one, the Routes page opens with what changed since the last version: stops added, gone, moved or renamed, routes added or gone, routes calling at different stops. That's where to look first; a stop gone from the feed turns up in *OSM only*, to remove after a look.
+
 ## What the agency is authoritative for
 
 Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).
@@ -93,6 +97,7 @@ tool/compare.py   relation ↔ pattern pairing and audit; proposed tags
 tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a .osm per proposed relation)
 tool/serve.py     static server + /api/trace for re-routing through via points
 tool/catalog.py   Mobility Database search and download
+tool/feeddiff.py  what changed between two versions of the feed
 web/app.js        the page (MapLibre, vendored; OSM raster tiles)
 web/edits.js      the change basket: osmChange, Level0, OAuth sign-in, upload with conflict check
 web/roads.js      road edits on live OSM data (split, reconnect, move, add) that repair the relations on them
