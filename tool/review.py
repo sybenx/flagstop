@@ -93,6 +93,43 @@ def stop_sides(feed, paths, match, osm_stops):
     return out
 
 
+def stop_positions(feed, traced, match, osm_stops, g, stop_areas, near=25):
+    """{pattern id: {stop id: node id}}: the stop position each stop has on the roads its buses drive, for the
+    route relation (PTv2 lists it before the platform). One the stop's stop area names comes first; else the
+    nearest stop_position node within `near` metres of the platform that's a point of a way the route uses, and
+    that's level with this platform rather than another (each stop position belongs to its nearest platform)."""
+    sp = {o['osm_id']: o for o in osm_stops.values() if o['tags'].get('public_transport') == 'stop_position' and o['id'][0] == 'n'}
+    if not sp:
+        return {}
+    plats = [o for o in osm_stops.values() if o['tags'].get('public_transport') == 'platform' or o['tags'].get('highway') == 'bus_stop']
+    bay = {n: min(plats, key=lambda q: stopmatch.dist(x['lat'], x['lon'], q['lat'], q['lon']))['id'] for n, x in sp.items()} if plats else {}
+    grouped = {}
+    for a in stop_areas:
+        stops_ = {m['ref'] for m in a['members'] if m['role'] == 'stop' and m['type'] == 'node'}
+        for m in a['members']:
+            if m['role'] == 'platform':
+                grouped.setdefault(f"{m['type'][0]}{m['ref']}", set()).update(stops_)
+    out = {}
+    for p in feed.patterns:
+        legs, got = traced[p.id]['legs'], {}
+        for k, sid in enumerate(p.stops):
+            ways = set((legs[k - 1]['ways'] if k else []) + (legs[k]['ways'] if k < len(legs) else []))
+            on = {n for w in ways if w in g.ways for n in g.ways[w].get('nodes', [])}
+            m = match.get(sid) or {}
+            o = osm_stops.get(m['osm'][0]['id']) if m.get('status') == 'matched' and m.get('osm') else None
+            if not o:
+                continue
+            cands = [(n, stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon'])) for n, x in sp.items() if n in on and bay.get(n) == o['id']]
+            cands = [c for c in cands if c[1] <= near]
+            if not cands:
+                continue
+            pref = grouped.get(o['id'], set()) if o else set()
+            got[sid] = min(cands, key=lambda c: (c[0] not in pref, c[1]))[0]
+        if got:
+            out[p.id] = got
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('feed')
@@ -141,6 +178,7 @@ def main():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['decide'] = stopmatch.decide(feed.stops[sid], osm_stops[m['osm'][0]['id']], m['diff'], sides.get(sid), names)
             m['side'] = sides.get(sid)
+    positions = stop_positions(feed, traced, match, osm_stops, g, list(getattr(osm.parse_pt, 'stop_areas', {}).values()))
     # Which relation is which pattern.
     best, chosen, scores = compare.pair(feed, traced, rels, rel_ways, coords, match)
     masters_by_ref = {}
@@ -172,6 +210,7 @@ def main():
             'chain_breaks': [{**b, 'lon': g.coord[b['node']][0], 'lat': g.coord[b['node']][1]} for b in routed_breaks if b['node'] in g.coord],
             'way_tags': {w: g.ways[w].get('tags', {}) for w in tr['ways'] if w in g.ways},
             'way_nodes': {w: g.ways[w].get('nodes', []) for w in tr['ways'] if w in g.ways},
+            'stop_positions': positions.get(p.id, {}),
             'shape': [[round(x, 6), round(y, 6)] for x, y in feed.shapes.get(p.shape_id, [])],
             'routed': {'ways': tr['ways'], 'geometry': [[round(x, 6), round(y, 6)] for x, y in tr['geometry']],
                        'legs': [{'from': l['from'], 'to': l['to'], 'ok': l['ok'], 'why': l['why'], 'ways': l['ways']} for l in tr['legs']],

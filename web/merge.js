@@ -232,7 +232,8 @@ const Merge = {
         if (q.kind === 'missing' && q.answer === 'add') added[q.s.id] = Edits.createNode(q.s.lat, q.s.lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`);
       }
       const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};
-      const members = [...x.stops.map(plat), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
+      const sp = p.stop_positions || {};   // PTv2: a stop's stop position on the road, then its platform
+      const members = [...x.stops.flatMap(st => [...(sp[st.s.id] ? [{type: 'node', ref: sp[st.s.id], role: 'stop'}] : []), plat(st)]), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
       const tags = {...x.tags, ...(hours ? x.timetable : {})};
       // stops gone for real: only if nothing else on OSM uses them (another relation); a stop that's a point on a
       // sidewalk line loses its bus stop tags instead of being deleted (deleting it would break the line)

@@ -118,6 +118,25 @@ class Sides(unittest.TestCase):
         self.assertFalse(across('1', osm(lat=41.7406, lon=-111.8299)))       # same side
 
 
+class StopPositions(unittest.TestCase):
+    """A route lists the stop position level with its stop's platform, on a road it drives; never another bay's."""
+    def test_nearest_platform_only(self):
+        feed = Feed()
+        feed.stops = {'1': Stop('bay A', lat=41.7400, lon=-111.8300)}
+        P = type('P', (), {'id': 'p', 'stops': ['1']})
+        feed.patterns = [P]
+        osm_stops = {
+            'n10': {'id': 'n10', 'osm_id': 10, 'lat': 41.7400, 'lon': -111.8300, 'tags': {'highway': 'bus_stop', 'public_transport': 'platform'}},
+            'n11': {'id': 'n11', 'osm_id': 11, 'lat': 41.7401, 'lon': -111.8300, 'tags': {'highway': 'bus_stop', 'public_transport': 'platform'}},
+            'n20': {'id': 'n20', 'osm_id': 20, 'lat': 41.74000, 'lon': -111.83006, 'tags': {'public_transport': 'stop_position', 'bus': 'yes'}},   # level with bay A
+            'n21': {'id': 'n21', 'osm_id': 21, 'lat': 41.74010, 'lon': -111.83006, 'tags': {'public_transport': 'stop_position', 'bus': 'yes'}},   # level with the other bay
+        }
+        match = {'1': {'status': 'matched', 'osm': [{'id': 'n10'}]}}
+        traced = {'p': {'legs': [{'ways': [5]}]}}
+        g = type('G', (), {'ways': {5: {'nodes': [1, 20, 21, 2]}}})
+        self.assertEqual(review.stop_positions(feed, traced, match, osm_stops, g, []), {'p': {'1': 20}})
+
+
 class Positions(unittest.TestCase):
     def test_same_spot_distance_comes_from_the_feed(self):
         res = {str(i): {'status': 'matched', 'osm': [{'dist': 5, 'how': 'ref'}]} for i in range(30)}

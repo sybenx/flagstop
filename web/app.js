@@ -690,7 +690,9 @@ function proposeRelation(p) {
   const members = [];
   const missing = [];
   for (const sid of p.stops) {
-    const ref = stopNodeRef(D.stops[sid]);
+    const ref = stopNodeRef(D.stops[sid]), sp = (p.stop_positions || {})[sid];
+    // PTv2: the stop position on the road (where the stop has one), then the platform
+    if (ref && sp) members.push({type: 'node', ref: sp, role: 'stop'});
     if (ref) members.push(ref.key ? {key: ref.key, role: 'platform'} : {type: 'node', ref: ref.ref, role: 'platform'});
     else missing.push(D.stops[sid]);
   }
