@@ -167,3 +167,6 @@ button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
 .fixcard .decide .why { color: var(--muted); font-size: 12px; margin: 2px 0; }
 .fixcard .decide .btns { margin: 4px 0 0; }
 .fixcard .decide.answered .why { opacity: .7; }
+.changehead { display: flex; gap: 8px; align-items: flex-start; }
+.changehead .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.changehead > button, .changehead > .chip { flex: none; }

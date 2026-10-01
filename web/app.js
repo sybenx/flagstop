@@ -842,6 +842,7 @@ function renderChanges(P) {
   const d = el('div', {class: 'detail'});
   d.append(el('h2', {style: 'margin-left:0'}, ops.length ? `${ops.length} of ${UPLOAD_CAP} changes` : 'No changes yet'));
   d.append(el('div', {class: 'hint', style: 'padding-left:0'}, 'Everything you decided, as one changeset. Review each line; remove what you don\'t want. Upload sends it to OSM under your account. Or take it to JOSM as osmChange, or Level0 as text.'));
+  if (ops.length) d.append(el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => { if (confirm(`Remove all ${ops.length} changes? (Undo brings them back.)`)) { Edits.clear(); render(); draw(); } }}, 'Remove all')));
   const over = ops.length > UPLOAD_CAP;
   if (over) d.append(el('div', {class: 'small bad', style: 'margin:4px 0'}, `Over the limit of ${UPLOAD_CAP} per upload: undo or remove some.`));
   if (Edits.roads.length) d.append(el('div', {class: 'small box'}, el('b', {}, `${Edits.roads.length} road edit${Edits.roads.length > 1 ? 's' : ''}`),
@@ -850,9 +851,11 @@ function renderChanges(P) {
     const box = el('div', {class: 'small box'});
     const label = op.kind === 'create' ? 'new ' + op.type : op.kind === 'delete' ? 'delete ' + op.type + ' ' + op.id : `${op.type} ${op.id}`;
     const road = Edits.roadOf(key);
-    box.append(el('div', {}, el('b', {}, label), ' ', el('span', {class: 'muted'}, op.note || ''),
-      road ? el('span', {class: 'chip edit', style: 'float:right', title: 'Part of a road edit: undo road edits (newest first) to take it back'}, 'road edit')
-           : el('button', {class: 'b tiny', style: 'float:right', onclick: () => { Edits.remove(key); render(); draw(); }}, 'remove')));
+    // the button in its own column at the top right: a long title wraps beside it, so after a remove the
+    // next line's button is where the last one was (click, click, click)
+    box.append(el('div', {class: 'changehead'}, el('span', {class: 'grow'}, el('b', {}, label), ' ', el('span', {class: 'muted'}, op.note || '')),
+      road ? el('span', {class: 'chip edit', title: 'Part of a road edit: undo it (Undo, newest first) to take it back'}, 'road edit')
+           : el('button', {class: 'b tiny', onclick: () => { Edits.remove(key); render(); draw(); }}, 'remove')));
     if (op.kind === 'create') {
       box.append(el('div', {class: 'mono muted'}, Object.entries(op.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
       if (op.type === 'relation') box.append(el('div', {class: 'muted'}, `${op.members.length} members`));
@@ -920,7 +923,7 @@ function renderChanges(P) {
     }
     btns.append(el('button', {class: 'b', onclick: () => download('flagstop.osc', Edits.osc(), 'application/xml')}, 'Download .osc (JOSM)'));
     btns.append(el('button', {class: 'b', onclick: () => { navigator.clipboard.writeText(Edits.level0()).then(() => toast('Level0 text copied — paste at level0.osmz.ru')); }}, 'Copy Level0 text'));
-    btns.append(el('button', {class: 'b', onclick: () => { if (confirm('Discard all changes?')) { Edits.clear(); render(); draw(); } }}, 'discard all'));
+
     d.append(btns, status);
   }
   // OAuth setup
