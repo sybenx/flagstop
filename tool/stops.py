@@ -41,7 +41,7 @@ def numbers(x):
 
 
 def street(x):
-    """'649 North 200 West' -> 'north 200 west'; '781 S Main, Smithfield' -> 's main'. The address without its house number."""
+    """'649 North 200 West' -> 'north 200 west'; '781 S Main, Smithfield' -> 's main'. The address without its number."""
     x = re.sub(r'\(.*?\)', ' ', x or '').split(',')[0].split(' - ')[0]
     x = re.sub(r"[^\w\s]", ' ', x.lower()).strip()
     x = re.sub(r'^\d+\s+', '', x)
@@ -329,7 +329,7 @@ def decide(s, o, diff, side=None, others=None):
                     lost = f"; OSM's '{extra(m)}' goes" + (f" (the agency announces '{s.desc}')" if s.desc else '') if extra(m) else ''
                     out[k] = {'pick': 'agency', 'why': f"same spot ({round(d)} m), so not a move: the agency's current name ({hn(m)} → {hn(g)}){lost}"}
                 else:
-                    out[k] = {'pick': 'ask', 'why': f"house number {hn(m)} → {hn(g)} and {round(d)} m apart: has the stop moved?"}
+                    out[k] = {'pick': 'ask', 'why': f"OSM's name says {hn(m)}, the agency's says {hn(g)}, and they're {round(d)} m apart: has the stop moved?"}
             else:
                 out[k] = {'pick': 'ask', 'why': f"they name different streets: is OSM's '{m}' the same place as the agency's '{g}'?"}
     # position: within FAR it's the same stop placed by two hands, unless OSM has it across the street
