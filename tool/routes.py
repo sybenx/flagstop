@@ -134,6 +134,32 @@ def bus_may(tags):
     return (True, True)
 
 
+def restrictions(raw):
+    """Turn restrictions a bus is held to: -> ({(from way, via node, to way)}, {(from way, via node): {to ways}}).
+    restriction:bus (or :psv) wins over restriction; one with except=bus/psv doesn't apply. Only a node as via:
+    a way as via (a U-turn across a dual carriageway) is rare and left out."""
+    no, only = set(), {}
+    for el in raw.get('elements', []):
+        t = el.get('tags', {})
+        if el['type'] != 'relation' or t.get('type') != 'restriction':
+            continue
+        if {'bus', 'psv'} & {x.strip() for x in t.get('except', '').split(';')}:
+            continue
+        kind = t.get('restriction:bus') or t.get('restriction:psv') or t.get('restriction', '')
+        frm = [m['ref'] for m in el.get('members', []) if m['role'] == 'from' and m['type'] == 'way']
+        via = [m['ref'] for m in el.get('members', []) if m['role'] == 'via']
+        vtype = [m['type'] for m in el.get('members', []) if m['role'] == 'via']
+        to = [m['ref'] for m in el.get('members', []) if m['role'] == 'to' and m['type'] == 'way']
+        if len(frm) != 1 or len(via) != 1 or vtype != ['node'] or not to:
+            continue
+        if kind.startswith('no_'):
+            for w in to:
+                no.add((frm[0], via[0], w))
+        elif kind.startswith('only_'):
+            only.setdefault((frm[0], via[0]), set()).update(to)
+    return no, only
+
+
 class Graph:
     def __init__(self, raw):
         self.coord = {}
@@ -144,6 +170,7 @@ class Graph:
             elif el['type'] == 'way':
                 self.ways[el['id']] = el
         self.adj = {}          # node -> [(node, way, cost_per_m, length)]
+        self.no_turn, self.only_turn = restrictions(raw)   # {(from way, via node, to way)}, {(from way, via node): {to ways}}
         self.blocked = {}      # way -> reason a bus can't use it (for explaining a divergence)
         self.cell = 0.002
         self.sgrid = {}        # grid cell -> [(way, i, a, b)] the drivable segments in it, for snapping
@@ -180,6 +207,7 @@ class Graph:
         ways, nodes = ways or {}, nodes or {}
         g = Graph.__new__(Graph)
         g.cell = self.cell
+        g.no_turn, g.only_turn = self.no_turn, self.only_turn
         g.coord = {**self.coord, **nodes}
         g.ways = dict(self.ways)
         g.blocked = dict(self.blocked)
@@ -351,9 +379,13 @@ class Graph:
             if seen > limit:
                 return None
             back = prev[st][0] if st in prev else (no_first or {}).get(n)
+            came = pw.get(st)   # the way the path arrived on: a turn restriction is from it, at n, to the next
+            only = self.only_turn.get((came, n)) if came is not None else None
             for m, wid, fac, L in self.adj.get(n, []):
                 if m == back:
                     continue   # no U-turn in the street: revisiting a node is allowed now, so say so
+                if came is not None and ((came, n, wid) in self.no_turn or (only and wid not in only)):
+                    continue   # a turn the signs forbid
                 q, jump = progress(at[st], m, L)
                 nc = c + L * (fac + stray_cost(m)) + jump
                 mt = (m, band(q))

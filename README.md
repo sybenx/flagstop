@@ -9,7 +9,7 @@ Nothing here uploads to OpenStreetMap. The tool compares, explains, and proposes
 Given a GTFS feed and a box of OpenStreetMap data, flagstop
 
 - **matches stops** — by `gtfs:stop_id` or `ref`, then by distance and name, but never to a stop across the street from where the buses calling there pull in (that's the other direction's, whatever its name or code says) — and sorts every stop into *matched* (with a tag-by-tag diff), *ambiguous* (you pick), or *missing*, plus the OSM stops nobody in the feed claims;
-- **routes every pattern over OSM's roads** the way a bus could drive them (`oneway`, `access`, `bus`/`psv` honoured), pulled toward the agency's drawn shape, so the path follows the line wherever the map allows and leaves it only where the map doesn't. Each departure is listed with a guess at why: a one-way against the line, a road a bus may not use, a gap between ways, or no road at all;
+- **routes every pattern over OSM's roads** the way a bus could drive them (`oneway`, `access`, `bus`/`psv` and turn restrictions honoured), pulled toward the agency's drawn shape, so the path follows the line wherever the map allows and leaves it only where the map doesn't. Each departure is listed with a guess at why: a one-way against the line, a road a bus may not use, a gap between ways, or no road at all;
 - **audits the OSM route relation** that covers each pattern: platforms missing or extra or out of order, member ways off the line, tags to add, and duplicates (two relations for one itinerary);
 - **proposes a PTv2 relation** for each pattern — matched platforms in order (each after its stop position on the road, where OSM has one), routed ways in order, tags per the [GTFS tagging scheme](https://wiki.openstreetmap.org/wiki/Proposal:GTFS_Tagging_Standard) — as a `.osm` file JOSM can import;
 - **shows what the feed knows that OSM might not**: `stop_desc` (at CVTD, the on-bus announcement — "Intermodal Transit Center", "Across from Firehouse Pizza"), `tts_stop_name`, `wheelchair_boarding`, `platform_code`.
@@ -105,7 +105,7 @@ tests/            unit tests for the rules; snapshot.json, what the review decid
 
 ## Not yet
 
-- Turn restrictions aren't honoured by the router.
+- The router keeps to turn restrictions with a node as via (bus exceptions honoured); one with a way as via is ignored.
 - A divergence over a road OSM has as `highway=footway`/`track` etc. reads as "no road here"; the roads query only fetches classes a bus can use.
 - Stations (`location_type=1`) and `stop_position` nodes are ignored; only platforms are matched. A platform tagged with a network none of the agency's coded stops use (an intercity coach's bay) ranks below the agency's own.
 - The via-point re-route doesn't persist across reloads.

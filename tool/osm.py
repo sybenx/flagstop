@@ -34,9 +34,12 @@ out meta;
 # Everything a bus might be driven on. Footways, paths and rail are left out; a route that uses a
 # service road or a parking aisle to reach a stop still needs those.
 ROADS_QUERY = """[out:json][timeout:300];
-way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road)$"]({bbox});
+way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road)$"]({bbox})->.roads;
+.roads out body;
+// turns a bus may not make (or must)
+relation(bw.roads)["type"="restriction"];
 out body;
->;
+.roads >;
 out skel qt;
 """
 

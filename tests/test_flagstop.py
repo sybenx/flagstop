@@ -137,6 +137,33 @@ class StopPositions(unittest.TestCase):
         self.assertEqual(review.stop_positions(feed, traced, match, osm_stops, g, []), {'p': {'1': 20}})
 
 
+class Turns(unittest.TestCase):
+    """The router keeps to turn restrictions, unless they except buses."""
+    def graph(self, rel_tags, to=12):
+        import routes
+        # a plus-shaped junction (node 0), arms north (1), east (2), south (3), west (4), plus a way round the
+        # north-east block (1 -> 5 -> 2) so a bus barred from turning right at 0 still has a way east
+        coords = {0: (0, 0), 1: (0, 0.001), 2: (0.001, 0), 3: (0, -0.001), 4: (-0.001, 0), 5: (0.001, 0.001)}
+        ways = {10: [3, 0], 11: [0, 1], 12: [0, 2], 13: [0, 4], 14: [1, 5, 2]}
+        els = [{'type': 'node', 'id': i, 'lon': x, 'lat': y} for i, (x, y) in coords.items()]
+        els += [{'type': 'way', 'id': w, 'nodes': ns, 'tags': {'highway': 'residential'}} for w, ns in ways.items()]
+        els.append({'type': 'relation', 'id': 1, 'tags': {'type': 'restriction', **rel_tags},
+                    'members': [{'type': 'way', 'ref': 10, 'role': 'from'}, {'type': 'node', 'ref': 0, 'role': 'via'}, {'type': 'way', 'ref': to, 'role': 'to'}]})
+        return routes.Graph({'elements': els})
+
+    def path(self, g):
+        return g.astar({3: 0}, {2: 0})[2]
+
+    def test_no_right_turn_goes_round(self):
+        self.assertNotEqual(self.path(self.graph({'restriction': 'no_right_turn'})), [10, 12])
+
+    def test_except_bus(self):
+        self.assertEqual(self.path(self.graph({'restriction': 'no_right_turn', 'except': 'bus'})), [10, 12])
+
+    def test_only_straight_on(self):
+        self.assertNotEqual(self.path(self.graph({'restriction': 'only_straight_on'}, to=11))[:2], [10, 12])
+
+
 class Positions(unittest.TestCase):
     def test_same_spot_distance_comes_from_the_feed(self):
         res = {str(i): {'status': 'matched', 'osm': [{'dist': 5, 'how': 'ref'}]} for i in range(30)}
