@@ -276,6 +276,7 @@ const Edits = {
   },
   async upload(comment, source, onStatus = () => {}) {
     if (!this.auth.token()) throw new Error('not signed in');
+    if ([...comment].length > 255) throw new Error(`the changeset comment is ${[...comment].length} characters; OSM takes 255 at most. Shorten it and upload again: nothing was sent`);
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});

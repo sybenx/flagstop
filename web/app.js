@@ -882,8 +882,12 @@ function renderChanges(P) {
     ...undoing.flatMap((u, i) => [i ? '; ' : '', `${u.name} as ${u.user} left it (`, el('a', {href: `https://www.openstreetmap.org/changeset/${u.changeset}`, target: '_blank'}, `changeset ${u.changeset}`), `, ${u.date})`]),
     '. After upload you get a record of it to post on their changeset.'));
   if (ops.length) {
-    const comment = el('input', {placeholder: 'changeset comment', value: S.comment || changesetComment(), style: 'width:100%', oninput: e => S.comment = e.target.value});
-    d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment);
+    // OSM takes 255 characters at most in a changeset comment (counted as characters, not bytes)
+    const count = el('div', {class: 'small muted', style: 'text-align:right'});
+    const showCount = v => { const n = [...v].length; count.textContent = `${n} / 255`; count.style.color = n > 255 ? 'var(--miss)' : ''; };
+    const comment = el('input', {placeholder: 'changeset comment', value: S.comment || changesetComment(), style: 'width:100%', maxlength: 255, oninput: e => { S.comment = e.target.value; showCount(e.target.value); }});
+    showCount(comment.value);
+    d.append(el('h2', {style: 'margin-left:0'}, 'Send'), comment, count);
     const status = el('div', {class: 'small muted', style: 'margin:6px 0'});
     const btns = el('div', {class: 'btns'});
     if (user && sug > SUGGEST_CAP) btns.append(el('button', {class: 'b primary', disabled: ''}, `Upload (over the ${SUGGEST_CAP}-suggestion limit)`));
