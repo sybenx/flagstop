@@ -6,6 +6,7 @@
 Static files come from web/. With a feed and roads file loaded, the page can ask for a fresh trace
 of a pattern through extra via points the reviewer drops on the map:
 
+    GET /api/roads?pattern=<id>                             -> the roads around the itinerary (Overpass JSON), kept a day
     GET /api/route?pattern=<id>                             -> the itinerary's route fields (path, divergences, joins,
                                                                stop positions), from its own roads, fetched when first asked
     GET /api/trace?pattern=<id>&via=<lon>,<lat>&via=...     -> the same shape as review.json's routed{}
@@ -61,7 +62,7 @@ def roads_for(pid):
     if not fresh:
         try:
             one = type('F', (), {'patterns': [p], 'shapes': feed.shapes, 'stops': feed.stops})
-            raw = osm.fetch_roads_near(osm.corridors(one, step=100))
+            raw = osm.fetch_roads_near(osm.corridors(one, step=100), tries=1)   # someone is waiting: one round, then the older copy
             os.makedirs(os.path.dirname(path), exist_ok=True)
             json.dump(raw, open(path + '.tmp', 'w')); os.replace(path + '.tmp', path)
             return raw
@@ -176,6 +177,14 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == '/api/refresh':
             return self._json(REFRESH)
         q = urllib.parse.parse_qs(u.query)
+        if u.path == '/api/roads':   # a route's roads, raw, for the page to route itself
+            pid = (q.get('pattern') or [''])[0]
+            if pid not in STATE.get('patterns', {}):
+                return self._json({'error': 'unknown pattern'}, 404)
+            try:
+                return self._json(roads_for(pid))
+            except Exception as e:
+                return self._json({'error': str(e)}, 503)
         if u.path == '/api/route':
             pid = (q.get('pattern') or [''])[0]
             if pid not in STATE.get('patterns', {}):

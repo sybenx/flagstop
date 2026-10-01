@@ -121,7 +121,7 @@ def fetch_roads(bbox, feed=None):
     return fetch_roads_near(corridors(feed, step=100))
 
 
-def fetch_roads_near(lines):
+def fetch_roads_near(lines, tries=3):
     """The roads a bus could drive within a tile or so of these lines ([(lon, lat), ...] each), with the turn
     restrictions on them: what one route needs, in one small query."""
     cells = set()
@@ -143,7 +143,7 @@ def fetch_roads_near(lines):
             if j is not None:
                 start = prev = j
     parts = ''.join(f'  way["highway"~"^({ROAD_CLASSES})$"]({s:.5f},{w:.5f},{n:.5f},{e:.5f});\n' for s, w, n, e in boxes)
-    return fetch(f"""[out:json][timeout:300];
+    return fetch(tries=tries, query=f"""[out:json][timeout:300];
 (
 {parts})->.roads;
 .roads out body;

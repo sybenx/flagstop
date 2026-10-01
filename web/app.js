@@ -94,17 +94,56 @@ function patternGrade(p) {
 // a route not routed yet (its roads load when it's opened): nothing to draw or say about the path
 const NOT_ROUTED = {ways: [], geometry: [], legs: [], divergences: [], score: null};
 const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : (p.routed || NOT_ROUTED);
-/** A route's roads and path: fetched from the server when first needed (its roads, from Overpass, the first
- *  time each day), then kept on the pattern. -> true when it's there. */
+// ---------- a route's roads, and routing it here in the page (web/router.js) ----------
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const ROAD_CLASSES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road';
+/** The Overpass query for the roads within a tile or so of a route's line (tool/osm.py's fetch_roads_near). */
+function roadsQuery(p) {
+  const pts = p.shape.length > 1 ? p.shape : p.stops.map(s => [D.stops[s].lon, D.stops[s].lat]);
+  const line = [pts[0]];
+  for (const x of pts.slice(1)) if (Math.hypot((x[0] - line[line.length - 1][0]) * 83000, (x[1] - line[line.length - 1][1]) * 111000) >= 100) line.push(x);
+  line.push(pts[pts.length - 1]);
+  const T = 0.005, cells = new Set();
+  for (const [lon, lat] of line) { const i = Math.floor(lat / T), j = Math.floor(lon / T); for (const a of [-1, 0, 1]) for (const b of [-1, 0, 1]) cells.add(`${i + a},${j + b}`); }
+  const rows = {};
+  for (const c of cells) { const [i, j] = c.split(',').map(Number); (rows[i] = rows[i] || []).push(j); }
+  const boxes = [];
+  for (const [i, js] of Object.entries(rows)) {
+    js.sort((a, b) => a - b);
+    let start = js[0], prev = js[0];
+    for (const j of [...js.slice(1), null]) {
+      if (j !== null && j === prev + 1) { prev = j; continue; }
+      boxes.push([+i * T, start * T, (+i + 1) * T, (prev + 1) * T]);
+      if (j !== null) start = prev = j;
+    }
+  }
+  return `[out:json][timeout:120];\n(\n${boxes.map(([s, w, n, e]) => `  way["highway"~"^(${ROAD_CLASSES})$"](${s.toFixed(5)},${w.toFixed(5)},${n.toFixed(5)},${e.toFixed(5)});\n`).join('')})->.roads;\n.roads out body;\nrelation(bw.roads)["type"="restriction"];\nout body;\n.roads >;\nout skel qt;\n`;
+}
+/** A route's roads: from the local server's day-old copy when there is one (tool/serve.py), else Overpass. */
+async function roadsFor(p) {
+  try {
+    const r = await fetch(`/api/roads?pattern=${encodeURIComponent(p.id)}`);
+    if (r.ok) return await r.json();
+  } catch (e) { /* no server: a published copy of the page */ }
+  let last = null;
+  for (const url of OVERPASS) {
+    try {
+      const r = await fetch(url, {method: 'POST', body: new URLSearchParams({data: roadsQuery(p)})});
+      if (r.ok) return await r.json();
+      last = new Error(`Overpass ${r.status}`);
+    } catch (e) { last = e; }
+  }
+  throw last || new Error('no roads');
+}
+const stopsLL = p => Object.fromEntries(p.stops.map(s => [s, [D.stops[s].lon, D.stops[s].lat]]));
+/** A route's roads and path: its roads when first needed, then routed here; kept on the pattern. -> true when it's there. */
 async function ensureRouted(p) {
   if (p.routed) return true;
   if (p.routing) return p.routing;
   p.routing = (async () => {
     try {
-      const r = await fetch(`/api/route?pattern=${encodeURIComponent(p.id)}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || r.status);
-      Object.assign(p, j);
+      if (!p.graph) p.graph = new Router.Graph(await roadsFor(p));
+      Object.assign(p, Router.routePattern({id: p.id, stops: p.stops, shape: p.shape}, stopsLL(p), p.graph, D.osm_stops, D.stop_areas || [], sid => D.stops[sid].match));
       return true;
     } catch (e) { p.routeError = e.message; return false; }
     finally { p.routing = null; }

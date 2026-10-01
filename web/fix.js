@@ -21,10 +21,13 @@ function roadPatches(extra = {}) {
 }
 const hasRoadEdits = () => Object.values(Edits.ops).some(o => o.type === 'way' && o.nodes && String(o.note || '').startsWith('road: '));
 
+/** The route as it would run with road edits (and via points), worked out here on a copy of its roads. */
 async function traceWith(pid, extra, vias = []) {
-  const r = await fetch('/api/trace', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pattern: pid, vias, ...roadPatches(extra)})});
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-  return r.json();
+  const p = patternById(pid);
+  if (!p.graph && !(await ensureRouted(p))) throw new Error(p.routeError || 'no roads');
+  const {ways, nodes} = roadPatches(extra);
+  const g = Object.keys(ways).length || Object.keys(nodes).length ? p.graph.patched(ways, nodes) : p.graph;
+  return Router.traceWithVias({id: p.id, stops: p.stops, shape: p.shape}, stopsLL(p), g, vias);
 }
 /** The open route as it would run with what's in Changes (and any via points). */
 async function liveRoute() {
