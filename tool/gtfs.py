@@ -216,8 +216,9 @@ def load(path):
             deps = sorted(h.pop(4)) if len(h) > 4 else []
             gaps = sorted(b - a for a, b in zip(deps, deps[1:]) if b > a)
             h[3] = gaps[len(gaps) // 2] if gaps else None
-            # steady: nearly every gap within a quarter of the usual one (else one interval would mislead)
-            h.append(bool(gaps) and sum(abs(g - h[3]) <= h[3] / 4 for g in gaps) >= 0.8 * len(gaps))
+            # steady: nearly every gap the usual one, give or take a minute (a twentieth for long gaps); a timetable
+            # that drifts through the day (12, 16, 18 minutes) has no one interval, and one would mislead
+            h.append(bool(gaps) and sum(abs(g - h[3]) <= max(60, h[3] / 20) for g in gaps) >= 0.8 * len(gaps))
     patterns = _join_loops(kept, trips, times, of_trip, shapes)
     # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
     def days(sid):
