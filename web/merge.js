@@ -57,7 +57,19 @@ const Merge = {
       const name = el('a', {href: '#', onclick: e => { e.preventDefault(); const at = q.o ? osmPos(q.o) : [q.s.lon, q.s.lat]; map.flyTo({center: at, zoom: 17.5}); }}, q.s.name);
       const btn = (label, choice, pick) => el('button', {class: 'b tiny' + (q.answer === choice && (!pick || (S.merge.answers[q.s.id] || {}).pick === pick) ? ' primary' : ''), onclick: () => set(q.s.id, choice, pick)}, label);
       const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')}, el('div', {}, name));
-      if (q.kind === 'where') row.append(el('div', {class: 'why'}, q.why), el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
+      if (q.kind === 'where') {
+        row.append(el('div', {class: 'why'}, q.why), el('div', {class: 'btns'}, btn("Move it to the agency's spot", 'move'), btn('Keep it where it is', 'keep')));
+        // moving it there: what else about it differs goes along by default (its address, its code), each one flippable
+        if (q.answer === 'move') {
+          const t = this.moveTags(q), chips = el('div', {class: 'chips'});
+          for (const [k, v] of Object.entries(t)) {
+            const d = q.s.match.diff[k];
+            chips.append(el('button', {class: 'pickchip' + (v ? ' take' : ''), title: v ? "Goes with it. Click to keep OSM's" : "Stays as OSM has it. Click to take the agency's",
+              onclick: () => { S.merge.answers[q.s.id].tags = {...t, [k]: !v}; render(); }}, v ? `✓ ${KEY_WORDS[k] || k}: ${d.osm || '—'} → ${d.gtfs}` : `${KEY_WORDS[k] || k} kept`));
+          }
+          if (chips.childNodes.length) row.append(el('div', {class: 'why'}, 'Moving it to the agency\'s spot, its address and codes go with it:'), chips);
+        }
+      }
       if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`),
         el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
       if (q.kind === 'missing') row.append(el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
@@ -65,6 +77,13 @@ const Merge = {
       box.append(row);
     }
     return box;
+  },
+  /** For a stop being moved to the agency's spot: which of its other differences go with it -> {key: true|false}.
+      Everything that differs, by default (it's the agency's stop at the agency's spot now), unless already answered. */
+  moveTags(q) {
+    const a = S.merge.answers[q.s.id] || {}, diff = (q.s.match && q.s.match.diff) || {}, out = {};
+    for (const k of ['name', 'ref', 'gtfs:stop_id', 'route_ref', 'description']) if (diff[k] && diff[k].gtfs) out[k] = a.tags && k in a.tags ? a.tags[k] : true;
+    return out;
   },
   /** A road as a person would know it: its name, its ref, or what it is and which stop it's by. */
   roadName(p, b) {
@@ -140,7 +159,12 @@ const Merge = {
       // the stop decisions: moves, a stop picked out of several, stops added
       const added = {};
       for (const q of x.decide) {
-        if (q.kind === 'where' && q.answer === 'move') Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {lat: q.s.lat, lon: q.s.lon}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+        if (q.kind === 'where' && q.answer === 'move') {
+          const tags = {}, diff = q.s.match.diff || {};
+          for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
+          if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !q.o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
+          Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {lat: q.s.lat, lon: q.s.lon, tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+        }
         if (q.kind === 'which') { Edits.decisions[q.s.id] = (S.merge.answers[q.s.id] || {}).pick; }
         if (q.kind === 'missing' && q.answer === 'add') added[q.s.id] = Edits.createNode(q.s.lat, q.s.lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`);
       }
