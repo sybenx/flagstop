@@ -93,7 +93,7 @@ const Review = {
       }
       if (st.inChanges) {
         ul.append(el('div', {class: 'reviewrow dim', 'data-review': s.id, onclick: () => this.focus(s.id)}, el('span', {class: 'n'}, st.i + 1), el('span', {class: 'dotc ' + st.status}),
-          el('span', {class: 'grow'}, s.name, el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'in Changes'))));
+          el('span', {class: 'grow'}, s.name, el('span', {class: 'chip edit', style: 'margin-left:6px'}, Edits.ops['n' + osmNumId(st.o)] ? 'in Changes' : 'uploaded'))));
         continue;
       }
       const pk = this.pick(st), keys = Object.keys(st.decide);

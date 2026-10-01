@@ -33,7 +33,7 @@ python3 tool/serve.py                                  # → http://127.0.0.1:87
 Roads are loaded a route at a time, and routed in the page (`web/router.js`, the same router as `tool/routes.py`, checked against it on every itinerary): opening a route (or the list, in the background) fetches the roads around that one route, a small query, kept a day in `cache/roads/`. So a big system costs no more up front than a small one. `--route-all` routes everything at build time instead, with one roads fetch for the whole area (the tests, or a build to publish).
 ```
 
-After you upload from the page, *refresh* reads your changesets straight from OSM's API (`tool/patch.py`): seconds, and current, where Overpass takes minutes and runs behind. A plain refresh fetches stops and routes again, and the roads only if they're a day old (`--refresh-roads` to force). Overpass servers are tried in turn when one is busy.
+After you upload, the page shows it done at once, as iD does: what went up is laid over flagstop's copy, with the ids and versions OSM gave it, until the OSM data includes it. With `tool/serve.py`, *refresh* also reads your changesets straight from OSM's API (`tool/patch.py`): seconds, and current, where Overpass takes minutes and runs behind. A plain refresh fetches stops and routes again, and the roads only if they're a day old (`--refresh-roads` to force). Overpass servers are tried in turn when one is busy.
 
 If Overpass or the agency is unreachable from where you run this, fetch by hand and pass the files:
 

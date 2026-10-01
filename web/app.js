@@ -76,8 +76,9 @@ function matchedOsm(s) {
 function stopNodeRef(s) {
   const o = matchedOsm(s);
   if (o) return {type: 'node', ref: o.osm_id ?? +o.id.slice(1)};
-  const key = Object.keys(Edits.ops).find(k => Edits.ops[k].kind === 'create' && Edits.ops[k].type === 'node' && Edits.ops[k].tags['gtfs:stop_id'] === s.id);
-  return key ? {key, role: 'platform'} : null;
+  const all = Edits.all(), key = Object.keys(all).find(k => all[k].kind === 'create' && all[k].type === 'node' && all[k].tags['gtfs:stop_id'] === s.id);
+  if (!key) return null;
+  return all[key].uploaded && all[key].newId ? {type: 'node', ref: all[key].newId} : {key, role: 'platform'};   // uploaded: it has a real id now
 }
 function patternGrade(p) {
   if (p.temporary) return {chip: 'temporary', cls: '', order: 9};
@@ -803,7 +804,7 @@ function renderAudit(a, p) {
   box.append(el('div', {}, el('b', {}, a.name || `relation ${a.id}`), ' ', el('a', {href: 'https://www.openstreetmap.org/relation/' + a.id, target: '_blank'}, `r${a.id}`),
     el('span', {class: 'muted'}, ` · v${a.version} by ${a.user} · ${(a.timestamp || '').slice(0, 10)}`),
     a.duplicate ? el('span', {class: 'chip warn', style: 'margin-left:6px'}, 'duplicate') : null, a.both_directions ? el('span', {class: 'chip warn', style: 'margin-left:6px'}, 'both directions') : null,
-    op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, op.kind === 'delete' ? 'to delete' : 'edited') : null));
+    op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, op.uploaded ? (op.kind === 'delete' ? 'deleted' : 'uploaded') : op.kind === 'delete' ? 'to delete' : 'edited') : null));
   box.append(el('div', {class: 'muted'}, `covers ${pct(a.cover.shape_covered)} of the line; ${pct(a.cover.ways_on_shape)} of its ways are on it · ${a.ways.in_relation} ways · ${a.stops.in_relation} stop members`));
   const issues = [];
   if (a.both_directions) issues.push(el('li', {}, 'One relation holds both directions. PTv2 wants one per direction: this one is kept for one, and a new one created for the other (see "Fix relation").'));
@@ -863,7 +864,7 @@ function proposeRelation(p) {
   }
   const tags = {...p.proposed_tags};
   // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern has claimed.
-  const claimed = new Set(Object.values(Edits.ops).filter(o => o.type === 'relation' && o.kind === 'modify' && o.note !== p.id).map(o => o.id));
+  const claimed = new Set(Object.values(Edits.all()).filter(o => o.type === 'relation' && o.kind === 'modify' && o.note !== p.id).map(o => o.id));
   const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
   // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
   // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.
@@ -969,7 +970,7 @@ function renderStop(P, s) {
   { const nl = noteLines([...(s.osm_notes || [])]); if (nl) d.append(nl); }
   const place = Station.ofStop(s);
   if (place) d.append(el('div', {class: 'note'}, `A bay at ${place.stations[0].tags.name || 'a station'}. `, el('button', {class: 'b tiny', onclick: () => Station.open(place.id)}, 'The station: how it\'s mapped')));
-  const existing = Object.keys(Edits.ops).find(k => Edits.ops[k].kind === 'create' && Edits.ops[k].tags['gtfs:stop_id'] === s.id);
+  const existing = Object.keys(Edits.all()).find(k => Edits.all()[k].kind === 'create' && Edits.all()[k].tags['gtfs:stop_id'] === s.id);
 
   if (st === 'missing') {
     d.append(el('h2', {style: 'margin-left:0'}, 'Not in OSM'));
@@ -1026,11 +1027,14 @@ function osmPos(o) { const op = Edits.get('n' + osmNumId(o)); return op && op.la
 function osmStopBox(s, o, c, pickable) {
   const box = el('div', {class: 'small box'});
   const op = Edits.get('n' + osmNumId(o));
-  box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${Math.round(m(osmPos(o), [s.lon, s.lat]))} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, 'edited') : null));
-  box.append(el('div', {class: 'muted mono'}, Object.entries(o.tags).map(([k, v]) => `${k}=${v}`).join('  ')));
+  box.append(el('div', {}, el('b', {}, o.tags.name || '(no name)'), ' ', el('a', {href: osmLink(o.id), target: '_blank'}, o.id), el('span', {class: 'muted'}, ` · ${Math.round(m(osmPos(o), [s.lon, s.lat]))} m from the agency's point · by ${c.how} · v${o.version} ${(o.timestamp || '').slice(0, 10)} ${o.user}`), op ? el('span', {class: 'chip edit', style: 'margin-left:6px'}, op.uploaded ? 'uploaded' : 'edited') : null));
+  const now = op && op.kind !== 'delete' ? op.tags : o.tags;   // as it is now: with what's in Changes or went up
+  box.append(el('div', {class: 'muted mono'}, Object.entries(now).map(([k, v]) => `${k}=${v}`).join('  ')));
   if (o.notes && o.notes.length && !(s.osm_notes || []).length) box.append(noteLines(o.notes));
   const base = (Edits.decisions[s.id] || (s.match && s.match.status === 'matched' && s.match.osm[0] && s.match.osm[0].id === o.id)) ? (s.match.diff || {}) : null;
   const diff = base && {...base};
+  // what the tags now already say (in Changes, or uploaded) isn't a difference any more
+  if (diff) for (const k of Object.keys(diff)) if (k !== 'position' && k !== 'tagging' && (now[k] || '') === (diff[k].gtfs || '')) delete diff[k];
   // The review only calls a position different past FAR (closer is the same stop placed by two hands), but
   // moving it to the agency's point is always on offer, as long as there's a distance to speak of.
   // Measured from where the stop is now: moved in Changes (by hand, say), or as OSM has it.
@@ -1109,7 +1113,7 @@ function renderExtra(P) {
           el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: e => { e.stopPropagation(); S.looked.add('osm:' + o.id); render(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); popupOsm(o.id, [o.lon, o.lat]); }}, 'Show on map'),
           el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { e.stopPropagation(); g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone"),
           seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:6px', onclick: e => { e.preventDefault(); e.stopPropagation(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null) : null,
-        op ? el('span', {class: 'chip edit'}, op.kind === 'delete' ? 'to remove' : 'edited') : null,
+        op ? el('span', {class: 'chip edit'}, op.uploaded ? (op.kind === 'delete' ? 'removed' : 'uploaded') : op.kind === 'delete' ? 'to remove' : 'edited') : null,
         o.notes && o.notes.length ? noteLines(o.notes) : null),
       el('span', {class: 'muted small'}, `v${o.version}`));
     r.onclick = () => { map.flyTo({center: [o.lon, o.lat], zoom: 17}); popupOsm(o.id, [o.lon, o.lat]); };
@@ -1342,6 +1346,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name);
+  Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
   Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();

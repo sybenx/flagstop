@@ -13,6 +13,7 @@ const Edits = {
   ops: {},          // key -> op ; key is 'n123' / 'w123' / 'r123' for existing, 'new:n-1' for new
   nextId: -1,
   decisions: {},    // stop id -> osm id chosen for an ambiguous match
+  uploaded: {},     // what went up, until the OSM data catches up: key -> the op, with uploaded (changeset), newId, newVersion, at
   roads: [],        // road edits, oldest first: {what, before: {key: op as it was, or null}} — so their parts can't be removed singly
   listeners: [],
   // Undo/redo: every save() records the basket as it was before, one entry per user action (all the saves a
@@ -25,6 +26,7 @@ const Edits = {
       const s = JSON.parse(localStorage.getItem(this.key) || '{}');
       this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.roads = s.roads || [];
     } catch (e) { this.ops = {}; }
+    try { this.uploaded = JSON.parse(localStorage.getItem(this.key + '.uploaded') || '{}'); } catch (e) { this.uploaded = {}; }
     this.history = []; this.future = []; this.committed = this.state();
   },
   state() { return JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions, roads: this.roads}); },
@@ -97,7 +99,17 @@ const Edits = {
     return e.label || this.describe(now, e.state);
   },
   count() { return Object.keys(this.ops).length; },
-  get(key) { return this.ops[key]; },
+  /** The object as flagstop knows it now: waiting in Changes, or uploaded and not in the OSM data yet. */
+  get(key) { return this.ops[key] || this.uploaded[key]; },
+  /** Everything changed: uploaded (until the data has it), then what's waiting. */
+  all() { return {...this.uploaded, ...this.ops}; },
+  /** The OSM data now includes what went up before `since` (an ISO time): those stop being laid over it. */
+  settle(since) {
+    if (!since) return;
+    const t = new Date(since).getTime(), week = Date.now() - 7 * 86400000;
+    for (const [k, op] of Object.entries(this.uploaded)) if (new Date(op.at).getTime() <= t || new Date(op.at).getTime() < week) delete this.uploaded[k];
+    try { localStorage.setItem(this.key + '.uploaded', JSON.stringify(this.uploaded)); } catch (e) {}
+  },
   remove(key) { delete this.ops[key]; this.save(); },
   clear() { this.ops = {}; this.roads = []; this.save(); },
   /** A road edit is many ops that only make sense together (a new node, the way using it, the relations
@@ -121,6 +133,9 @@ const Edits = {
   /** Modify an existing object's tags and/or position. base = {version, tags, lat, lon, members, nodes}. */
   modify(type, id, base, changes, note) {
     const key = type[0] + id;
+    // after an upload, the object is as uploaded, at its new version: start from that, not the older copy
+    const up = !this.ops[key] && this.uploaded[key];
+    if (up && up.kind !== 'delete' && up.newVersion) base = {version: up.newVersion, tags: up.tags, lat: up.lat, lon: up.lon, members: up.members, nodes: up.nodes};
     const op = this.ops[key] || {kind: 'modify', type, id, base: JSON.parse(JSON.stringify(base)), tags: {...base.tags}, lat: base.lat, lon: base.lon, members: base.members, nodes: base.nodes, note};
     if (changes.tags) op.tags = {...op.tags, ...changes.tags};
     for (const k of changes.removeTags || []) delete op.tags[k];
@@ -325,10 +340,25 @@ const Edits = {
 
     // edits of someone else's that this changeset undid: the page offers a record to leave on theirs
     const undid = Object.values(this.ops).filter(op => op.undoes).map(op => op.undoes);
-    for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
+    this.landed(id, diff, skipped);
     this.roads = [];
     this.save();
     this.history = []; this.future = [];   // what went to OSM isn't taken back from here
     return {id, skipped, undid};
+  },
+  /** What went up is laid over flagstop's copy until the OSM data has it, as iD does: the page shows it done
+   *  at once (no refresh), with the ids and versions OSM gave it (diff: the upload's diffResult). */
+  landed(id, diff, skipped = []) {
+    const at = new Date().toISOString();
+    for (const [key, op] of Object.entries(this.ops)) {
+      if (skipped.includes(key)) continue;
+      const e = [...diff.getElementsByTagName(op.type)].find(x => x.getAttribute('old_id') === String(op.id));
+      const done = {...JSON.parse(JSON.stringify(op)), uploaded: id, at, newId: e && e.getAttribute('new_id') ? +e.getAttribute('new_id') : null,
+        newVersion: e && e.getAttribute('new_version') ? +e.getAttribute('new_version') : null};
+      this.uploaded[key] = done;
+      if (op.kind === 'create' && done.newId) this.uploaded[op.type[0] + done.newId] = done;
+    }
+    try { localStorage.setItem(this.key + '.uploaded', JSON.stringify(this.uploaded)); } catch (e) {}
+    for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
   },
 };

@@ -12,14 +12,17 @@
 /** Road edits waiting in Changes, as the server's re-routing takes them; `extra` overrides on top. */
 function roadPatches(extra = {}) {
   const ways = {}, nodes = {};
-  for (const op of Object.values(Edits.ops)) {
-    if (op.type === 'way' && op.kind !== 'delete' && op.nodes) ways[op.id] = {nodes: op.nodes, tags: op.tags};
-    if (op.type === 'node' && op.kind !== 'delete' && op.lat != null) nodes[op.id] = [op.lon, op.lat];
+  // uploaded too, until the roads data has them: the route runs on the roads as they are now
+  for (const [key, op] of Object.entries(Edits.all())) {
+    if (op.uploaded && op.kind === 'create' && !key.startsWith('new:')) continue;   // the same op, under its new id
+    const id = op.uploaded && op.newId ? op.newId : op.id;
+    if (op.type === 'way' && op.kind !== 'delete' && op.nodes) ways[id] = {nodes: op.nodes.map(n => n < 0 && Edits.uploaded['new:n' + n] && Edits.uploaded['new:n' + n].newId || n), tags: op.tags};
+    if (op.type === 'node' && op.kind !== 'delete' && op.lat != null) nodes[id] = [op.lon, op.lat];
   }
   Object.assign(ways, extra.ways || {}); Object.assign(nodes, extra.nodes || {});
   return {ways, nodes};
 }
-const hasRoadEdits = () => Object.values(Edits.ops).some(o => o.type === 'way' && o.nodes && String(o.note || '').startsWith('road: '));
+const hasRoadEdits = () => Object.values(Edits.all()).some(o => o.type === 'way' && o.nodes && String(o.note || '').startsWith('road: '));
 
 /** The route as it would run with road edits (and via points), worked out here on a copy of its roads. */
 async function traceWith(pid, extra, vias = []) {
