@@ -214,9 +214,9 @@ const Roads = {
     return {ways: out, bad};
   },
   /** Every relation that uses an affected way, repaired. -> [{id, tags, members, bad}] */
-  async repair(t) {
+  async repair(t, skip = new Set()) {   // skip: relations the caller rewrites anyway (a merge's own)
     const affected = new Set([...Object.keys(t.split).map(Number), ...t.touched]);
-    const rels = this.relIds().map(id => this.rel(id)).filter(r => r && r.members.some(x => x.type === 'way' && affected.has(x.ref)));
+    const rels = this.relIds().filter(id => !skip.has(id)).map(id => this.rel(id)).filter(r => r && r.members.some(x => x.type === 'way' && affected.has(x.ref)));
     // routes are walked end to end, so every member way's nodes are needed, not only the ones on screen
     await this.fetchWays(rels.filter(r => this.isPT(r)).flatMap(r => r.members.filter(x => x.type === 'way').map(x => x.ref)));
     const cand = new Set([...Object.values(t.split).flat(), ...t.touched]);
@@ -341,11 +341,11 @@ const Roads = {
   },
 
   /** Run an edit: work it out, repair relations, show what happens, add to Changes. */
-  async run(what, build) {
+  async run(what, build, skip = new Set()) {
     const t = this.tx();
     try {
       build(t);
-      const repairs = await this.repair(t);
+      const repairs = await this.repair(t, skip);
       const bad = repairs.flatMap(r => r.bad.map(b => ({...b, rel: r})));
       if (bad.length && !confirm(`${what}\n\n${bad.length} place${bad.length > 1 ? 's' : ''} in the routes can't be repaired automatically:\n` +
         bad.slice(0, 8).map(b => `  r${b.rel.id} ${b.rel.tags.name || ''}: ${b.why}${b.after ? ` (after w${b.after}, before w${b.before})` : ''}`).join('\n') +
@@ -361,9 +361,9 @@ const Roads = {
 
 
   // ---------- the operations ----------
-  splitAt(wid, nid) {
+  splitAt(wid, nid, skip = new Set()) {   // skip: relations the caller is about to rewrite, not to repair
     const w = this.way(wid);
-    return this.run(`Split ${this.label(w)} (w${wid}) at n${nid}`, t => this.split(t, wid, nid));
+    return this.run(`Split ${this.label(w)} (w${wid}) at n${nid}`, t => this.split(t, wid, nid), skip);
   },
   splitHere(s) {
     const w = this.way(s.way);
