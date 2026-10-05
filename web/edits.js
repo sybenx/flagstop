@@ -366,6 +366,8 @@ const Edits = {
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});
+    // a modify that differs from nothing OSM has (its tags re-read as they are) isn't sent: with none left, no changeset
+    if (!Object.values(this.ops).some(op => op.kind !== 'modify' || this.diff(op).length)) throw new Error('nothing to upload: no change differs from what OSM has now');
     onStatus('opening changeset…');
     const tags = {created_by: 'flagstop', comment, source: source || 'GTFS', host: typeof location !== 'undefined' ? location.origin : ''};
     const csXml = `<osm><changeset>${Object.entries(tags).map(([k, v]) => `<tag k="${this.xmlEsc(k)}" v="${this.xmlEsc(v)}"/>`).join('')}</changeset></osm>`;

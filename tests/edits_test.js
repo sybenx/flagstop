@@ -352,6 +352,14 @@ test('upload: opens, uploads, closes; what went up is kept as uploaded, and the 
   assert.deepStrictEqual(Roads.node(10).tags, {name: 'B', ref: 'x'});
 });
 
+test('upload: a basket whose every change OSM already has opens no changeset', async () => {
+  reset();
+  Edits.modify('node', 10, {version: 1, tags: {name: 'A'}, lat: LAT, lon: LON0}, {tags: {name: 'A'}}, 'no change');
+  const api = Edits.fetch = fakeOsm({'node/10': {version: 1, tags: {name: 'A'}, lat: LAT, lon: LON0}});
+  await assert.rejects(() => Edits.upload('nothing', 'GTFS'), /nothing to upload/);
+  assert.deepStrictEqual(wrote(api.log), []);
+});
+
 test('upload: refuses without a sign-in, or a comment OSM would cut, before reading or sending anything', async () => {
   reset();
   Edits.modify('node', 10, {version: 1, tags: {name: 'A'}, lat: LAT, lon: LON0}, {tags: {name: 'B'}}, 'n');
