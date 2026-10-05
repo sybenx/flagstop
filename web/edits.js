@@ -196,8 +196,11 @@ const Edits = {
   /** osmChange document. versions: {key: version} for modify/delete (from base, or freshly fetched). */
   osc(changeset, versions = {}) {
     const by = {create: [], modify: [], delete: []};
-    // creations: nodes before relations, so relation members resolve
-    const order = op => (op.type === 'node' ? 0 : op.type === 'way' ? 1 : 2);
+    // creations: nodes before ways before relations, so members exist when they're referred to; deletions
+    // the other way round, so a relation is gone before the nodes it held (OSM keeps a node a relation still
+    // uses, with if-unused, even when that relation is deleted later in the same upload)
+    const rank = {node: 0, way: 1, relation: 2};
+    const order = op => op.kind === 'delete' ? -rank[op.type] : rank[op.type];
     for (const [key, op] of Object.entries(this.ops).sort((a, b) => order(a[1]) - order(b[1]))) {
       if (op.kind === 'modify' && !this.diff(op).length) continue;   // nothing changed: don't bump its version
       const v = versions[key] ?? (op.base && op.base.version);
