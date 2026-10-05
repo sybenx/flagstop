@@ -336,6 +336,12 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(set(f), {'restriction from/to still touch via', 'roads chained end to end'})
         self.assertEqual(f['restriction from/to still touch via']['objects'], ['r302', 'w100'])
 
+    def test_a_second_relation_for_the_same_itinerary(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="100" role=""/><member type="way" ref="102" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/><tag k="gtfs:route_id" v="1"/><tag k="gtfs:shape_id" v="s1"/></relation></modify>'
+                           '<create><relation id="-1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="100" role=""/><member type="way" ref="102" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/><tag k="gtfs:route_id" v="1"/><tag k="gtfs:shape_id" v="s1"/></relation></create>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'one relation per itinerary'})
+
     def test_a_second_master_for_the_same_route(self):
         st = self.uploaded('<create><relation id="-1" changeset="CS"><member type="relation" ref="300" role=""/><tag k="type" v="route_master"/><tag k="route_master" v="bus"/><tag k="ref" v="1 AM"/></relation></create>')
         f = self.failing(st)

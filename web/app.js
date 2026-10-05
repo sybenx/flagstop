@@ -918,8 +918,10 @@ async function proposeRelation(p) {
     else missing.push(D.stops[sid]);
   }
   const tags = {...p.proposed_tags};
-  // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern has claimed.
-  const claimed = new Set(Object.values(Edits.all()).filter(o => o.type === 'relation' && o.kind === 'modify' && o.note !== p.id).map(o => o.id));
+  // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern's proposal has
+  // claimed (a road repair touching it, in Changes or just uploaded, is not a claim: it's still this route's relation).
+  const pids = new Set(D.patterns.map(q => q.id));
+  const claimed = new Set(Object.values(Edits.all()).filter(o => o.type === 'relation' && o.kind === 'modify' && pids.has(o.note) && o.note !== p.id).map(o => o.id));
   const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
   // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
   // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.

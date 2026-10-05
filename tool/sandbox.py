@@ -827,6 +827,15 @@ def report(store, cs_ids=None):
             near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 150 if p in el['node'] and q in el['node'] else False
             closes = first_entry == prev_exit or near(first_entry, prev_exit) or (len(way_ids) > 1 and way_ids[0] == way_ids[-1])
             line('roundtrip=yes closes', closes, f'{name}: sets off at n{first_entry} (w{way_ids[0]}), ends at n{prev_exit} (w{way_ids[-1]})', [('relation', rid)])
+    # no second relation for the same itinerary: flagstop tags its relations with the feed's shape id
+    by_shape = {}
+    for r in el['relation'].values():
+        if r['visible'] and is_pt(r) and r['tags'].get('gtfs:shape_id'):
+            by_shape.setdefault((r['tags'].get('gtfs:route_id'), r['tags']['gtfs:shape_id']), []).append(r['id'])
+    for rid in sorted(routes_):
+        t = el['relation'][rid]['tags']
+        twins = [x for x in by_shape.get((t.get('gtfs:route_id'), t.get('gtfs:shape_id')), []) if x != rid]
+        line('one relation per itinerary', not twins, f'{t.get("name") or rid}: ' + (', '.join(f'r{x} has the same gtfs:shape_id' for x in twins) or 'the only one for its shape'), [('relation', rid)] + [('relation', x) for x in twins])
     # route masters: a route in one master, and no second master for the same routes
     masters_of = {}
     for m in el['relation'].values():

@@ -359,7 +359,7 @@ const Edits = {
     if ([...comment].length > 255) throw new Error(`the changeset comment is ${[...comment].length} characters; OSM takes 255 at most. Shorten it and upload again: nothing was sent`);
     // when this upload began: the OSM data is taken to have it once its base time passes this (settle()); the
     // changeset closes before landed() runs, so a time taken there would be after the data's own stamp
-    const started = new Date().toISOString();
+    const started = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();   // whole seconds, as OSM stamps a changeset
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});
