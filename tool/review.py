@@ -233,6 +233,7 @@ def main():
     for sid, m in match.items():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['diff'].update(stopmatch.network_diff(feed, osm_stops[m['osm'][0]['id']], conv, aliases))
+            stopmatch.keep_foreign_routes(feed, osm_stops[m['osm'][0]['id']], m['diff'])
     # Which side of the street each stop is on, for the buses that call there; then what to suggest per difference.
     sides = stop_sides(feed, paths, match, osm_stops)
     names = {stopmatch.address(st.name): (st.id, st.name) for st in feed.stops.values()}

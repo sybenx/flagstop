@@ -269,11 +269,13 @@ def conventions(feed, results, osm_stops):
 def network_diff(feed, o, conv, aliases=()):
     """network, operator and their Wikidata items against what this agency's stops in OSM carry (conv), so
     the agency's stops say the same thing. An old name of the agency (one the feed's agency_name contains, or
-    one iD's name-suggestion-index lists for the network) is swapped for the current one; anything else is a
-    question. For network that's usually a route name in the wrong tag (the suggestion replaces it); for
-    operator, another company whose buses stop here too (the suggestion lists both: a;b)."""
+    one iD's name-suggestion-index lists for the network) is swapped for the current one. Anything else is
+    another operator or network whose buses stop here too (a shared pole, both signs on it: a university
+    shuttle, a coach line): the suggestion lists both, theirs first (a;b). The one exception: a network value
+    that is one of this agency's own route numbers is a route name in the wrong tag, and is replaced."""
     t, out = o['tags'], {}
     agency = feed.agency.get('agency_name', '').lower()
+    shorts = {(r.short or '').lower() for r in getattr(feed, 'routes', {}).values()} - {''}
     for k in ('network', 'operator'):
         cur = conv.get(k)
         if not cur:
@@ -283,8 +285,8 @@ def network_diff(feed, o, conv, aliases=()):
         # an old or shortened name: listed as one, inside the feed's agency name, or all its words in the current name
         old = lambda x: x.lower() in known or (len(x) > 2 and x.lower() in agency) or set(x.lower().split()) <= set(cur.lower().split())
         new = list(dict.fromkeys(cur if old(x) else x for x in parts)) or [cur]
-        if cur not in new:   # something else only
-            new = [cur] if k == 'network' else parts + [cur]
+        if cur not in new:   # something else only: theirs, then ours (a route number of ours in network: ours instead)
+            new = [cur] if k == 'network' and all(x.lower() in shorts for x in parts) else parts + [cur]
         if ';'.join(new) != (t.get(k) or ''):
             out[k] = {'gtfs': ';'.join(new), 'osm': t.get(k, ''),
                       'old': [x for x in parts if old(x)], 'other': [x for x in parts if not old(x) and x != cur]}
@@ -292,6 +294,23 @@ def network_diff(feed, o, conv, aliases=()):
     if wd and t.get('network:wikidata') != wd and wd not in (t.get('network:wikidata') or '').split(';'):
         out['network:wikidata'] = {'gtfs': wd, 'osm': t.get('network:wikidata', '')}
     return out
+
+
+def keep_foreign_routes(feed, o, diff):
+    """On a shared stop (another network or operator listed in OSM), the other network's route numbers in
+    route_ref stay beside this agency's: a number none of this agency's routes has is theirs."""
+    rr = diff.get('route_ref')
+    if not rr or not any(diff.get(k, {}).get('other') for k in ('network', 'operator')):
+        return diff
+    shorts = {(r.short or '').lower() for r in getattr(feed, 'routes', {}).values()}
+    theirs = [x.strip() for x in (o['tags'].get('route_ref') or '').split(';') if x.strip() and x.strip().lower() not in shorts]
+    ours = [x for x in rr['gtfs'].split(';') if x]
+    want = ';'.join(sorted(dict.fromkeys(theirs + ours), key=lambda x: (len(x), x)))
+    if want == (o['tags'].get('route_ref') or ''):
+        diff.pop('route_ref', None)
+    else:
+        rr['gtfs'] = want
+    return diff
 
 
 def owner(feed, o, conv, aliases=()):
@@ -451,8 +470,10 @@ def decide(s, o, diff, side=None, others=None):
         elif k == 'network':
             if not v['osm']:
                 out[k] = {'pick': 'agency', 'why': "what this agency's other stops in OSM carry; OSM has none"}
+            elif v['other'] and v['osm'] in v['gtfs']:
+                out[k] = {'pick': 'agency', 'why': f"OSM says '{v['osm']}': another network's buses stop here too (a shared pole, both signs on it). Both, theirs first"}
             elif v['other']:
-                out[k] = {'pick': 'ask', 'why': f"OSM says '{v['osm']}', not this agency's network. A route name in the wrong tag? If another network's buses stop here too, it wants both ('{v['osm']};{v['gtfs']}'): edit that by hand"}
+                out[k] = {'pick': 'ask', 'why': f"OSM says '{v['osm']}', one of this agency's route numbers: a route name in the wrong tag? Then it's '{v['gtfs']}'; if it's a network of its own, both ('{v['osm']};{v['gtfs']}'): edit that by hand"}
             else:
                 out[k] = {'pick': 'agency', 'why': f"'{v['osm']}' is the old name: this agency's other stops in OSM, and iD's name suggestions, say '{v['gtfs']}'"}
         elif k == 'operator':
@@ -461,7 +482,7 @@ def decide(s, o, diff, side=None, others=None):
             elif v['other'] and o.get('served_by'):
                 out[k] = {'pick': 'agency', 'why': f"{', '.join(o['served_by'])}'s own feed has a stop here too: both"}
             elif v['other']:
-                out[k] = {'pick': 'ask', 'why': f"OSM says '{v['osm']}'. If their buses stop here too, it lists both ('{v['gtfs']}'); if not, it's '{v['gtfs'].split(';')[-1]}' alone: edit that by hand"}
+                out[k] = {'pick': 'agency', 'why': f"OSM says '{v['osm']}': another operator's buses stop here too (a shared pole; whose it is, nobody can tell from here). Both, theirs first; if theirs don't stop here any more, make it '{v['gtfs'].split(';')[-1]}' alone"}
             else:
                 out[k] = {'pick': 'agency', 'why': f"'{v['osm']}' is the agency's old name: its other stops and routes in OSM say '{v['gtfs']}'"}
         elif k == 'network:wikidata':

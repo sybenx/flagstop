@@ -99,6 +99,30 @@ class Networks(unittest.TestCase):
     def test_a_shared_stop_already_listing_both_is_left(self):
         self.assertNotIn('network', self.nd(network='Aggie Shuttle;Connect Public Transit', **{'network:wikidata': 'Q129798316'}))
 
+    def test_another_network_on_the_pole_is_listed_with_and_not_asked_about(self):
+        """1111 North 800 East: USU's Aggie Bus and ours both sign the pole; nobody knows whose it is. Both, theirs first."""
+        d = self.nd(network='Aggie Bus', operator='Utah State university')
+        self.assertEqual(d['network']['gtfs'], 'Aggie Bus;Connect Public Transit')
+        self.assertEqual(d['operator']['gtfs'], 'Utah State university;Connect Public Transit')
+        o = osm('x', network='Aggie Bus', operator='Utah State university')
+        dec = stops.decide(Stop('1111 North 800 East'), o, d)
+        self.assertEqual((dec['network']['pick'], dec['operator']['pick']), ('agency', 'agency'))
+
+    def test_a_route_number_in_network_is_replaced_and_asked_about(self):
+        feed = Feed(); feed.routes = {'5': type('R', (), {'short': '2'})}
+        d = stops.network_diff(feed, osm('x', network='2'), self.conv, aliases=set())
+        self.assertEqual(d['network']['gtfs'], 'Connect Public Transit')
+        self.assertEqual(stops.decide(Stop('x'), osm('x', network='2'), d)['network']['pick'], 'ask')
+
+    def test_the_other_networks_routes_stay_in_route_ref(self):
+        feed = Feed(); feed.routes = {'5': type('R', (), {'short': '2'})}
+        o = osm('x', network='Aggie Bus', route_ref='Blue;Green')
+        diff = {'route_ref': {'gtfs': '2', 'osm': 'Blue;Green'}, 'network': {'gtfs': 'Aggie Bus;Connect Public Transit', 'osm': 'Aggie Bus', 'old': [], 'other': ['Aggie Bus']}}
+        self.assertEqual(stops.keep_foreign_routes(feed, o, diff)['route_ref']['gtfs'], '2;Blue;Green')
+        # nothing of ours in it yet, theirs already there: no change to make once ours is added... and all there already: no row
+        o2 = osm('x', network='Aggie Bus', route_ref='2;Blue;Green')
+        self.assertNotIn('route_ref', stops.keep_foreign_routes(feed, o2, {'route_ref': {'gtfs': '2', 'osm': '2;Blue;Green'}, 'network': diff['network']}))
+
 
 class Sides(unittest.TestCase):
     """A stop across the street from where the buses pull in is the other direction's, never this one."""
@@ -250,7 +274,7 @@ class OtherAgencies(unittest.TestCase):
         conv = {'network': 'Connect Public Transit', 'operator': 'Connect Public Transit'}
         o = osm('x', operator='Utah State University')
         df = stops.network_diff(Feed(), o, conv)
-        self.assertEqual(stops.decide(Stop('x'), o, df)['operator']['pick'], 'ask')
+        self.assertEqual(stops.decide(Stop('x'), o, df)['operator']['pick'], 'agency')   # a shared pole: both, theirs first
         o['served_by'] = ['Utah State University']
         self.assertEqual(stops.decide(Stop('x'), o, df)['operator']['pick'], 'agency')
         self.assertEqual(df['operator']['gtfs'], 'Utah State University;Connect Public Transit')
