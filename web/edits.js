@@ -23,8 +23,8 @@ const Edits = {
   // single action makes in one go — a road edit's node, ways and relations — land in the same entry).
   history: [], future: [], committed: null, batching: false, nextLabel: null,
 
-  load(agency) {
-    this.key = 'flagstop.edits.' + (agency || '').replace(/\W+/g, '_');
+  load(agency, world = '') {
+    this.key = 'flagstop.edits.' + (agency || '').replace(/\W+/g, '_') + (world ? '.' + String(world).replace(/\W+/g, '_') : '');
     try {
       const s = JSON.parse(localStorage.getItem(this.key) || '{}');
       this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || [];

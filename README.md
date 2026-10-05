@@ -114,6 +114,9 @@ snapshot again.
 python3 tool/sandbox.py snapshot        # once: the area as of 2026-09-27 -> cache/sandbox/base-2026-09-27.json
 python3 tool/sandbox.py run             # the sandbox, the review built from it, the page at :8765 (its own files under cache/sandbox/work/)
 python3 tool/sandbox.py run --reset     # forget every upload first
+python3 tool/sandbox.py reset           # the same while it runs (a new generation: the page's basket, decisions and answers
+                                        # start afresh); or the "Reset the sandbox" button on the page's ? tab, which
+                                        # also builds the review again — run it through again from the start
 python3 tool/sandbox.py status          # what has gone up, by changeset
 python3 tool/sandbox.py report          # is it good and safe? pass/fail lines on the result (routes whole, PTv2 order, one-ways, stop positions, ...)
 ```

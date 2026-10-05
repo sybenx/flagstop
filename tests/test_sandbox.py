@@ -248,6 +248,21 @@ class SandboxTest(unittest.TestCase):
         self.assertIn('n10', out['uploaded']); self.assertIn('r300', out['uploaded'])
         self.assertEqual(self.get('/api/0.6/changesets.json?user=1')['changesets'][0]['tags']['created_by'], 'flagstop')
 
+    def test_a_live_reset_is_the_snapshot_again_and_a_new_generation(self):
+        code, diff, cid = self.upload('<modify>\n  <node id="10" version="1" changeset="CS" lat="41.7399" lon="-111.828"><tag k="name" v="Renamed"/></node>\n</modify>\n')
+        self.assertEqual(code, 200, diff)
+        before = self.get('/sandbox.json')
+        self.assertEqual(before['changesets'], 1)
+        code, body = self.call('POST', '/reset', '', 'text/plain', auth=False)
+        self.assertEqual(code, 200, body)
+        after = self.get('/sandbox.json')
+        self.assertEqual(after['changesets'], 0)
+        self.assertNotEqual(after['generation'], before['generation'])
+        self.assertEqual(self.get('/api/0.6/node/10.json')['elements'][0]['tags']['name'], 'Main & 3rd', 'the snapshot again')
+        self.assertFalse(os.path.exists(sandbox.LOG))
+        # the server now answers from the fresh store (the class attribute was swapped): later tests start from it too
+        self.store = sandbox.Handler.store
+
     def test_the_log_replays_on_start(self):
         code, diff, cid = self.upload('<create>\n  <node id="-1" changeset="CS" lat="41.7401" lon="-111.829"><tag k="highway" v="bus_stop"/></node>\n</create>\n', 'first')
         nid = int(ET.fromstring(diff)[0].get('new_id'))

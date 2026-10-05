@@ -114,6 +114,16 @@ def trace_with_vias(pid, vias, g=None, require=(), avoid=()):
 REFRESH = {'running': False, 'error': None, 'done': None}
 
 
+def sandbox_info():
+    """What the sandbox says of itself (its date, generation, uploads), when this server runs against one."""
+    import urllib.request as ur
+    try:
+        with ur.urlopen(STATE['sandbox'] + '/sandbox.json', timeout=10) as r:
+            return json.load(r)
+    except Exception:
+        return {}
+
+
 def start_refresh(changesets=()):
     """Bring OSM up to date and rebuild review.json, then reload the roads the re-routing uses. After an upload
     (changesets given): those changesets, straight from OSM's API, in seconds. Otherwise: Overpass again (roads
@@ -194,7 +204,10 @@ class Handler(SimpleHTTPRequestHandler):
             body = re.sub(r"redirects: \[[^\]]*\]", f"redirects: ['http://127.0.0.1:{self.server.server_port}/', 'http://localhost:{self.server.server_port}/']", body)
             for k in ('api', 'www', 'overpass'):
                 body = re.sub(rf"\b{k}: ''", f"{k}: '{sb}'" if k != 'overpass' else f"{k}: '{sb}/api/interpreter'", body)
+            body = re.sub(r"\bworld: ''", f"world: '{sandbox_info().get('generation', '0')}'", body)
             return self._raw(body.encode(), 'application/javascript')
+        if u.path == '/api/sandbox':
+            return self._json(sandbox_info() if STATE.get('sandbox') else {})
         if not u.path.startswith('/api/'):
             return super().do_GET()
         if u.path == '/api/state':
@@ -273,6 +286,20 @@ class Handler(SimpleHTTPRequestHandler):
                 json.dump({'state': body.get('state'), 'at': body.get('at')}, f)
             os.replace(path + '.tmp', path)
             return self._json({'ok': True}, cors=False)
+        if urllib.parse.urlparse(self.path).path == '/api/sandbox/reset' and STATE.get('sandbox'):
+            # the sandbox forgets its uploads (a new generation), this server's review is built again from it
+            import urllib.request as ur
+            try:
+                with ur.urlopen(ur.Request(STATE['sandbox'] + '/reset', data=b'', method='POST'), timeout=30) as r:
+                    gen = json.load(r).get('generation')
+            except Exception as e:
+                return self._json({'error': f'the sandbox did not reset: {e}'}, 503)
+            import shutil
+            for p in glob.glob(os.path.join(cache_dir(), '*-osm-*.json')) + glob.glob(os.path.join(cache_dir(), 'roads', '*.json')):
+                os.remove(p)
+            shutil.rmtree(os.path.join(cache_dir(), 'state'), ignore_errors=True)
+            ROUTED.clear(); GRAPHS.clear()
+            return self._json({**start_refresh(), 'generation': gen})
         if urllib.parse.urlparse(self.path).path == '/api/refresh':
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')

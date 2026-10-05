@@ -14,4 +14,6 @@ const FLAGSTOP_OSM = {
   api: '',        // the API, e.g. 'http://127.0.0.1:8766' (api.openstreetmap.org when empty)
   www: '',        // the site, for sign-in (www.openstreetmap.org when empty)
   overpass: '',   // one Overpass endpoint to use instead of the public ones
+  world: '',      // which copy of the map this is: '' for OSM itself; a sandbox's generation (its reset count), so a
+                  // reset starts the page's basket, decisions and answers afresh too
 };

@@ -1428,8 +1428,23 @@ function download(name, text, type) {
   const a = el('a', {href: URL.createObjectURL(new Blob([text], {type})), download: name}); document.body.append(a); a.click(); a.remove();
 }
 
+/** The sandbox this page runs against, if any: forget every upload, build the review again, start clean. */
+async function resetSandbox() {
+  if (!confirm('Reset the sandbox? Every upload to it is forgotten, the map is the snapshot again, and this page starts with an empty basket, no decisions and no answers.')) return;
+  try {
+    let st = await (await fetch('/api/sandbox/reset', {method: 'POST'})).json();
+    if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
+    toast('Sandbox reset: building the review again from the snapshot…', 60000);
+    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('/api/refresh')).json(); }
+    if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
+    location.reload();
+  } catch (e) { toast('Needs tool/sandbox.py run (' + e.message + ')', 6000); }
+}
 function renderAbout(P) {
   const f = D.feed;
+  const sandbox = typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.world;
+  if (sandbox) P.append(el('div', {class: 'note', style: 'margin:10px'}, el('b', {}, 'This is the sandbox. '), `Nothing here reaches OpenStreetMap: uploads land in tool/sandbox.py's copy of the map (generation ${sandbox}). `,
+    el('button', {class: 'b tiny', style: 'margin-left:6px', onclick: resetSandbox}, 'Reset the sandbox'), el('div', {class: 'small muted'}, 'Every upload forgotten, the review built again from the snapshot, this page\'s basket, decisions and answers emptied: run it through again from the start.')));
   P.append(el('div', {class: 'about'},
     el('p', {}, el('b', {}, D.agency.agency_name), el('br'), `feed ${f.file} · version "${f.feed_version || '?'}" · ${f.feed_start_date || ''}–${f.feed_end_date || ''}`, el('br'), `OSM data fetched ${D.osm_fetched} · review built ${D.generated}`),
     el('p', {}, el('b', {}, 'What the agency is good for.'), ' Which stops exist, their codes and addresses (the stop names), which routes call and in what order. Positions vary by agency: flagstop measures how far this feed\'s points usually are from OSM\'s and asks about the ones well past that. Shapes are drawn by hand: the route follows OSM\'s roads, pulled toward the shape. Where the agency is the source, flagstop suggests its value; where it isn\'t sure, it asks.'),
@@ -1457,7 +1472,7 @@ let SERVER = false;
 fetch('/api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j && 'running' in j); if (D) render(); }).catch(() => {});
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
-  Edits.load(d.agency.agency_name);
+  Edits.load(d.agency.agency_name, typeof FLAGSTOP_OSM !== 'undefined' ? FLAGSTOP_OSM.world : '');   // a sandbox's generation: its own basket
   Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
   Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });
   // what this browser holds as uploaded and not yet in the data: only what OSM has a changeset of mine for

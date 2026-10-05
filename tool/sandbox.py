@@ -40,6 +40,7 @@ from xml.sax.saxutils import quoteattr
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(ROOT, 'cache', 'sandbox')
 LOG = os.path.join(DIR, 'changes.json')
+GEN = os.path.join(DIR, 'generation')   # bumped by every reset: the page keys its saved state by it, so a reset is a clean slate there too
 DATE = '2026-09-27T00:00:00Z'
 UA = {'User-Agent': 'flagstop sandbox (GTFS/OSM route review)'}
 USER = {'id': 1, 'display_name': 'sandbox', 'account_created': '2026-09-27T00:00:00Z'}
@@ -629,6 +630,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/0.6/user/details.json':
             self._signed_in()
             return self._json({'version': '0.6', 'user': {**USER, 'changesets': {'count': len(st.changesets)}}})
+        # --- the sandbox itself ---
+        if path == '/sandbox.json':
+            return self._json({'date': st.meta.get('date'), 'base': os.path.basename(st.base), 'generation': generation(), 'changesets': len(st.changesets)})
+        if path == '/reset' and method == 'POST':
+            # the snapshot again: uploads forgotten, a new generation; the store swapped under the server
+            with st.lock:
+                forget()
+                fresh = Store(st.base)
+                Handler.store, Handler.overpass = fresh, Overpass(fresh)
+            return self._json({'ok': True, 'generation': generation()})
         # --- Overpass ---
         if path == '/api/interpreter':
             data = (urllib.parse.parse_qs(self._body()).get('data') if method == 'POST' else q.get('data')) or ['']
@@ -1088,12 +1099,32 @@ def print_report(lines):
     return 1 if bad else 0
 
 
+def generation():
+    try:
+        return open(GEN).read().strip()
+    except OSError:
+        return '0'
+
+
 def forget():
-    """Every upload, and the review built on the sandbox's data (it had those uploads patched in): gone."""
+    """Every upload, and the review built on the sandbox's data (it had those uploads patched in): gone. A new
+    generation, so the page starts a fresh basket, fresh decisions and answers."""
     import shutil
     if os.path.exists(LOG):
         os.remove(LOG)
     shutil.rmtree(os.path.join(DIR, 'work'), ignore_errors=True)
+    os.makedirs(DIR, exist_ok=True)
+    with open(GEN, 'w') as f:
+        f.write(now())
+
+
+def reset_live(sb):
+    """Tell a running sandbox to reset itself (uploads forgotten, the snapshot again). -> True if one answered."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f'{sb}/reset', data=b'', method='POST'), timeout=30) as r:
+            return r.status == 200
+    except Exception:
+        return False
 
 
 def run(port, sb_port, feed, reset=False, refresh=False, also=()):
@@ -1134,7 +1165,7 @@ def main(argv=None):
     s = sub.add_parser('run'); s.add_argument('--port', type=int, default=8765); s.add_argument('--sandbox-port', type=int, default=8766); s.add_argument('--feed')
     s.add_argument('--reset', action='store_true', help='forget every upload first'); s.add_argument('--refresh', action='store_true', help='build the review again from the sandbox')
     s.add_argument('--also', action='append', default=[], help="another agency sharing stops, as review.py --also takes it (passio:<system>:<name> for a Passio GO shuttle)")
-    sub.add_parser('reset')
+    s = sub.add_parser('reset'); s.add_argument('--port', type=int, default=8766, help='a running sandbox to reset live')
     sub.add_parser('status')
     s = sub.add_parser('report'); s.add_argument('changesets', nargs='*', type=int); s.add_argument('--base')
     s = sub.add_parser('replay'); s.add_argument('changesets', nargs='+', type=int); s.add_argument('--url', default='http://127.0.0.1:8766')
@@ -1162,8 +1193,11 @@ def main(argv=None):
         return print_report(report(store, a.changesets or None))
     if a.cmd == 'reset':
         had = os.path.exists(LOG)
-        forget()
-        print('every upload forgotten, and the review built from them: the snapshot again (restart the sandbox)' if had else 'nothing uploaded: the snapshot as it was', file=sys.stderr)
+        live = reset_live(f'http://127.0.0.1:{a.port}')
+        if not live:
+            forget()
+        print(('every upload forgotten, and the review built from them: the snapshot again' if had else 'nothing uploaded: the snapshot as it was')
+              + (' (the running sandbox did it; the page\'s "Reset the sandbox" rebuilds the review, or restart `run`)' if live else ' (restart the sandbox)'), file=sys.stderr)
         return
     if a.cmd == 'status':
         log = json.load(open(LOG)) if os.path.exists(LOG) else []
