@@ -224,8 +224,9 @@ test('repair: any other relation gets every piece, in order, where the way was',
   assert.ok(!out.some(r => r.id === 41));
 });
 
-test('repair: a gap longer than GAP_LIMIT is reported as bad, not bridged', async () => {
-  // roads 250 m a node: the split piece and the way after it are more than 800 m from the route's last member
+test('repair: a split way\'s own pieces are driven whatever their length; other roads only within GAP_LIMIT', async () => {
+  // roads 250 m a node: the pieces of the split way run 1.25 km between the route's neighbouring members. They were
+  // the route's own road (16 PM Northbound's US 91, 3.9 km): no guess, so the route gets them whole
   street(0.003);
   way(99, [0, 1]); way(100, [1, 2, 3, 4, 5, 6]); way(101, [6, 7]);
   rel(10, bus, [mem('way', 99), mem('way', 100), mem('way', 101)]);
@@ -233,19 +234,17 @@ test('repair: a gap longer than GAP_LIMIT is reported as bad, not bridged', asyn
   const piece = Roads.split(t, 100, 2);
   assert.ok(Roads.len(t, t.ways[100].nodes) + Roads.len(t, t.ways[piece].nodes) > 800);
   const out = await Roads.repair(t);
-  assert.strictEqual(out.length, 1);
-  assert.strictEqual(out[0].bad.length, 1);
-  assert.deepStrictEqual([out[0].bad[0].after, out[0].bad[0].before], [99, 101]);
-  assert.match(out[0].bad[0].why, /no bus-legal connection/);
-  // the same roads at 83 m a node are well inside it
-  street(0.001);
-  way(99, [0, 1]); way(100, [1, 2, 3, 4, 5, 6]); way(101, [6, 7]);
-  rel(10, bus, [mem('way', 99), mem('way', 100), mem('way', 101)]);
+  assert.deepStrictEqual(out[0].bad, []);
+  assert.deepStrictEqual(wayRefs(out[0]), [99, piece, 100, 101]);
+  // a connection over roads that were not the route's is a guess: taken within GAP_LIMIT, refused beyond it
+  way(101, [10, 11]); way(103, [6, 7, 8, 9, 10]);   // the next member two blocks on; a 1 km road between, not a member
   const t2 = Roads.tx();
-  const piece2 = Roads.split(t2, 100, 2);
-  const ok = await Roads.repair(t2);
-  assert.deepStrictEqual(ok[0].bad, []);
-  assert.deepStrictEqual(wayRefs(ok[0]), [99, piece2, 100, 101]);
+  assert.strictEqual(Roads.connect(t2, [6], 101, new Set([103])), null, 'nothing within 800 m');
+  street(0.001);
+  way(99, [0, 1]); way(100, [1, 2, 3, 4, 5, 6]); way(101, [10, 11]); way(103, [6, 7, 8, 9, 10]);
+  const t3 = Roads.tx();
+  const c = Roads.connect(t3, [6], 101, new Set([103]));
+  assert.deepStrictEqual(c && c.ways, [103], '333 m over a road that was not a member: bridged');
 });
 
 // ---------------------------------------------------------------------------------------------------------

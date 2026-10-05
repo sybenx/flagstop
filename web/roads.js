@@ -142,19 +142,22 @@ const Roads = {
     const tw = t.way(target), closed = tw.nodes[0] === tw.nodes[tw.nodes.length - 1];
     const goals = new Set(closed ? tw.nodes : [tw.nodes[0], tw.nodes[tw.nodes.length - 1]]);
     for (const s of starts) if (goals.has(s)) return {start: s, ways: [], end: s};
+    // the pieces of a way that was split were the route's own road: driving them is no guess, whatever their
+    // length (a 4 km stretch of highway); only other roads count towards GAP_LIMIT
+    const pieces = new Set(Object.values(t.split || {}).flat());
     const adj = {};
     for (const wid of cand) {
       if (wid === target) continue;
       const w = t.way(wid); if (!w) continue;
-      const d = this.dir(w.tags);
+      const d = this.dir(w.tags), own = pieces.has(wid);
       for (let i = 1; i < w.nodes.length; i++) {
-        const a = w.nodes[i - 1], b = w.nodes[i], L = m(this.ll(t, a), this.ll(t, b));
-        if (d >= 0) (adj[a] = adj[a] || []).push([b, wid, L]);
-        if (d <= 0) (adj[b] = adj[b] || []).push([a, wid, L]);
+        const a = w.nodes[i - 1], b = w.nodes[i], L = m(this.ll(t, a), this.ll(t, b)), g = own ? 0 : L;
+        if (d >= 0) (adj[a] = adj[a] || []).push([b, wid, L, g]);
+        if (d <= 0) (adj[b] = adj[b] || []).push([a, wid, L, g]);
       }
     }
-    const dist = {}, prev = {}, q = starts.map(s => [0, s]);
-    for (const s of starts) dist[s] = 0;
+    const dist = {}, guess = {}, prev = {}, q = starts.map(s => [0, s]);
+    for (const s of starts) { dist[s] = 0; guess[s] = 0; }
     while (q.length) {
       q.sort((x, y) => x[0] - y[0]);
       const [c, n] = q.shift();
@@ -164,9 +167,9 @@ const Roads = {
         while (prev[k]) { const [p, wid] = prev[k]; if (ways[0] !== wid) ways.unshift(wid); k = p; }
         return {start: k, ways, end: n};
       }
-      for (const [b, wid, L] of adj[n] || []) {
-        if (c + L > GAP_LIMIT || c + L >= (dist[b] ?? Infinity)) continue;
-        dist[b] = c + L; prev[b] = [n, wid]; q.push([c + L, b]);
+      for (const [b, wid, L, g] of adj[n] || []) {
+        if (guess[n] + g > GAP_LIMIT || c + L >= (dist[b] ?? Infinity)) continue;
+        dist[b] = c + L; guess[b] = guess[n] + g; prev[b] = [n, wid]; q.push([c + L, b]);
       }
     }
     return null;

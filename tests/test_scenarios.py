@@ -25,6 +25,7 @@ A scenario:
     report  "all pass" | ["name of a check that must fail", ...] (those, and no others)
     steps   [{step: N, path, equals | contains | exists}]     against the driver's JSON line for step N (0-based)
     data    [{get: "/api/0.6/...", path, equals | contains | exists}]   against the sandbox after the run, or
+            (contains: a value in a list or a string; a list in a list is a run of items in that order)
             {changesets: N}                                            the number of changesets in the sandbox
   path      dotted: a key, a list index, or * for every item ("elements.0.members.*.ref")
   $name     in a get URL or an equals/contains value: the id the sandbox gave what was made `as` name
@@ -77,7 +78,11 @@ def judge(got_fn, a, names):
         return [] if got == want else [f'{path}: {got!r}, wanted {want!r}']
     if 'contains' in a:
         want = subst(a['contains'], names)
-        return [] if want in got else [f'{path}: {got!r} does not contain {want!r}']
+        if isinstance(want, list) and isinstance(got, list):   # a run of items, in that order, somewhere in the list
+            ok = any(got[i:i + len(want)] == want for i in range(len(got) - len(want) + 1))
+        else:
+            ok = want in got
+        return [] if ok else [f'{path}: {got!r} does not contain {want!r}']
     return [f'{a}: nothing to check']
 
 

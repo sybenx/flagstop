@@ -1,0 +1,19 @@
+{
+  "name": "two splits on one route, one after the other",
+  "about": "Way 100 (nodes 1-2-3) cut at node 2, then way 102 (nodes 3-4-5) cut at node 4, with route 1 over both. The second repair has to build on the first (already in Changes), not on the map's copy of the relation: the route must list all four pieces in travel order.",
+  "base": "tiny",
+  "steps": [
+    {"split": {"way": 100, "node": 2, "bbox": [-111.832, 41.738, -111.822, 41.742], "as": "first"}},
+    {"split": {"way": 102, "node": 4, "bbox": [-111.832, 41.738, -111.822, 41.742], "as": "second"}},
+    {"upload": {"comment": "Bus route 1: Main Street split twice", "expect": "ok"}}
+  ],
+  "expect": {
+    "report": "all pass",
+    "data": [
+      {"get": "/api/0.6/relation/300.json", "path": "elements.0.members.*.ref", "equals": [3, 10, 100, "$first", 102, "$second"]},
+      {"get": "/api/0.6/way/102.json", "path": "elements.0.nodes", "equals": [3, 4]},
+      {"get": "/api/0.6/way/$second.json", "path": "elements.0.nodes", "equals": [4, 5]},
+      {"changesets": 1}
+    ]
+  }
+}

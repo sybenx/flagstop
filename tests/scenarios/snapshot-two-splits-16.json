@@ -1,0 +1,57 @@
+{
+  "name": "16 PM Northbound's two splits, with the 16 AM relations repaired twice",
+  "about": "US 91 (w10086233) cut at n82937673 and 200 West (w1229780871) at n7396643195, as Fix relation does for 16 PM Northbound. 16 AM Southbound (r17015539) runs over both: after both repairs it must list w1026779620, the kept US 91 piece, the new US 91 piece, the new 200 West piece, then 200 West, in that order. Found in the sandbox: the second repair replaced the first's. The one-ways driven against on 16 AM Southbound and 16 PM Southbound were in the snapshot already.",
+  "base": "snapshot",
+  "steps": [
+    {
+      "split": {
+        "way": 10086233,
+        "node": 82937673,
+        "bbox": [
+          -111.816858,
+          41.939135,
+          -111.810858,
+          41.943136
+        ],
+        "as": "us91"
+      }
+    },
+    {
+      "split": {
+        "way": 1229780871,
+        "node": 7396643195,
+        "bbox": [
+          -111.816903,
+          41.936728,
+          -111.810903,
+          41.940728
+        ],
+        "as": "w200"
+      }
+    },
+    {
+      "upload": {
+        "comment": "two splits",
+        "expect": "ok"
+      }
+    }
+  ],
+  "expect": {
+    "report": [
+      "no one-way driven against"
+    ],
+    "data": [
+      {
+        "get": "/api/0.6/relation/17015539.json",
+        "path": "elements.0.members.*.ref",
+        "contains": [
+          1026779620,
+          10086233,
+          "$us91",
+          "$w200",
+          1229780871
+        ]
+      }
+    ]
+  }
+}

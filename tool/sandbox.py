@@ -755,13 +755,16 @@ def report(store, cs_ids=None):
         line('changeset comment fits', len(tags.get('comment', '')) <= 255, f"changeset {cs['id']}: {len(tags.get('comment', ''))} characters", [f'changeset {cs["id"]}'])
     el = store.el
     vis = lambda t, i: i in el[t] and el[t][i]['visible']
-    # the bus routes to look at: touched themselves, or over a touched way or node
+    # the bus routes to look at: touched themselves, or over a touched way or node (a road route or a hiking
+    # route through a touched road is another kind of thing: its members' existence is checked, no more)
+    PT = {'bus', 'trolleybus', 'share_taxi', 'minibus', 'coach'}
+    is_pt = lambda r: r['tags'].get('type') == 'route' and r['tags'].get('route') in PT
     routes_ = set()
     for (t, i), action in touched.items():
-        if t == 'relation' and vis(t, i) and el[t][i]['tags'].get('type') == 'route':
+        if t == 'relation' and vis(t, i) and is_pt(el[t][i]):
             routes_.add(i)
         for rid in store.rels_of.get((t, i), ()):
-            if vis('relation', rid) and el['relation'][rid]['tags'].get('type') == 'route':
+            if vis('relation', rid) and is_pt(el['relation'][rid]):
                 routes_.add(rid)
     ways_dict = lambda ids: {w: {'nodes': el['way'][w]['nodes']} for w in ids if vis('way', w)}
     for rid in sorted(routes_):
