@@ -40,7 +40,7 @@ from xml.sax.saxutils import quoteattr
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(ROOT, 'cache', 'sandbox')
 LOG = os.path.join(DIR, 'changes.json')
-GEN = os.path.join(DIR, 'generation')   # bumped by every reset: the page keys its saved state by it, so a reset is a clean slate there too
+gen_path = lambda: os.path.join(DIR, 'generation')   # bumped by every reset: the page keys its saved state by it, so a reset is a clean slate there too
 DATE = '2026-09-27T00:00:00Z'
 UA = {'User-Agent': 'flagstop sandbox (GTFS/OSM route review)'}
 USER = {'id': 1, 'display_name': 'sandbox', 'account_created': '2026-09-27T00:00:00Z'}
@@ -1101,7 +1101,8 @@ def print_report(lines):
 
 def generation():
     try:
-        return open(GEN).read().strip()
+        with open(gen_path()) as f:
+            return f.read().strip()
     except OSError:
         return '0'
 
@@ -1114,7 +1115,7 @@ def forget():
         os.remove(LOG)
     shutil.rmtree(os.path.join(DIR, 'work'), ignore_errors=True)
     os.makedirs(DIR, exist_ok=True)
-    with open(GEN, 'w') as f:
+    with open(gen_path(), 'w') as f:
         f.write(now())
 
 
