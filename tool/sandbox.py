@@ -162,10 +162,13 @@ class Store:
     the ways of each node and the relations of each member, for recursion."""
     CELL = 0.01
 
-    def __init__(self, base):
+    def __init__(self, base, log=None):
+        """log: where uploads are kept and replayed from (the sandbox's LOG by default); False for a throwaway
+        store that must not write anywhere (a test, a what-if replay)."""
         with open(base) as f:
             raw = json.load(f)
         self.base = base
+        self.log = LOG if log is None else log
         self.meta = raw.get('sandbox', {})
         self.el = {'node': {}, 'way': {}, 'relation': {}}
         self.hist = {}
@@ -223,9 +226,9 @@ class Store:
 
     # --- the log: what went up, replayed on start ---
     def load_log(self):
-        if not os.path.exists(LOG):
+        if not self.log or not os.path.exists(self.log):
             return 0
-        with open(LOG) as f:
+        with open(self.log) as f:
             log = json.load(f)
         for cs in log:
             self.create_changeset(cs['tags'], cs['created_at'])
@@ -235,10 +238,13 @@ class Store:
         return len(self.changesets)
 
     def save_log(self):
-        os.makedirs(DIR, exist_ok=True)
-        json.dump([{'id': c['id'], 'tags': c['tags'], 'created_at': c['created_at'], 'closed_at': c['closed_at'], 'osc': c['osc'], 'comments': c['comments']}
-                   for c in self.changesets.values() if not c['open']], open(LOG + '.tmp', 'w'), indent=0)
-        os.replace(LOG + '.tmp', LOG)
+        if not self.log:
+            return
+        os.makedirs(os.path.dirname(self.log), exist_ok=True)
+        with open(self.log + '.tmp', 'w') as f:
+            json.dump([{'id': c['id'], 'tags': c['tags'], 'created_at': c['created_at'], 'closed_at': c['closed_at'], 'osc': c['osc'], 'comments': c['comments']}
+                       for c in self.changesets.values() if not c['open']], f, indent=0)
+        os.replace(self.log + '.tmp', self.log)
 
     # --- changesets ---
     def create_changeset(self, tags, at=None):
@@ -805,9 +811,9 @@ def report(store, cs_ids=None):
         off = [m['ref'] for m in ms if m['type'] == 'node' and m['role'] == 'stop' and m['ref'] not in on_route]
         line("stop positions on the route's roads", not off, f'{name}: ' + (', '.join(f'n{n}' for n in off) or 'all'), [('node', n) for n in off])
         if r['tags'].get('roundtrip') == 'yes' and first_entry is not None and prev_exit is not None:
-            # where the bus set off and where it ended: the same point, within 50 m, or the terminal's own road
-            # driven at both ends (the loop closes along it: first way and last way the same)
-            near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 50 if p in el['node'] and q in el['node'] else False
+            # where the bus set off and where it ended: the same point, within 150 m (a transit centre's bays are
+            # on different roads), or the terminal's own road driven at both ends (first way and last the same)
+            near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 150 if p in el['node'] and q in el['node'] else False
             closes = first_entry == prev_exit or near(first_entry, prev_exit) or (len(way_ids) > 1 and way_ids[0] == way_ids[-1])
             line('roundtrip=yes closes', closes, f'{name}: sets off at n{first_entry} (w{way_ids[0]}), ends at n{prev_exit} (w{way_ids[-1]})', [('relation', rid)])
     # what was touched, as objects
