@@ -342,6 +342,9 @@ const Edits = {
   async upload(comment, source, onStatus = () => {}) {
     if (!this.auth.token()) throw new Error('not signed in');
     if ([...comment].length > 255) throw new Error(`the changeset comment is ${[...comment].length} characters; OSM takes 255 at most. Shorten it and upload again: nothing was sent`);
+    // when this upload began: the OSM data is taken to have it once its base time passes this (settle()); the
+    // changeset closes before landed() runs, so a time taken there would be after the data's own stamp
+    const started = new Date().toISOString();
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});
@@ -365,7 +368,7 @@ const Edits = {
 
     // edits of someone else's that this changeset undid: the page offers a record to leave on theirs
     const undid = Object.values(this.ops).filter(op => op.undoes).map(op => op.undoes);
-    this.landed(id, diff, skipped);
+    this.landed(id, diff, skipped, started);
     this.roads = [];
     this.save();
     this.history = []; this.future = [];   // what went to OSM isn't taken back from here
@@ -373,8 +376,7 @@ const Edits = {
   },
   /** What went up is laid over flagstop's copy until the OSM data has it, as iD does: the page shows it done
    *  at once (no refresh), with the ids and versions OSM gave it (diff: the upload's diffResult). */
-  landed(id, diff, skipped = []) {
-    const at = new Date().toISOString();
+  landed(id, diff, skipped = [], at = new Date().toISOString()) {
     for (const [key, op] of Object.entries(this.ops)) {
       if (skipped.includes(key)) continue;
       const e = [...diff.getElementsByTagName(op.type)].find(x => x.getAttribute('old_id') === String(op.id));

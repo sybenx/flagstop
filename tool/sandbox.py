@@ -11,6 +11,8 @@ edit lands here and nowhere else.
                                             under cache/sandbox/work/), tool/serve.py --sandbox: open the page and work
     python3 tool/sandbox.py reset                                                     forget every upload: the snapshot again
     python3 tool/sandbox.py status                                                    what has gone up, by changeset
+    python3 tool/sandbox.py replay ID [ID ...] [--url http://127.0.0.1:8766]          real changesets (downloaded once, read-only, to
+                                                                                      cache/sandbox/replay/) into a running sandbox, in order
     python3 tool/sandbox.py report [changeset ...]                                    is what went up good and safe? pass/fail
                                                                                       lines on the result (exit 1 on a fail)
 
@@ -28,7 +30,7 @@ Versions are checked as OSM checks them (409 on a stale modify or delete), a del
 object something still uses, new ids are given as OSM gives them. Nothing the tool does differs: it is pointed
 here by web/config.js (serve.py --sandbox) and OSM_API_URL / OVERPASS_URL in the environment.
 """
-import argparse, datetime, glob, json, os, re, sys, threading, time, urllib.parse, urllib.request
+import argparse, datetime, glob, json, os, re, sys, threading, time, urllib.error, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from xml.sax.saxutils import quoteattr
@@ -389,7 +391,9 @@ class Overpass:
         raise Conflict(400, 'the sandbox does not know this query shape; teach tool/sandbox.py Overpass.run:\n' + q[:400])
 
     def out(self, elements):
-        return {'version': 0.6, 'generator': 'flagstop sandbox', 'osm3s': {'timestamp_osm_base': now(), 'copyright': 'sandbox'}, 'elements': elements}
+        # the data is as old as the snapshot, or as new as the last upload: what Edits.settle() and the page's header go by
+        base = max([self.st.meta.get('date', '')] + [c['closed_at'] for c in self.st.changesets.values() if c['closed_at']])
+        return {'version': 0.6, 'generator': 'flagstop sandbox', 'osm3s': {'timestamp_osm_base': base, 'copyright': 'sandbox'}, 'elements': elements}
 
     def pt(self, q):
         st = self.st
@@ -763,9 +767,11 @@ def report(store, cs_ids=None):
         off = [m['ref'] for m in ms if m['type'] == 'node' and m['role'] == 'stop' and m['ref'] not in on_route]
         line("stop positions on the route's roads", not off, f'{name}: ' + (', '.join(f'n{n}' for n in off) or 'all'), [('node', n) for n in off])
         if r['tags'].get('roundtrip') == 'yes' and first_entry is not None and prev_exit is not None:
-            # where the bus set off and where it ended: the same point, or within 50 m
+            # where the bus set off and where it ended: the same point, within 50 m, or the terminal's own road
+            # driven at both ends (the loop closes along it: first way and last way the same)
             near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 50 if p in el['node'] and q in el['node'] else False
-            line('roundtrip=yes closes', first_entry == prev_exit or near(first_entry, prev_exit), f'{name}: sets off at n{first_entry}, ends at n{prev_exit}', [('relation', rid)])
+            closes = first_entry == prev_exit or near(first_entry, prev_exit) or (len(way_ids) > 1 and way_ids[0] == way_ids[-1])
+            line('roundtrip=yes closes', closes, f'{name}: sets off at n{first_entry} (w{way_ids[0]}), ends at n{prev_exit} (w{way_ids[-1]})', [('relation', rid)])
     # what was touched, as objects
     for (t, i), action in sorted(touched.items()):
         if not vis(t, i):
@@ -817,6 +823,143 @@ def report(store, cs_ids=None):
     return lines
 
 
+# ---------------------------------------------------------------- replaying real changesets
+REAL_API = 'https://api.openstreetmap.org'
+_RANK = {'node': 0, 'way': 1, 'relation': 2}
+
+
+class ReplayGap(Exception):
+    """A changeset touches an object the sandbox doesn't have (made after the snapshot, by someone else)."""
+
+
+def replay_fetch(cid, cache=None, api=REAL_API):
+    """A real changeset, read-only from the public API, once: (osmChange text, the changeset's JSON) under
+    cache/sandbox/replay/<id>.osc and .json; read from there when they are."""
+    cache = cache or os.path.join(DIR, 'replay')
+    os.makedirs(cache, exist_ok=True)
+    out = []
+    for ext, path in (('osc', f'changeset/{cid}/download'), ('json', f'changeset/{cid}.json')):
+        f = os.path.join(cache, f'{cid}.{ext}')
+        if not os.path.exists(f):
+            with urllib.request.urlopen(urllib.request.Request(f'{api}/api/0.6/{path}', headers=UA), timeout=60) as r:
+                body = r.read()
+            with open(f + '.tmp', 'wb') as fh:
+                fh.write(body)
+            os.replace(f + '.tmp', f)
+            time.sleep(1)   # the public API is not ours to hammer
+        with open(f, encoding='utf-8') as fh:
+            out.append(fh.read())
+    return out[0], out[1]
+
+
+def replay_rewrite(osc, changeset, idmap, version_of=None):
+    """A real changeset's osmChange, made to go into the sandbox as `changeset`:
+    - what it created gets placeholder ids (-1, -2, ...), and everything in it that refers to those (a way's
+      nodes, a relation's members) follows; creations in the order nodes, ways, relations;
+    - what an earlier replayed changeset created is referred to by the id the sandbox gave it (idmap:
+      {(type, real id): sandbox id}, filled by replay_learn from each upload's diffResult);
+    - modifies and deletes carry the sandbox's current version (version_of(type, id), None = not there),
+      not the real one: other mappers' edits since the snapshot made those differ;
+    - metadata the server sets (timestamp, user, uid, visible) is dropped; deletes get if-unused, as flagstop's do.
+    -> (osmChange text, {(type, placeholder): (type, real id)})"""
+    root = ET.fromstring(osc)
+    by = {'create': [], 'modify': [], 'delete': []}
+    for blk in root:
+        if blk.tag in by:
+            by[blk.tag].extend(blk)
+    local, n = {}, 0
+    for x in sorted(by['create'], key=lambda x: _RANK[x.tag]):
+        n -= 1
+        local[(x.tag, int(x.get('id')))] = n
+    placeholders = {(t, p): (t, i) for (t, i), p in local.items()}
+
+    def ref(t, i):
+        i = int(i)
+        return local.get((t, i)) or idmap.get((t, i)) or i
+
+    def convert(x, action):
+        t, real = x.tag, int(x.get('id'))
+        e = ET.Element(t, {k: v for k, v in x.attrib.items() if k not in ('version', 'timestamp', 'user', 'uid', 'visible', 'changeset', 'id')})
+        i = ref(t, real)
+        e.set('id', str(i)); e.set('changeset', str(changeset))
+        if action != 'create':
+            v = version_of(t, i) if version_of else int(x.get('version') or 0)
+            if v is None:
+                raise ReplayGap(f'{t} {real}' + (f' (sandbox {i})' if i != real else '') + ' is not in the sandbox')
+            e.set('version', str(v))
+        for c in x:
+            if c.tag == 'nd':
+                e.append(ET.Element('nd', {'ref': str(ref('node', c.get('ref')))}))
+            elif c.tag == 'member':
+                e.append(ET.Element('member', {'type': c.get('type'), 'ref': str(ref(c.get('type'), c.get('ref'))), 'role': c.get('role') or ''}))
+            elif c.tag == 'tag':
+                e.append(ET.Element('tag', {'k': c.get('k'), 'v': c.get('v')}))
+        return e
+    out = ET.Element('osmChange', {'version': '0.6', 'generator': 'flagstop sandbox replay'})
+    for action in ('create', 'modify', 'delete'):
+        if not by[action]:
+            continue
+        blk = ET.SubElement(out, action, {'if-unused': 'true'} if action == 'delete' else {})
+        # a delete the other way round: a relation before its ways before their nodes
+        for x in sorted(by[action], key=lambda x: -_RANK[x.tag] if action == 'delete' else _RANK[x.tag]):
+            blk.append(convert(x, action))
+    ET.indent(out)
+    return ET.tostring(out, encoding='unicode') + '\n', placeholders
+
+
+def replay_learn(diff, placeholders, idmap):
+    """What the sandbox called the objects a replayed changeset created, so the next one can refer to them."""
+    for x in ET.fromstring(diff):
+        old = int(x.get('old_id'))
+        if old < 0 and x.get('new_id') and (x.tag, old) in placeholders:
+            idmap[placeholders[(x.tag, old)]] = int(x.get('new_id'))
+
+
+def replay(url, ids, cache=None, api=REAL_API):
+    """Real changesets, in order, into a running sandbox at `url`: each downloaded once (replay_fetch), rewritten
+    (replay_rewrite), uploaded as a changeset of its own with the real one's tags. Stops at the first that
+    doesn't go in. -> [{'real', 'sandbox', 'ok', 'created', 'modified', 'deleted', 'error'}]"""
+    def call(method, path, body=None):
+        req = urllib.request.Request(url + path, data=body.encode() if body is not None else None, method=method,
+                                     headers={'Authorization': 'Bearer replay', 'Content-Type': 'text/xml'})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, e.read().decode()
+
+    def version_of(t, i):
+        code, body = call('GET', f'/api/0.6/{t}/{i}.json')
+        return json.loads(body)['elements'][0]['version'] if code == 200 else None
+    idmap, results = {}, []
+    for real in ids:
+        osc, info = replay_fetch(real, cache, api)
+        tags = dict(json.loads(info)['changeset'].get('tags', {}))
+        tags['replay_of'] = str(real)
+        res = {'real': real, 'sandbox': None, 'ok': False}
+        results.append(res)
+        try:
+            body, placeholders = replay_rewrite(osc, 0, idmap, version_of)
+        except ReplayGap as e:
+            res['error'] = str(e); break
+        by = {blk.tag: len(blk) for blk in ET.fromstring(body)}
+        counts = {'created': by.get('create', 0), 'modified': by.get('modify', 0), 'deleted': by.get('delete', 0)}
+        if not any(counts.values()):
+            res.update(ok=True, note='nothing in it', **counts); continue
+        csx = '<osm><changeset>' + ''.join(f'<tag k={quoteattr(k)} v={quoteattr(v)}/>' for k, v in tags.items()) + '</changeset></osm>'
+        code, cid = call('PUT', '/api/0.6/changeset/create', csx)
+        res['sandbox'] = int(cid)
+        body, placeholders = replay_rewrite(osc, int(cid), idmap, version_of)
+        code, diff = call('POST', f'/api/0.6/changeset/{cid}/upload', body)
+        call('PUT', f'/api/0.6/changeset/{cid}/close')
+        if code != 200:
+            res['error'] = f'upload {code}: {diff[:300]}'; break
+        replay_learn(diff, placeholders, idmap)
+        res.update(ok=True, **counts)
+    return results
+
+
 def print_report(lines):
     bad = [x for x in lines if not x['ok']]
     for x in lines:
@@ -841,6 +984,7 @@ def run(port, sb_port, feed, reset=False, refresh=False):
         os.remove(LOG); print('reset: every upload forgotten', file=sys.stderr)
     work = os.path.join(DIR, 'work')
     os.makedirs(os.path.join(work, 'data'), exist_ok=True)
+    os.environ['SANDBOX_QUIET'] = '1'   # the page's every read would drown serve.py's own log
     store = Store(base)
     n = store.load_log()
     Handler.store, Handler.overpass = store, Overpass(store)
@@ -869,8 +1013,13 @@ def main(argv=None):
     sub.add_parser('reset')
     sub.add_parser('status')
     s = sub.add_parser('report'); s.add_argument('changesets', nargs='*', type=int); s.add_argument('--base')
+    s = sub.add_parser('replay'); s.add_argument('changesets', nargs='+', type=int); s.add_argument('--url', default='http://127.0.0.1:8766')
     a = ap.parse_args(argv)
     newest = lambda pat: max(glob.glob(os.path.join(ROOT, 'cache', pat)), key=os.path.getmtime, default=None)
+    if a.cmd == 'replay':   # real changesets (read-only, cached) into a running sandbox; JSON to stdout, exit 1 if one didn't go in
+        res = replay(a.url, a.changesets)
+        print(json.dumps(res))
+        return 0 if all(r['ok'] for r in res) else 1
     if a.cmd == 'snapshot':
         return snapshot(a.date, a.feed or newest('*.zip'), a.out, a.overpass)
     base = getattr(a, 'base', None) or latest_base()

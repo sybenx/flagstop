@@ -114,6 +114,7 @@ python3 tool/sandbox.py snapshot        # once: the area as of 2026-09-27 -> cac
 python3 tool/sandbox.py run             # the sandbox, the review built from it, the page at :8765 (its own files under cache/sandbox/work/)
 python3 tool/sandbox.py run --reset     # forget every upload first
 python3 tool/sandbox.py status          # what has gone up, by changeset
+python3 tool/sandbox.py report          # is it good and safe? pass/fail lines on the result (routes whole, PTv2 order, one-ways, stop positions, ...)
 ```
 
 `run` is also the `flagstop-sandbox` entry in `.claude/launch.json`. By hand: `tool/sandbox.py serve` on one port,
