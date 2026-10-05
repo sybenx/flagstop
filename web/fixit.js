@@ -16,6 +16,7 @@ const FixIt = {
   /** The plan: what will be done, what has to be decided first. */
   plan(p) {
     const r = routeOf(p), ans = S.fixit.answers;
+    for (const sid of p.stops) for (const [k, v] of Object.entries(Edits.answers[sid] || {})) if (!(sid + ':' + k in ans)) ans[sid + ':' + k] = v;   // answered before: not asked again
     const stops = [], decide = [], done = [];
     for (const st of Review.stops(p)) {
       const s = st.s, m = s.match || {};
@@ -95,7 +96,7 @@ const FixIt = {
   /** One thing to decide, with its choice. */
   question(q) {
     const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')});
-    const set = (key, v) => { S.fixit.answers[key] = S.fixit.answers[key] === v ? null : v; render(); draw(); };
+    const set = (key, v) => { const was = S.fixit.answers[key] === v; S.fixit.answers[key] = was ? null : v; if (!key.endsWith(':which')) Edits.answer(key.split(':')[0], key.split(':')[1], was ? null : v); render(); draw(); };
     if (q.kind === 'broken') {
       row.append(el('div', {}, el('b', {}, 'The route can\'t be traced whole'), el('div', {class: 'why'}, q.why + '. Re-route it (via a point, a road), or fix the map, then come back.')));
       return row;
@@ -133,6 +134,8 @@ const FixIt = {
     Edits.hold(`fix route ${r.short} ${p.headsign || ''}`.trim());
     const kept = [];
     try {
+      // a stop the review found at a distance ('moved') is that OSM node whichever way its position was answered
+      for (const q of x.decide) if (q.kind === 'where' && q.answer && q.o) Edits.decisions[q.s.id] = q.o.id;
       for (const y of x.stops) {
         const s = y.st.s;
         if (y.pick) Edits.decisions[s.id] = y.pick;

@@ -15,6 +15,7 @@ const Edits = {
   nextId: -1,
   decisions: {},    // stop id -> osm id chosen for an ambiguous match
   routing: {},      // pattern id -> {vias: [[lon, lat]], avoid: [way id], require: [way id]}: the reviewer's say over the router
+  answers: {},      // stop id -> {position: 'agency' | 'keep', name: ..., ...}: the review's questions, as answered, so they aren't asked twice
   uploaded: {},     // what went up, until the OSM data catches up: key -> the op, with uploaded (changeset), newId, newVersion, at
   roads: [],        // road edits, oldest first: {what, before: {key: op as it was, or null}} — so their parts can't be removed singly
   listeners: [],
@@ -26,12 +27,12 @@ const Edits = {
     this.key = 'flagstop.edits.' + (agency || '').replace(/\W+/g, '_');
     try {
       const s = JSON.parse(localStorage.getItem(this.key) || '{}');
-      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.roads = s.roads || [];
+      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || [];
     } catch (e) { this.ops = {}; }
     try { this.uploaded = JSON.parse(localStorage.getItem(this.key + '.uploaded') || '{}'); } catch (e) { this.uploaded = {}; }
     this.history = []; this.future = []; this.committed = this.state();
   },
-  state() { return JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions, routing: this.routing, roads: this.roads}); },
+  state() { return JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions, routing: this.routing, answers: this.answers, roads: this.roads}); },
   save() {
     const now = this.state();
     if (this.committed != null && now !== this.committed) {
@@ -64,7 +65,7 @@ const Edits = {
       if (!r.state && Object.keys(this.ops).length) this.persist();   // the server has none yet: give it this browser's
       if (!r.state || !(r.at > mine) || r.state === this.state()) return false;
       const s = JSON.parse(r.state);
-      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.roads = s.roads || [];
+      this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || [];
       this.history = []; this.future = []; this.committed = this.state();
       try { localStorage.setItem(this.key, this.committed); localStorage.setItem(this.key + '.at', String(r.at)); } catch (e) {}
       return true;
@@ -77,7 +78,9 @@ const Edits = {
       one undo step, named `text`. Holds nest: an action inside a held one belongs to the outer step. */
   hold(text) { if (this.holding) { this.holdDepth = (this.holdDepth || 1) + 1; return; } this.nextLabel = text; this.holding = true; this.held = false; this.holdDepth = 1; },
   release() { if ((this.holdDepth || 0) > 1) { this.holdDepth--; return; } this.holding = false; this.held = false; this.nextLabel = null; this.holdDepth = 0; },
-  restore(json) { const s = JSON.parse(json); this.ops = s.ops; this.nextId = s.nextId; this.decisions = s.decisions; this.routing = s.routing || {}; this.roads = s.roads || []; this.committed = json; this.persist(json); },
+  restore(json) { const s = JSON.parse(json); this.ops = s.ops; this.nextId = s.nextId; this.decisions = s.decisions; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || []; this.committed = json; this.persist(json); },
+  /** An answer to one of the review's questions about a stop, kept (null forgets it). */
+  answer(sid, k, v) { const a = {...(this.answers[sid] || {})}; if (v) a[k] = v; else delete a[k]; if (Object.keys(a).length) this.answers[sid] = a; else delete this.answers[sid]; this.save(); },
   /** The reviewer's say over an itinerary's routing: {vias, avoid, require}, each a list, maybe empty. */
   routingOf(pid) { const r = this.routing[pid] || {}; return {vias: r.vias || [], avoid: r.avoid || [], require: r.require || []}; },
   /** Keep it (null, or all empty: forget it). One undo step, like any decision. */
