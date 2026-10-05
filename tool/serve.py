@@ -298,6 +298,7 @@ class Handler(SimpleHTTPRequestHandler):
             for p in glob.glob(os.path.join(cache_dir(), '*-osm-*.json')) + glob.glob(os.path.join(cache_dir(), 'roads', '*.json')):
                 os.remove(p)
             shutil.rmtree(os.path.join(cache_dir(), 'state'), ignore_errors=True)
+            os.makedirs(data_dir(), exist_ok=True)   # the sandbox's reset may have taken the whole work directory
             ROUTED.clear(); GRAPHS.clear()
             return self._json({**start_refresh(), 'generation': gen})
         if urllib.parse.urlparse(self.path).path == '/api/refresh':

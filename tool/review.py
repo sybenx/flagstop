@@ -197,6 +197,7 @@ def main():
     ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
     a = ap.parse_args()
 
+    os.makedirs(a.out, exist_ok=True); os.makedirs(a.cache, exist_ok=True)
     feed = gtfs.load(a.feed)
     box = gtfs.bbox(feed)
     slug = ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
