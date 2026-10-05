@@ -10,17 +10,17 @@ const close = (a, b) => typeof a === 'number' && typeof b === 'number' ? Math.ab
   Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, i) => close(x, b[i])) :
   a && b && typeof a === 'object' && typeof b === 'object' ? Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => close(a[k], b[k])) : a === b;
 let bad = 0;
-for (const c of cases.patterns) {
-  const js = norm(Router.routePattern(c.p, c.stopsLL, g, cases.osm_stops, cases.stop_areas, sid => cases.match[sid]));
-  const py = norm(c.python);
-  const same = close(js, py);
-  if (!same) {
-    bad++;
-    for (const k of Object.keys(py)) if (!close(js[k], py[k])) {
-      const a = JSON.stringify(js[k]), b = JSON.stringify(py[k]); let i = 0; while (a[i] === b[i]) i++;
-      console.log(c.p.id, k, 'differs at', i, '\n  js:', a.slice(Math.max(0, i - 80), i + 120), '\n  py:', b.slice(Math.max(0, i - 80), i + 120));
-    }
-  } else console.log(c.p.id, 'same');
+function check(id, js, py) {
+  js = norm(js); py = norm(py);
+  if (close(js, py)) return console.log(id, 'same');
+  bad++;
+  for (const k of new Set([...Object.keys(py), ...Object.keys(js)])) if (!close(js[k], py[k])) {
+    const a = JSON.stringify(js[k]), b = JSON.stringify(py[k]); let i = 0; while (a[i] === b[i]) i++;
+    console.log(id, k, 'differs at', i, '\n  js:', a.slice(Math.max(0, i - 80), i + 120), '\n  py:', b.slice(Math.max(0, i - 80), i + 120));
+  }
 }
+for (const c of cases.patterns) check(c.p.id, Router.routePattern(c.p, c.stopsLL, g, cases.osm_stops, cases.stop_areas, sid => cases.match[sid]), c.python);
+// the reviewer's say: a via point, a road the bus doesn't use, a road it does
+for (const c of cases.constraints || []) check(c.p.id + ' constrained', Router.traceWithVias(c.p, c.stopsLL, g.patched({}, {}, c.avoid), c.vias, c.require, c.avoid), c.python);
 console.log(bad ? `${bad} differ` : 'all same');
 process.exit(bad ? 1 : 0);

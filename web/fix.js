@@ -24,23 +24,27 @@ function roadPatches(extra = {}) {
 }
 const hasRoadEdits = () => Object.values(Edits.all()).some(o => o.type === 'way' && o.nodes && String(o.note || '').startsWith('road: '));
 
-/** The route as it would run with road edits (and via points), worked out here on a copy of its roads. */
-async function traceWith(pid, extra, vias = []) {
+/** The route as it would run with road edits and the reviewer's say (via points, roads the bus uses or doesn't:
+ *  Edits.routing, unless given), worked out here on a copy of its roads. */
+async function traceWith(pid, extra, routing = null) {
   const p = patternById(pid);
   if (!p.graph && !(await ensureRouted(p))) throw new Error(p.routeError || 'no roads');
   const {ways, nodes} = roadPatches(extra);
-  const g = Object.keys(ways).length || Object.keys(nodes).length ? p.graph.patched(ways, nodes) : p.graph;
-  return Router.traceWithVias({id: p.id, stops: p.stops, shape: p.shape}, stopsLL(p), g, vias);
+  const r = routing || Edits.routingOf(pid);
+  const g = Object.keys(ways).length || Object.keys(nodes).length || r.avoid.length ? p.graph.patched(ways, nodes, r.avoid) : p.graph;
+  return Router.traceWithVias({id: p.id, stops: p.stops, shape: p.shape}, stopsLL(p), g, r.vias, r.require, r.avoid);
 }
-/** The open route as it would run with what's in Changes (and any via points). */
+/** The open route as it would run with what's in Changes and the reviewer's say over it. */
 async function liveRoute() {
   const p = S.pattern && patternById(S.pattern);
   if (!p) return;
-  if (!hasRoadEdits() && !S.vias.length) { if (S.routedBy === 'changes') { S.routed = null; S.routedBy = null; render(); draw(); } return; }
+  const r = Edits.routingOf(p.id), constrained = r.vias.length || r.avoid.length || r.require.length;
+  S.routedWith = JSON.stringify(r);
+  if (!hasRoadEdits() && !constrained) { if (S.routedBy === 'changes' || S.routedBy === 'vias') { S.routed = null; S.routedBy = null; render(); draw(); } return; }
   try {
-    S.routed = await traceWith(p.id, {}, S.vias);
-    S.routedBy = S.vias.length ? 'vias' : 'changes';
-  } catch (e) { return; }   // no server re-routing: the review's own path stays
+    S.routed = await traceWith(p.id, {}, r);
+    S.routedBy = constrained ? 'vias' : 'changes';
+  } catch (e) { return; }   // its roads couldn't be had: the review's own path stays
   render(); draw();
 }
 

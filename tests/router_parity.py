@@ -5,7 +5,7 @@
 import glob, json, os, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tool'))
-import gtfs, osm, review, routes as routing
+import gtfs, osm, review, serve, routes as routing
 
 
 def main(argv):
@@ -26,6 +26,24 @@ def main(argv):
         cases['patterns'].append({'p': {'id': p.id, 'stops': p.stops, 'shape': feed.shapes.get(p.shape_id, [])},
                                   'stopsLL': {s: [feed.stops[s].lon, feed.stops[s].lat] for s in p.stops},
                                   'python': review.route_pattern(feed, p, g, match, osm_stops, stop_areas)})
+    # the reviewer's say, on the first two itineraries with a path of three ways or more: keep off the middle way of
+    # the path, drive a road near the line's middle that the path doesn't use, and go through a point on the line
+    cases['constraints'] = []
+    for c in cases['patterns']:
+        ways, shape = c['python']['routed']['ways'], c['p']['shape']
+        if len(ways) < 3 or len(shape) < 2:
+            continue
+        mid = tuple(shape[len(shape) // 2])
+        avoid = [ways[len(ways) // 2]]
+        require = [w for w in sorted(g.nearby_ways(mid, 150)) if w not in ways][:1]
+        pts = [tuple(c['stopsLL'][s]) for s in c['p']['stops']]
+        gg = g.patched(avoid=avoid)
+        seq, pins = routing.fold_vias(gg, pts, [mid], require)
+        res = routing.trace(gg, seq, shape, pins)
+        cases['constraints'].append({'p': c['p'], 'stopsLL': c['stopsLL'], 'vias': [mid], 'avoid': avoid, 'require': require,
+                                     'python': serve.trace_json(res, [mid], avoid, require)})
+        if len(cases['constraints']) >= 2:
+            break
     path = os.path.join(ROOT, 'cache', 'router_cases.json')
     json.dump(cases, open(path, 'w'))
     return subprocess.run(['node', os.path.join(ROOT, 'tests', 'router_parity.js'), path]).returncode

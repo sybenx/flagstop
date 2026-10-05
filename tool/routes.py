@@ -24,6 +24,7 @@ SKIP_COST = 3.0  # cost per metre of line skipped or driven backwards: more than
 SNAP = 60        # m: a stop further than this from any road is placed on no road at all
 SNAP_HANDICAP = {'parking_aisle': 15, 'driveway': 15, 'drive-through': 15}   # m: a stop by the kerb is on the street,
                  # not on the parking aisle that happens to run a few metres closer to its sign
+EXCLUDED = 'excluded by you'   # why a way the reviewer ruled out is blocked
 SNAP_CROSS = 12  # m: a stop at a corner belongs to the street the line runs along, not the one crossing it
 DIVERGE = 30     # m: the routed path this far from the shape is a divergence
 
@@ -200,25 +201,28 @@ class Graph:
         return [(ci, cj) for ci in range(int(min(a[1], b[1]) / c), int(max(a[1], b[1]) / c) + 1)
                 for cj in range(int(min(a[0], b[0]) / c), int(max(a[0], b[0]) / c) + 1)]
 
-    def patched(self, ways=None, nodes=None):
+    def patched(self, ways=None, nodes=None, avoid=()):
         """A copy with some ways replaced or added and some nodes placed (edits not yet uploaded), sharing
         everything else: what the bus could do once those edits are made. ways: {id: {'nodes', 'tags'}};
-        nodes: {id: (lon, lat)}. Ways absent from both stay as they are."""
-        ways, nodes = ways or {}, nodes or {}
+        nodes: {id: (lon, lat)}. Ways absent from both stay as they are.
+        avoid: ways the reviewer has ruled out ("the bus doesn't use this road"): kept on the map, but a bus
+        may not drive them, and a divergence over one says so (blocked, EXCLUDED)."""
+        ways, nodes, avoid = ways or {}, nodes or {}, set(avoid or ())
         g = Graph.__new__(Graph)
         g.cell = self.cell
         g.no_turn, g.only_turn = self.no_turn, self.only_turn
         g.coord = {**self.coord, **nodes}
         g.ways = dict(self.ways)
         g.blocked = dict(self.blocked)
+        drop = set(ways) | avoid
         touched = set()
-        for wid in ways:
+        for wid in drop:
             old = self.ways.get(wid)
             if old:
                 touched |= set(old['nodes'])
-        g.adj = {n: [e for e in self.adj[n] if e[1] not in ways] if n in touched else self.adj[n] for n in self.adj}
+        g.adj = {n: [e for e in self.adj[n] if e[1] not in drop] if n in touched else self.adj[n] for n in self.adj}
         g.sgrid = dict(self.sgrid)
-        for wid in ways:
+        for wid in drop:
             old = self.ways.get(wid)
             if old:
                 ns = [n for n in old['nodes'] if n in self.coord]
@@ -229,6 +233,8 @@ class Graph:
             g.blocked.pop(wid, None)
         for wid, w in ways.items():
             g.ways[wid] = {'id': wid, 'nodes': w['nodes'], 'tags': w.get('tags', {})}
+            if wid in avoid:
+                continue
             # _add appends: give it fresh lists where it will write, so this graph's changes stay its own
             for n in w['nodes']:
                 if n in g.adj and g.adj[n] is self.adj.get(n):
@@ -239,6 +245,9 @@ class Graph:
                     if cell in g.sgrid and g.sgrid[cell] is self.sgrid.get(cell):
                         g.sgrid[cell] = list(g.sgrid[cell])
             g._add(wid, g.ways[wid])
+        for wid in avoid:
+            if wid in g.ways:
+                g.blocked[wid] = EXCLUDED
         return g
 
     @staticmethod
@@ -395,9 +404,11 @@ class Graph:
         return None
 
 
-def trace(g, stops, shape):
+def trace(g, stops, shape, pins=None):
     """Route a pattern over the graph.
     stops: [(lon, lat), ...] in order.  shape: [(lon, lat), ...] or None.
+    pins: per stop, None (snap it to the nearest road) or (way, node a, node b, fraction): the road it is on, said
+    outright (a required way's points: a cross street at its junction must not take them).
     -> dict(legs, ways, geometry, divergences, score)"""
     guide = Polyline(shape) if shape and len(shape) > 1 else None
     # Where each stop sits along the shape, so each leg only hugs its own part of the line.
@@ -417,55 +428,60 @@ def trace(g, stops, shape):
     def along(k):
         sl = guide.slice(at[k][1] - 15, at[k][1] + 15) if guide else []
         return (sl[0], sl[-1]) if len(sl) > 1 else None
-    snaps = [g.snap(p, along=along(k)) for k, p in enumerate(stops)]
+    snaps = [(0.0, *pins[k]) if pins and pins[k] else g.snap(p, along=along(k)) for k, p in enumerate(stops)]
+    # from the stop to the stop: the points on the road where they are, not the ends of their stretches
+    on = lambda sn: (g.coord[sn[2]][0] + (g.coord[sn[3]][0] - g.coord[sn[2]][0]) * sn[4], g.coord[sn[2]][1] + (g.coord[sn[3]][1] - g.coord[sn[2]][1]) * sn[4])
     legs, all_ways, geom, divs = [], [], [], []
-    prev_end = None
     for k in range(len(stops) - 1):
         s0, s1 = snaps[k], snaps[k + 1]
         leg = {'from': k, 'to': k + 1, 'ok': False, 'ways': [], 'geometry': [], 'why': ''}
         if s0 is None or s1 is None:
             leg['why'] = f'stop {k if s0 is None else k + 1} is more than {SNAP} m from any road a bus can use'
-            legs.append(leg); prev_end = None
+            legs.append(leg)
+            continue
+        adj_has = lambda n, m, w: (m, w) in {(x, y) for (x, y, _, _) in g.adj.get(n, [])}
+        # Both on one stretch of road, drivable from the first to the second: the leg is that stretch. (A search
+        # would give a path of one node, saying nothing about which way it went.)
+        if (s0[1], s0[2], s0[3]) == (s1[1], s1[2], s1[3]) and (adj_has(s0[2], s0[3], s0[1]) if s1[4] >= s0[4] else adj_has(s0[3], s0[2], s0[1])):
+            leg['ok'] = True; leg['ways'] = [s0[1]]; leg['geometry'] = [on(s0), on(s1)]
+            legs.append(leg)
+            if not all_ways or all_ways[-1] != s0[1]:
+                all_ways.append(s0[1])
+            geom.extend(leg['geometry'])
             continue
         lo = hi = None
         if guide:
             lo, hi = min(at[k][0], at[k + 1][0]), max(at[k][0], at[k + 1][0])
             lo, hi = max(0, lo - 3), min(len(guide.pts) - 2, hi + 3)
-        # Start from either end of the stop's segment, paying the distance along it; same for the goal.
+        # Start from either end of the stop's segment, paying the distance along it; same for the goal. Every leg
+        # sets off from its stop afresh: where the last leg's search ended says only where the stop's stretch
+        # begins, not which way the bus faces, and a stretch the bus must drive end to end (a required way, its
+        # two points on one segment) would otherwise be left from the end it came in by.
         La = metres(g.coord[s0[2]], g.coord[s0[3]])
-        starts = {}
-        if prev_end is not None and prev_end in (s0[2], s0[3]):
-            starts = {prev_end: 0.0}
-        else:
-            starts = {s0[3]: (1 - s0[4]) * La}
-            if s0[2] in g.adj and (s0[2], s0[1]) in {(m, w) for (m, w, _, _) in g.adj.get(s0[3], [])}:
-                starts[s0[2]] = s0[4] * La   # two-way segment: may leave backwards too
+        starts = {s0[3]: (1 - s0[4]) * La}
+        if s0[2] in g.adj and adj_has(s0[3], s0[2], s0[1]):
+            starts[s0[2]] = s0[4] * La   # two-way segment: may leave backwards too
         Lb = metres(g.coord[s1[2]], g.coord[s1[3]])
         goals = {s1[2]: s1[4] * Lb}
-        if (s1[2], s1[1]) in {(m, w) for (m, w, _, _) in g.adj.get(s1[3], [])}:
+        if adj_has(s1[3], s1[2], s1[1]):
             goals[s1[3]] = (1 - s1[4]) * Lb
         # Keep the path off the stops' own stretches the wrong way: leaving the first stop, it may set off
-        # from either end of its stretch but not back through the stop (continuing from the last leg, it
-        # stands before the stop and goes through it, as the bus does); arriving, not past the stop and back.
+        # from either end of its stretch but not back through the stop; arriving, not past the stop and back.
         same = {s0[2], s0[3]} == {s1[2], s1[3]}
-        fresh = not (prev_end is not None and prev_end in (s0[2], s0[3]))
         res = g.astar(starts, goals, guide, lo, hi, start_at=at[k][1] if guide else None, end_at=at[k + 1][1] if guide else None,
-                      no_first={s0[2]: s0[3], s0[3]: s0[2]} if fresh and not same else None, no_last=None if same else {s1[2]: s1[3], s1[3]: s1[2]})
+                      no_first=None if same else {s0[2]: s0[3], s0[3]: s0[2]}, no_last=None if same else {s1[2]: s1[3], s1[3]: s1[2]})
         if res is None:
             leg['why'] = 'no drivable path between these stops on the map'
-            legs.append(leg); prev_end = None
+            legs.append(leg)
             continue
         cost, path, ways = res
         leg['ok'] = True
         leg['ways'] = [s0[1]] + ways + [s1[1]] if ways else [s0[1], s1[1]] if s0[1] != s1[1] else [s0[1]]
         leg['ways'] = [w for i, w in enumerate(leg['ways']) if i == 0 or w != leg['ways'][i - 1]]
-        # from the stop to the stop: the points on the road where they are, not the ends of their stretches
-        on = lambda sn: (g.coord[sn[2]][0] + (g.coord[sn[3]][0] - g.coord[sn[2]][0]) * sn[4], g.coord[sn[2]][1] + (g.coord[sn[3]][1] - g.coord[sn[2]][1]) * sn[4])
         pts = [g.coord[n] for n in path]
         if len(path) > 1 and {path[0], path[1]} == {s0[2], s0[3]}:
             pts = pts[1:]          # it stood before the stop and drove through it: the leg starts at the stop
         leg['geometry'] = [on(s0)] + pts + [on(s1)]
-        prev_end = path[-1]
         legs.append(leg)
         for w in leg['ways']:
             if not all_ways or all_ways[-1] != w:
@@ -475,6 +491,54 @@ def trace(g, stops, shape):
         divs = divergences(g, guide, legs, stops, at)
     score = coverage(guide, geom) if guide else None
     return {'legs': legs, 'ways': all_ways, 'geometry': geom, 'divergences': divs, 'score': score}
+
+
+def fold_vias(g, stops, vias=(), require=()):
+    """The stops with the reviewer's say folded in, as more points to route through. Each via point ("go through
+    here") goes between the two consecutive points whose leg it is nearest. Each required way ("the bus uses this
+    road") becomes two points a few metres in from either end, pinned to the way (not to a cross street at its
+    junction), the way's own direction if it is one-way, else the end nearer the point before them first, so the
+    path drives the way, that way round.
+    -> ([(lon, lat)], pins) for trace()"""
+    pts = [tuple(p) for p in stops]
+    order = list(range(len(pts)))
+    pin = {}
+
+    def nearest_leg(p):
+        best, bi = None, 0
+        for i in range(len(order) - 1):
+            _, d, _ = project(p, pts[order[i]], pts[order[i + 1]])
+            if best is None or d < best:
+                best, bi = d, i
+        return best, bi
+    for v in vias:
+        _, bi = nearest_leg(v)
+        pts.append(tuple(v)); order.insert(bi + 1, len(pts) - 1)
+    for wid in require:
+        w = g.ways.get(wid)
+        nodes = [n for n in (w['nodes'] if w else []) if n in g.coord]
+        if len(nodes) < 2:
+            continue
+        # a point on the first segment and one on the last, a few metres in from the way's ends
+        def inside(a, b, from_a):
+            A, B = g.coord[a], g.coord[b]
+            L = metres(A, B)
+            if not L:
+                return None
+            t = min(3.0, L / 3) / L
+            t = t if from_a else 1 - t
+            return ((A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t), (wid, a, b, t))
+        p0, p1 = inside(nodes[0], nodes[1], True), inside(nodes[-2], nodes[-1], False)
+        if p0 is None or p1 is None:
+            continue
+        da, ia = nearest_leg(p0[0]); db, ib = nearest_leg(p1[0])
+        bi = ia if da is None or da <= db else ib
+        may = bus_may(w.get('tags', {})) or (True, True)
+        first = may[0] if may[0] != may[1] else metres(p0[0], pts[order[bi]]) <= metres(p1[0], pts[order[bi]])
+        for q, s in ((p0, p1) if first else (p1, p0)):
+            pts.append(q); pin[len(pts) - 1] = s
+        order[bi + 1:bi + 1] = [len(pts) - 2, len(pts) - 1]
+    return [pts[i] for i in order], [pin.get(i) for i in order]
 
 
 def coverage(guide, geom):
@@ -571,6 +635,9 @@ def _explain_gap(g, guide, gap):
             drivable[w] = min(d, drivable.get(w, 99))
         for w, (d, why) in g.blocked_near(p, 25).items():
             blocked[w] = why
+    yours = [w for w, why in blocked.items() if why == EXCLUDED]
+    if yours:
+        return f"the line follows way {yours[0]}, {EXCLUDED}: the bus doesn't use it", yours + [x for x in drivable if x not in yours], None
     if blocked and not drivable:
         w, why = next(iter(blocked.items()))
         return f'the line follows way {w} which a bus may not use ({why})', list(blocked), None

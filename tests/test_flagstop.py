@@ -164,6 +164,70 @@ class Turns(unittest.TestCase):
         self.assertNotEqual(self.path(self.graph({'restriction': 'only_straight_on'}, to=11))[:2], [10, 12])
 
 
+class Constraints(unittest.TestCase):
+    """The reviewer's say over the router: a road the bus doesn't use (avoid), a road it does (require)."""
+    # three east-west streets 445 m long: A (the agency's line runs along it), B 55 m north, C 110 m south,
+    # joined at both ends by cross streets
+    COORDS = {1: (0, 0), 2: (0.004, 0), 5: (0, 0.0005), 6: (0.004, 0.0005), 3: (0, -0.001), 4: (0.004, -0.001)}
+    WAYS = {10: [1, 2], 11: [5, 6], 12: [3, 4], 20: [1, 5], 21: [2, 6], 22: [1, 3], 23: [2, 4]}
+    STOPS = [(0.0002, 0), (0.0038, 0)]
+    SHAPE = [(0, 0), (0.004, 0)]
+
+    def graph(self, oneway=()):
+        import routes
+        els = [{'type': 'node', 'id': i, 'lon': x, 'lat': y} for i, (x, y) in self.COORDS.items()]
+        els += [{'type': 'way', 'id': w, 'nodes': ns, 'tags': {'highway': 'residential', **({'oneway': 'yes'} if w in oneway else {})}} for w, ns in self.WAYS.items()]
+        return routes.Graph({'elements': els})
+
+    def folded(self, g, **say):
+        import routes
+        seq, pins = routes.fold_vias(g, self.STOPS, **say)
+        return seq, self.SHAPE, pins
+
+    def test_follows_the_line(self):
+        import routes
+        r = routes.trace(self.graph(), self.STOPS, self.SHAPE)
+        self.assertEqual(r['ways'], [10])
+        self.assertEqual(r['divergences'], [])
+
+    def test_avoid_takes_the_parallel_street_and_says_why(self):
+        import routes
+        r = routes.trace(self.graph().patched(avoid=[10]), self.STOPS, self.SHAPE)
+        self.assertNotIn(10, r['ways'])
+        self.assertIn(11, r['ways'])
+        over = [d for d in r['divergences'] if 10 in d['ways']]
+        self.assertTrue(over, r['divergences'])
+        self.assertIn(routes.EXCLUDED, over[0]['why'])
+
+    def test_require_drives_the_way_once_end_to_end(self):
+        import routes
+        g = self.graph()
+        r = routes.trace(g, *self.folded(g, require=[12]))
+        self.assertEqual(r['ways'], [10, 22, 12, 23, 10])
+        self.assertTrue(all(l['ok'] for l in r['legs']))
+
+    def test_require_a_one_way_drives_it_its_way(self):
+        import routes
+        g = self.graph(oneway=[12])   # C runs east only
+        r = routes.trace(g, *self.folded(g, require=[12]))
+        self.assertEqual(r['ways'], [10, 22, 12, 23, 10])
+        self.WAYS[12] = [4, 3]       # C runs west only: it can still be driven, from its east end
+        try:
+            g = self.graph(oneway=[12])
+            r = routes.trace(g, *self.folded(g, require=[12]))
+        finally:
+            self.WAYS[12] = [3, 4]
+        self.assertEqual(r['ways'], [10, 23, 12, 22, 10])
+
+    def test_two_stops_on_one_stretch(self):
+        """Stops on the same stretch of road: the leg is that stretch, not a spike to one end of it."""
+        import routes
+        g = self.graph()
+        r = routes.trace(g, [(0.0002, 0), (0.0020, 0), (0.0038, 0)], self.SHAPE)
+        self.assertEqual(r['ways'], [10])
+        self.assertEqual([len(l['geometry']) for l in r['legs']], [2, 2])
+
+
 class FeedChanges(unittest.TestCase):
     def test_diff(self):
         import feeddiff

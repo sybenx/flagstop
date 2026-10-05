@@ -10,10 +10,11 @@ of a pattern through extra via points the reviewer drops on the map:
     GET /api/route?pattern=<id>                             -> the itinerary's route fields (path, divergences, joins,
                                                                stop positions), from its own roads, fetched when first asked
     GET /api/trace?pattern=<id>&via=<lon>,<lat>&via=...     -> the same shape as review.json's routed{}
-    GET /api/relation?pattern=<id>&via=...                  -> the proposed relation as .osm
+          &avoid=<way id>&require=<way id>...                  (avoid: roads the bus doesn't use; require: roads it does)
+    GET /api/relation?pattern=<id>&via=...&avoid=...&require=...  -> the proposed relation as .osm
     POST /api/refresh                                       -> fetch OSM again and rebuild the review (after an upload);
                                                                GET /api/refresh says whether it's still running
-    POST /api/trace {pattern, vias, ways: {id: {nodes, tags}}, nodes: {id: [lon, lat]}}
+    POST /api/trace {pattern, vias, avoid, require, ways: {id: {nodes, tags}}, nodes: {id: [lon, lat]}}
     GET /api/state?key=<k>, POST /api/state {key, state, at}  -> your decisions and Changes, kept in cache/state/
                                                                so another browser, or cleared site data, doesn't lose
                                                                them (this page's own origin only)
@@ -89,26 +90,18 @@ def route_for(pid):
     return ROUTED[pid]
 
 
-def trace_with_vias(pid, vias, g=None):
-    """Trace the pattern with via points folded into the stop list at the nearest leg; on graph g if given."""
-    feed, g = STATE['feed'], g or graph_for(pid)
+def trace_with_vias(pid, vias, g=None, require=(), avoid=()):
+    """Trace the pattern through the reviewer's via points and required ways, keeping off the avoided ones; on
+    graph g (already patched with road edits) if given."""
+    feed = STATE['feed']
+    g = g or graph_for(pid)
+    if avoid:
+        g = g.patched(avoid=avoid)
     p = STATE['patterns'][pid]
     pts = [(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops]
-    order = list(range(len(pts)))          # index into pts; vias get appended
-    for v in vias:
-        # Put the via between the two consecutive points whose segment it is nearest.
-        best, bi = None, 0
-        for i in range(len(order) - 1):
-            _, d, _ = routing.project(v, pts[order[i]], pts[order[i + 1]])
-            if best is None or d < best:
-                best, bi = d, i
-        pts.append(v)
-        order.insert(bi + 1, len(pts) - 1)
-    seq = [pts[i] for i in order]
-    res = routing.trace(g, seq, feed.shapes.get(p.shape_id))
-    # Legs are between consecutive points of seq; report them by their pattern stop index where that applies.
-    is_stop = [i < len(p.stops) for i in order]
-    return p, res, order, is_stop
+    seq, pins = routing.fold_vias(g, pts, vias, require)
+    res = routing.trace(g, seq, feed.shapes.get(p.shape_id), pins)
+    return p, res
 
 
 REFRESH = {'running': False, 'error': None, 'done': None}
@@ -145,11 +138,23 @@ def start_refresh(changesets=()):
     return REFRESH
 
 
-def trace_json(res, vias):
+def trace_json(res, vias, avoid=(), require=()):
     return {'ways': res['ways'], 'geometry': [[round(x, 6), round(y, 6)] for x, y in res['geometry']],
             'legs': [{'from': l['from'], 'to': l['to'], 'ok': l['ok'], 'why': l['why'], 'ways': l['ways']} for l in res['legs']],
             'divergences': [{k: (review.round_pts(v) if k in ('shape', 'path') else v) for k, v in d.items()} for d in res['divergences']],
-            'score': res['score'], 'vias': vias}
+            'score': res['score'], 'vias': list(vias), 'avoid': list(avoid), 'require': list(require)}
+
+
+def way_ids(values):
+    """Way ids from query values or a JSON list ('12,34', [12, '34']): ints, bad ones dropped."""
+    out = []
+    for v in values or []:
+        for x in (v.split(',') if isinstance(v, str) else [v]):
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                pass
+    return out
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -162,7 +167,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def log_message(self, fmt, *args):
-        if '/api/' in (args[0] if args else ''):
+        if '/api/' in str(args[0] if args else ''):   # a 404's first arg is an HTTPStatus, not the request line
             super().log_message(fmt, *args)
 
     def do_GET(self):
@@ -205,9 +210,10 @@ class Handler(SimpleHTTPRequestHandler):
                 vias.append((lon, lat))
             except ValueError:
                 pass
-        p, res, order, is_stop = trace_with_vias(pid, vias)
+        avoid, require = way_ids(q.get('avoid')), way_ids(q.get('require'))
+        p, res = trace_with_vias(pid, vias, require=require, avoid=avoid)
         if u.path == '/api/trace':
-            return self._json(trace_json(res, vias))
+            return self._json(trace_json(res, vias, avoid, require))
         if u.path == '/api/relation':
             path = os.path.join(ROOT, 'cache', f'rel-{review.safe(pid)}-via.osm')
             review.write_relation_osm(path, STATE['feed'], p, res, STATE['match'], STATE['osm_stops'])
@@ -264,9 +270,10 @@ class Handler(SimpleHTTPRequestHandler):
         ways = {int(k): {'nodes': [int(n) for n in v['nodes']], 'tags': v.get('tags', {})} for k, v in (body.get('ways') or {}).items()}
         nodes = {int(k): tuple(v) for k, v in (body.get('nodes') or {}).items()}
         vias = [tuple(v) for v in body.get('vias') or []]
+        avoid, require = way_ids(body.get('avoid')), way_ids(body.get('require'))
         g = graph_for(pid).patched(ways, nodes) if ways or nodes else None
-        p, res, order, is_stop = trace_with_vias(pid, vias, g)
-        return self._json(trace_json(res, vias))
+        p, res = trace_with_vias(pid, vias, g, require=require, avoid=avoid)
+        return self._json(trace_json(res, vias, avoid, require))
 
     def _json(self, obj, code=200, cors=True):
         body = json.dumps(obj).encode()

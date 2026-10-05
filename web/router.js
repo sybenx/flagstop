@@ -15,6 +15,7 @@ const Router = (() => {
   const STRAY = 20, STRAY_COST = 0.2, SKIP_SLACK = 25, SKIP_COST = 3.0, SNAP = 60;
   const SNAP_HANDICAP = {parking_aisle: 15, driveway: 15, 'drive-through': 15};
   const SNAP_CROSS = 12, DIVERGE = 30;
+  const EXCLUDED = 'excluded by you';   // why a way the reviewer ruled out is blocked
   const trunc = Math.trunc, RAD = Math.PI / 180;
   const get = (o, k, d) => (o && Object.prototype.hasOwnProperty.call(o, k)) ? o[k] : d;
   // Python's round(x, n): half to even
@@ -169,19 +170,20 @@ const Router = (() => {
         for (let cj = trunc(Math.min(A[0], B[0]) / c); cj < trunc(Math.max(A[0], B[0]) / c) + 1; cj++) out.push(ci + ',' + cj);
       return out;
     }
-    /** A copy with some ways replaced or added and some nodes placed (edits not yet uploaded). */
-    patched(ways = {}, nodes = {}) {
+    /** A copy with some ways replaced or added and some nodes placed (edits not yet uploaded); avoid: ways the
+     *  reviewer has ruled out, kept on the map but not for a bus (blocked, EXCLUDED). */
+    patched(ways = {}, nodes = {}, avoid = []) {
       const g = new Graph(null);
       g.cell = this.cell; g.noTurn = this.noTurn; g.onlyTurn = this.onlyTurn;
       g.coord = new Map(this.coord);
       for (const [id, ll] of Object.entries(nodes)) g.coord.set(+id, ll);
       g.ways = new Map(this.ways); g.blocked = new Map(this.blocked);
-      const wids = new Set(Object.keys(ways).map(Number)), touched = new Set();
-      for (const wid of wids) { const old = this.ways.get(wid); if (old) for (const n of old.nodes) touched.add(n); }
+      const out = new Set((avoid || []).map(Number)), drop = new Set([...Object.keys(ways).map(Number), ...out]), touched = new Set();
+      for (const wid of drop) { const old = this.ways.get(wid); if (old) for (const n of old.nodes) touched.add(n); }
       g.adj = new Map();
-      for (const [n, es] of this.adj) g.adj.set(n, touched.has(n) ? es.filter(e => !wids.has(e[1])) : es);
+      for (const [n, es] of this.adj) g.adj.set(n, touched.has(n) ? es.filter(e => !drop.has(e[1])) : es);
       g.sgrid = new Map(this.sgrid);
-      for (const wid of wids) {
+      for (const wid of drop) {
         const old = this.ways.get(wid);
         if (old) {
           const ns = old.nodes.filter(n => this.coord.has(n));
@@ -192,11 +194,13 @@ const Router = (() => {
       for (const [k, w] of Object.entries(ways)) {
         const wid = +k;
         g.ways.set(wid, {id: wid, nodes: w.nodes, tags: w.tags || {}});
+        if (out.has(wid)) continue;
         for (const n of w.nodes) if (g.adj.has(n) && g.adj.get(n) === this.adj.get(n)) g.adj.set(n, [...g.adj.get(n)]);
         const ns = w.nodes.filter(n => g.coord.has(n));
         for (let i = 0; i < ns.length - 1; i++) for (const cell of g._cells(ns[i], ns[i + 1])) if (g.sgrid.has(cell) && g.sgrid.get(cell) === this.sgrid.get(cell)) g.sgrid.set(cell, [...g.sgrid.get(cell)]);
         g._add(wid, g.ways.get(wid));
       }
+      for (const wid of out) if (g.ways.has(wid)) g.blocked.set(wid, EXCLUDED);
       return g;
     }
     snap(p, r = SNAP, along = null) {
@@ -331,7 +335,7 @@ const Router = (() => {
     }
   }
 
-  function trace(g, stops, shape) {
+  function trace(g, stops, shape, pins = null) {
     const guide = shape && shape.length > 1 ? new Polyline(shape) : null;
     const at = [];
     if (guide) {
@@ -346,47 +350,50 @@ const Router = (() => {
       });
     }
     const along = k => { const sl = guide ? guide.slice(at[k][1] - 15, at[k][1] + 15) : []; return sl.length > 1 ? [sl[0], sl[sl.length - 1]] : null; };
-    const snaps = stops.map((p, k) => g.snap(p, SNAP, along(k)));
+    const snaps = stops.map((p, k) => pins && pins[k] ? [0.0, ...pins[k]] : g.snap(p, SNAP, along(k)));
+    const on = sn => { const A = g.coord.get(sn[2]), B = g.coord.get(sn[3]); return [A[0] + (B[0] - A[0]) * sn[4], A[1] + (B[1] - A[1]) * sn[4]]; };
     const legs = [], allWays = [], geom = [];
-    let divs = [], prevEnd = null;
+    let divs = [];
     const adjHas = (n, m, w) => (g.adj.get(n) || []).some(e => e[0] === m && e[1] === w);
     for (let k = 0; k < stops.length - 1; k++) {
       const s0 = snaps[k], s1 = snaps[k + 1];
       const leg = {from: k, to: k + 1, ok: false, ways: [], geometry: [], why: ''};
       if (s0 === null || s1 === null) {
         leg.why = `stop ${s0 === null ? k : k + 1} is more than ${SNAP} m from any road a bus can use`;
-        legs.push(leg); prevEnd = null; continue;
+        legs.push(leg); continue;
+      }
+      // both on one stretch of road, drivable from the first to the second: the leg is that stretch
+      if (s0[1] === s1[1] && s0[2] === s1[2] && s0[3] === s1[3] && (s1[4] >= s0[4] ? adjHas(s0[2], s0[3], s0[1]) : adjHas(s0[3], s0[2], s0[1]))) {
+        leg.ok = true; leg.ways = [s0[1]]; leg.geometry = [on(s0), on(s1)];
+        legs.push(leg);
+        if (!allWays.length || allWays[allWays.length - 1] !== s0[1]) allWays.push(s0[1]);
+        geom.push(...leg.geometry);
+        continue;
       }
       let lo = null, hi = null;
       if (guide) {
         lo = Math.min(at[k][0], at[k + 1][0]); hi = Math.max(at[k][0], at[k + 1][0]);
         lo = Math.max(0, lo - 3); hi = Math.min(guide.pts.length - 2, hi + 3);
       }
+      // every leg sets off from its stop afresh, from either end of its stretch (see routes.py)
       const La = metres(g.coord.get(s0[2]), g.coord.get(s0[3]));
-      let starts;
-      if (prevEnd !== null && (prevEnd === s0[2] || prevEnd === s0[3])) starts = new Map([[prevEnd, 0.0]]);
-      else {
-        starts = new Map([[s0[3], (1 - s0[4]) * La]]);
-        if (g.adj.has(s0[2]) && adjHas(s0[3], s0[2], s0[1])) starts.set(s0[2], s0[4] * La);
-      }
+      const starts = new Map([[s0[3], (1 - s0[4]) * La]]);
+      if (g.adj.has(s0[2]) && adjHas(s0[3], s0[2], s0[1])) starts.set(s0[2], s0[4] * La);
       const Lb = metres(g.coord.get(s1[2]), g.coord.get(s1[3]));
       const goals = new Map([[s1[2], s1[4] * Lb]]);
       if (adjHas(s1[3], s1[2], s1[1])) goals.set(s1[3], (1 - s1[4]) * Lb);
       const A = new Set([s0[2], s0[3]]), B = new Set([s1[2], s1[3]]);
       const same = A.size === B.size && [...A].every(x => B.has(x));
-      const fresh = !(prevEnd !== null && (prevEnd === s0[2] || prevEnd === s0[3]));
       const res = g.astar(starts, goals, guide, lo, hi, {startAt: guide ? at[k][1] : null, endAt: guide ? at[k + 1][1] : null,
-        noFirst: fresh && !same ? new Map([[s0[2], s0[3]], [s0[3], s0[2]]]) : null, noLast: same ? null : new Map([[s1[2], s1[3]], [s1[3], s1[2]]])});
-      if (res === null) { leg.why = 'no drivable path between these stops on the map'; legs.push(leg); prevEnd = null; continue; }
+        noFirst: same ? null : new Map([[s0[2], s0[3]], [s0[3], s0[2]]]), noLast: same ? null : new Map([[s1[2], s1[3]], [s1[3], s1[2]]])});
+      if (res === null) { leg.why = 'no drivable path between these stops on the map'; legs.push(leg); continue; }
       const [, path, ways] = res;
       leg.ok = true;
       leg.ways = ways.length ? [s0[1], ...ways, s1[1]] : s0[1] !== s1[1] ? [s0[1], s1[1]] : [s0[1]];
       leg.ways = leg.ways.filter((w, i) => i === 0 || w !== leg.ways[i - 1]);
-      const on = sn => { const A = g.coord.get(sn[2]), B = g.coord.get(sn[3]); return [A[0] + (B[0] - A[0]) * sn[4], A[1] + (B[1] - A[1]) * sn[4]]; };
       let pts = path.map(n => g.coord.get(n));
       if (path.length > 1 && ((path[0] === s0[2] && path[1] === s0[3]) || (path[0] === s0[3] && path[1] === s0[2]))) pts = pts.slice(1);
       leg.geometry = [on(s0), ...pts, on(s1)];
-      prevEnd = path[path.length - 1];
       legs.push(leg);
       for (const w of leg.ways) if (!allWays.length || allWays[allWays.length - 1] !== w) allWays.push(w);
       geom.push(...leg.geometry);
@@ -471,6 +478,8 @@ const Router = (() => {
       for (const [w, d] of g.nearbyWays(p, 25)) drivable.set(w, Math.min(d, drivable.has(w) ? drivable.get(w) : 99));
       for (const [w, [, why]] of g.blockedNear(p, 25)) blocked.set(w, why);
     }
+    const yours = [...blocked].filter(([, why]) => why === EXCLUDED).map(([w]) => w);
+    if (yours.length) return [`the line follows way ${yours[0]}, ${EXCLUDED}: the bus doesn't use it`, [...yours, ...[...drivable.keys()].filter(x => !yours.includes(x))], null];
     if (blocked.size && !drivable.size) { const [w, why] = blocked.entries().next().value; return [`the line follows way ${w} which a bus may not use (${why})`, [...blocked.keys()], null]; }
     if (drivable.size) {
       const ag = against(g, guide, samples, gap, drivable);
@@ -624,20 +633,49 @@ const Router = (() => {
     };
   }
 
-  /** serve.trace_with_vias: the stops, with via points folded in at the nearest leg. */
-  function traceWithVias(p, stopsLL, g, vias) {
-    const pts = p.stops.map(s => stopsLL[s]), order = pts.map((_, i) => i);
-    for (const v of vias) {
+  /** routes.fold_vias: the stops with the reviewer's say folded in as more points to route through: each via
+   *  point at the leg it is nearest; each required way as two points a few metres in from either end, pinned to
+   *  the way, the way's own direction if one-way, else the end nearer the point before them first. -> [seq, pins] */
+  function foldVias(g, stops, vias = [], require = []) {
+    const pts = stops.map(p => [p[0], p[1]]), order = pts.map((_, i) => i), pin = new Map();
+    const nearestLeg = p => {
       let best = null, bi = 0;
-      for (let i = 0; i < order.length - 1; i++) { const [, d] = project(v, pts[order[i]], pts[order[i + 1]]); if (best === null || d < best) { best = d; bi = i; } }
-      pts.push(v); order.splice(bi + 1, 0, pts.length - 1);
+      for (let i = 0; i < order.length - 1; i++) { const [, d] = project(p, pts[order[i]], pts[order[i + 1]]); if (best === null || d < best) { best = d; bi = i; } }
+      return [best, bi];
+    };
+    for (const v of vias) { const [, bi] = nearestLeg(v); pts.push([v[0], v[1]]); order.splice(bi + 1, 0, pts.length - 1); }
+    for (const wid of require) {
+      const w = g.ways.get(+wid), nodes = (w ? w.nodes : []).filter(n => g.coord.has(n));
+      if (nodes.length < 2) continue;
+      const inside = (a, b, fromA) => {
+        const A = g.coord.get(a), B = g.coord.get(b), L = metres(A, B);
+        if (!L) return null;
+        let t = Math.min(3.0, L / 3) / L;
+        t = fromA ? t : 1 - t;
+        return [[A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t], [+wid, a, b, t]];
+      };
+      const p0 = inside(nodes[0], nodes[1], true), p1 = inside(nodes[nodes.length - 2], nodes[nodes.length - 1], false);
+      if (p0 === null || p1 === null) continue;
+      const [da, ia] = nearestLeg(p0[0]), [db, ib] = nearestLeg(p1[0]);
+      const bi = da === null || da <= db ? ia : ib;
+      const may = busMay(w.tags || {}) || [true, true];
+      const first = may[0] !== may[1] ? may[0] : metres(p0[0], pts[order[bi]]) <= metres(p1[0], pts[order[bi]]);
+      for (const [q, s] of first ? [p0, p1] : [p1, p0]) { pts.push(q); pin.set(pts.length - 1, s); }
+      order.splice(bi + 1, 0, pts.length - 2, pts.length - 1);
     }
-    const res = trace(g, order.map(i => pts[i]), p.shape && p.shape.length > 1 ? p.shape : null);
-    return {ways: res.ways, geometry: roundPts(res.geometry), legs: res.legs.map(l => ({from: l.from, to: l.to, ok: l.ok, why: l.why, ways: l.ways})),
-      divergences: res.divergences.map(d => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, k === 'shape' || k === 'path' ? roundPts(v) : v]))), score: res.score, vias};
+    return [order.map(i => pts[i]), order.map(i => pin.get(i) || null)];
   }
 
-  return {Graph, Polyline, trace, routePattern, traceWithVias, chainBreaks, busMay, metres, project, pyround};
+  /** serve.trace_with_vias: the route through the reviewer's via points and required ways (avoided ways are
+   *  the graph's business: g.patched(…, avoid)). */
+  function traceWithVias(p, stopsLL, g, vias = [], require = [], avoid = []) {
+    const [seq, pins] = foldVias(g, p.stops.map(s => stopsLL[s]), vias, require);
+    const res = trace(g, seq, p.shape && p.shape.length > 1 ? p.shape : null, pins);
+    return {ways: res.ways, geometry: roundPts(res.geometry), legs: res.legs.map(l => ({from: l.from, to: l.to, ok: l.ok, why: l.why, ways: l.ways})),
+      divergences: res.divergences.map(d => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, k === 'shape' || k === 'path' ? roundPts(v) : v]))), score: res.score, vias, avoid, require};
+  }
+
+  return {Graph, Polyline, trace, routePattern, traceWithVias, foldVias, chainBreaks, busMay, metres, project, pyround, EXCLUDED};
 })();
 
 if (typeof module !== 'undefined') module.exports = Router;

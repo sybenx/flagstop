@@ -20,7 +20,7 @@ const pct = x => x == null ? '—' : Math.round(x * 100) + '%';
 const m = (a, b) => Math.hypot((b[1] - a[1]) * 110540, (b[0] - a[0]) * 111320 * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180));
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-let D, map, S = {looked: new Set(), lookStop: null, tab: 'routes', pattern: null, div: null, stop: null, vias: [], routed: null, filter: 'all', q: '', viaMode: false, placing: null};
+let D, map, S = {looked: new Set(), lookStop: null, tab: 'routes', pattern: null, div: null, stop: null, routed: null, filter: 'all', q: '', viaMode: false, placing: null};
 
 function toast(msg, ms = 2500) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -95,6 +95,8 @@ function patternGrade(p) {
 // a route not routed yet (its roads load when it's opened): nothing to draw or say about the path
 const NOT_ROUTED = {ways: [], geometry: [], legs: [], divergences: [], score: null};
 const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : (p.routed || NOT_ROUTED);
+/** Has the reviewer re-routed this itinerary (via points, roads the bus uses or doesn't)? */
+const constrainedRouting = p => { const r = Edits.routingOf(p.id); return !!(r.vias.length || r.avoid.length || r.require.length); };
 // ---------- a route's roads, and routing it here in the page (web/router.js) ----------
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const ROAD_CLASSES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road';
@@ -231,7 +233,7 @@ function initMap() {
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
   map.on('load', () => {
     setTimeout(() => hashRead ? draw() : applyHash());   // after the layers below exist: draw what's open
-    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'constraints', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
@@ -276,6 +278,9 @@ function initMap() {
     map.addLayer({id: 'stationlabels', type: 'symbol', source: 'station', filter: ['==', ['geometry-type'], 'Point'],
       layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1, 0], 'text-allow-overlap': false, 'text-optional': true},
       paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
+    // the reviewer's say: roads the bus doesn't use hatched, roads it does solid, via points as dots, all one colour
+    map.addLayer({id: 'avoid', type: 'line', source: 'constraints', filter: ['==', ['get', 'kind'], 'avoid'], paint: {'line-color': css('--div'), 'line-width': 5, 'line-dasharray': [0.6, 1.2], 'line-opacity': 0.85}});
+    map.addLayer({id: 'require', type: 'line', source: 'constraints', filter: ['==', ['get', 'kind'], 'require'], paint: {'line-color': css('--div'), 'line-width': 5, 'line-opacity': 0.85}});
     map.addLayer({id: 'vias', type: 'circle', source: 'vias', paint: {'circle-radius': 6, 'circle-color': css('--div'), 'circle-stroke-color': '#fff', 'circle-stroke-width': 2}});
     for (const layer of ['stops', 'gtfs', 'osmstops', 'div']) {
       map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
@@ -308,7 +313,7 @@ function initMap() {
     map.on('click', 'gtfs', e => { e.preventDefault(); showStop(e.features[0].properties.id); });
     map.on('click', 'osmstops', e => { e.preventDefault(); popupOsm(e.features[0].properties.id, e.lngLat); });
     map.on('click', 'div', e => { e.preventDefault(); popupDiv(JSON.parse(e.features[0].properties.d), e.lngLat); });
-    map.on('click', e => { if (S.viaMode && !e.defaultPrevented) addVia([e.lngLat.lng, e.lngLat.lat]); });
+    map.on('click', e => { if (S.viaMode && !e.defaultPrevented) viaClick([e.lngLat.lng, e.lngLat.lat]); });
     Roads.init();
     draw();
   });
@@ -361,9 +366,11 @@ function draw() {
     set('stops', f.solid); set('gtfs', f.rings); set('tether', f.tethers);
     const inP = new Set(p.stops.map(id => matchedOsm(D.stops[id])).filter(Boolean).map(o => o.id));
     set('osmstops', Object.values(D.osm_stops).filter(o => !inP.has(o.id) && o.tags.public_transport !== 'stop_position').map(o => point([o.lon, o.lat], {id: o.id})));
-    set('vias', S.vias.map(v => point(v)));
+    const rc = Edits.routingOf(p.id);
+    set('vias', rc.vias.map(v => point(v)));
+    set('constraints', constraintFeatures(p, rc));
   } else {
-    for (const id of ['shape', 'routed', 'rel', 'div', 'divpath', 'vias', 'leg']) set(id, []);
+    for (const id of ['shape', 'routed', 'rel', 'div', 'divpath', 'vias', 'constraints', 'leg']) set(id, []);
     const ids = Object.values(D.stops).filter(stopFilter).map(s => s.id);
     const f = stopFeatures(ids);
     set('stops', f.solid); set('gtfs', f.rings); set('tether', f.tethers);
@@ -410,6 +417,13 @@ function wayTagEditor(wid, tags, at, base) {
   const cur = Edits.get('w' + wid);
   const t = {...(cur ? cur.tags : tags)};
   const box = el('div', {class: 'small'}, el('b', {}, `way ${wid}`), el('div', {class: 'muted'}, 'Tags. Its shape is for RapiD or iD.'));
+  // with an itinerary open: the reviewer's say over the router, kept with the decisions
+  if (S.pattern && patternById(S.pattern)) {
+    const r = Edits.routingOf(S.pattern);
+    const b = (kind, label) => el('button', {class: 'b tiny' + (r[kind].includes(wid) ? ' on' : ''), title: r[kind].includes(wid) ? 'Said already: again takes it back' : `Re-routes route ${routeOf(patternById(S.pattern)).short} with that`,
+      onclick: () => { pop.remove(); wayConstraint(wid, kind); }}, label);
+    box.append(el('div', {class: 'btns', style: 'margin:6px 0'}, b('require', 'bus uses this road'), b('avoid', "bus doesn't")));
+  }
   const grid = el('div', {class: 'kv', style: 'grid-template-columns:max-content 1fr auto'});
   const rows = {};
   const addRow = (k, v) => {
@@ -433,15 +447,40 @@ function wayTagEditor(wid, tags, at, base) {
   const pop = new maplibregl.Popup({closeButton: true, maxWidth: '380px'}).setLngLat(at).setDOMContent(box).addTo(map);
 }
 
-// ---------- re-routing through via points ----------
-async function addVia(v) { S.vias.push(v); await retrace(); }
+// ---------- re-routing: via points, roads the bus uses, roads it doesn't (Edits.routing: kept, undoable) ----------
+/** In via mode, a click on a road (within 12 m, of the route's own roads) is about the road; on open map, a via point. */
+function viaClick(ll) {
+  const p = patternById(S.pattern), hit = p && p.graph && p.graph.snap(ll, 12);
+  if (hit) return wayTagEditor(hit[1], (p.graph.ways.get(hit[1]) || {}).tags || {}, ll);
+  addVia(ll);
+}
+function setRouting(pid, r) { S.routedWith = JSON.stringify(r || {vias: [], avoid: [], require: []}); Edits.setRouting(pid, r); }
+async function addVia(v) { const p = patternById(S.pattern), r = Edits.routingOf(p.id); r.vias.push(v); Edits.label('via point'); setRouting(p.id, r); await retrace(); }
+/** The bus uses this road (require) or doesn't (avoid); the same again takes it back. */
+async function wayConstraint(wid, kind) {
+  const p = patternById(S.pattern), r = Edits.routingOf(p.id), other = kind === 'avoid' ? 'require' : 'avoid';
+  const on = r[kind].includes(wid);
+  r[kind] = r[kind].filter(w => w !== wid); r[other] = r[other].filter(w => w !== wid);
+  if (!on) r[kind].push(wid);
+  Edits.label(`${kind === 'avoid' ? "bus doesn't use" : 'bus uses'} way ${wid}`); setRouting(p.id, r);
+  await retrace();
+}
+const describeRouting = r => [r.vias.length ? `through ${r.vias.length} via point${r.vias.length === 1 ? '' : 's'}` : '',
+  r.require.length ? `on ${r.require.length} road${r.require.length === 1 ? '' : 's'} you picked` : '',
+  r.avoid.length ? `off ${r.avoid.length} road${r.avoid.length === 1 ? '' : 's'} you excluded` : ''].filter(Boolean).join(', ');
 async function retrace() {
-  const p = patternById(S.pattern);
-  try {
-    S.routed = await traceWith(p.id, {}, S.vias); S.routedBy = 'vias';   // with what's in Changes, too
-    toast(`Re-routed through ${S.vias.length} via point${S.vias.length === 1 ? '' : 's'}: ${S.routed.ways.length} ways`);
-  } catch (e) { toast('Re-routing needs tool/serve.py running with the feed loaded (' + e.message + ')', 5000); S.vias.pop(); }
+  const p = patternById(S.pattern), r = Edits.routingOf(p.id);
+  await liveRoute();
+  if (S.routedBy === 'vias') toast(`Re-routed ${describeRouting(r)}: ${S.routed.ways.length} ways`);
+  else if (r.vias.length || r.avoid.length || r.require.length) toast(`Couldn't re-route: ${p.routeError || "this route's roads haven't loaded"}`, 5000);
+  else toast('Re-routing cleared: the route as flagstop traced it');
   render(); draw();
+}
+/** The roads the reviewer ruled in or out, as lines, once the route's roads are loaded. */
+function constraintFeatures(p, r) {
+  if (!p.graph) return [];
+  const feat = (w, kind) => { const way = p.graph.ways.get(w), c = way ? way.nodes.filter(n => p.graph.coord.has(n)).map(n => p.graph.coord.get(n)) : []; return c.length > 1 ? line(c, {kind, id: w}) : null; };
+  return [...r.avoid.map(w => feat(w, 'avoid')), ...r.require.map(w => feat(w, 'require'))].filter(Boolean);
 }
 
 // ---------- panel ----------
@@ -688,7 +727,7 @@ function showDivergence(dv) {
 }
 
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null; S.station = null; S.lookStop = null;
+  S.pattern = id; S.stop = null; S.routed = null; S.routedBy = null; S.routedWith = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null; S.station = null; S.lookStop = null;
   liveRoute();   // with road edits waiting in Changes, show the route as it would run
   render(); draw();
   const p = patternById(id);
@@ -699,7 +738,7 @@ function selectPattern(id) {
 
 function renderPattern(P, p) {
   const r = routeOf(p), rt = routedOf(p);
-  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.vias = []; S.routed = null; render(); draw(); }}, '← all itineraries'));
+  P.append(el('button', {class: 'back', onclick: () => { S.pattern = null; S.div = null; S.routed = null; S.routedBy = null; render(); draw(); }}, '← all itineraries'));
   if (p.live && p.live.changed.length) {
     const c = p.live.changed, cs = [...new Set(c.map(x => x.changeset))];
     P.append(el('div', {class: 'note warn'}, el('b', {}, `Changed on OSM since flagstop's copy: ${c.length}`),
@@ -728,6 +767,7 @@ function renderPattern(P, p) {
     (!S.routed && (p.chain_breaks || []).length) ? el('span', {}, `${p.chain_breaks.filter(b => b.kind === 'split').length} ways to split (Roads, on the map) before the relation validates `, ...chainLinks(p.chain_breaks.filter(b => b.kind !== 'split')), el('details', {style: 'display:inline'}, el('summary', {style: 'display:inline;cursor:pointer'}, 'where'), ' ', ...chainLinks(p.chain_breaks.filter(b => b.kind === 'split')))) : null));
 
   if (S.routedBy === 'changes') d.append(el('div', {class: 'note'}, 'Shown with your road edits waiting in Changes: the route as it will run once they\'re uploaded.'));
+  if (S.routedBy === 'vias') d.append(el('div', {class: 'note'}, `Shown as you re-routed it, ${describeRouting(Edits.routingOf(p.id))}${hasRoadEdits() ? ', with your road edits in Changes' : ''}. The relation you propose follows this. Kept with your decisions; undo takes a step back.`));
   const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
   btns.append(el('button', {class: 'b primary', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
@@ -739,8 +779,9 @@ function renderPattern(P, p) {
   }
   btns.append(el('button', {class: 'b', onclick: () => openIn('rapid', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p, comment: `Bus route ${r.short} ${p.headsign || ''}`.trim()})}, 'Open in RapiD with line'));
   btns.append(el('button', {class: 'b', onclick: () => openIn('id', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p})}, 'iD'));
-  btns.append(el('button', {class: 'b' + (S.viaMode ? ' on' : ''), onclick: () => { S.viaMode = !S.viaMode; map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : ''; render(); }}, S.viaMode ? 'Click the map to add a via point…' : 'Re-route via a point'));
-  if (S.vias.length) btns.append(el('button', {class: 'b', onclick: () => { S.vias = []; S.routed = null; render(); draw(); }}, `Clear ${S.vias.length} via`));
+  btns.append(el('button', {class: 'b' + (S.viaMode ? ' on' : ''), onclick: () => { S.viaMode = !S.viaMode; map.getCanvas().style.cursor = S.viaMode ? 'crosshair' : ''; render(); }}, S.viaMode ? 'Click the map: a point to go through, or a road the bus uses or doesn\'t…' : 'Re-route: via a point, a road'));
+  { const rc = Edits.routingOf(p.id), n = rc.vias.length + rc.avoid.length + rc.require.length;
+    if (n) btns.append(el('button', {class: 'b', onclick: () => { Edits.label('clear re-routing'); setRouting(p.id, null); retrace(); }}, `Clear re-routing (${n})`)); }
   d.append(btns);
 
   if (rt.divergences.length) {
@@ -858,7 +899,7 @@ function proposeRelation(p) {
   const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
   // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
   // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.
-  const keepWays = reuse && !S.vias.length && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
+  const keepWays = reuse && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
     reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0);
   if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
   else for (const w of rt.ways) members.push({type: 'way', ref: w, role: ''});
@@ -1327,7 +1368,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   const again = S.tab === b.dataset.tab;
   S.tab = b.dataset.tab;
   if (S.tab === 'stops' && again) S.station = null;
-  if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.div = null; S.vias = []; S.routed = null; S.routedBy = null; S.viaMode = false; }
+  if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.div = null; S.routed = null; S.routedBy = null; S.viaMode = false; }
   if (S.tab !== 'stops' || again) S.stop = null;
   document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
   render(); draw();
@@ -1342,6 +1383,8 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   Edits.load(d.agency.agency_name);
   Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
   Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });
+  // the reviewer's say over the open route changed under it (undo, redo, another browser's copy): route again
+  Edits.listeners.push(() => { if (S.pattern && S.routedWith != null && JSON.stringify(Edits.routingOf(S.pattern)) !== S.routedWith) liveRoute(); });
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.replace('T', ' ')} `;

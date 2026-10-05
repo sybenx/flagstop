@@ -49,7 +49,7 @@ The page lists itineraries worst first. Open one:
 - **dashed orange** is the agency's shape; **blue** is where a bus can drive on OSM; **purple** is what the existing OSM relation contains. Where orange and blue part, something is wrong on one side, and the divergence says which ways are involved and why.
 - **Rings** are the agency's stop positions, **dots** are OSM nodes. How far the agency's points usually are from OSM's is measured per feed (here: 5 m); a stop well past that (three times it, at least 10 m) is a question to look at on the map. Nothing moves unless you say so.
 - *Fix relation → changes* rewrites the existing relation (or creates one) with the matched platforms in order and the routed ways, keeping the mapper's free-text tags and adding the GTFS scheme's. A relation that holds both directions is kept for one and a new one created for the other. Duplicates ("Weekday"/"Saturday") can be marked for deletion.
-- *Re-route via a point* when the routed path takes a wrong turn: click the map, the path re-traces through your via points, and the relation you then propose follows them (needs `tool/serve.py`).
+- *Re-route* when the routed path takes a wrong turn: click the map for a via point (go through here), or a road to say *the bus uses this road* or *the bus doesn't*. The path re-traces, the relation you then propose follows it, and your say is kept with your decisions (a reload, another browser) and undone like any edit.
 - A way's tags — a wrong `oneway`, a missing `bus=yes` — can be edited from the divergence popup.
 - **Roads**: flagstop changes a road's shape only as part of a card that showed it first — a merge's splits where the bus turns partway along, a station's stop positions, turning back a one-way that an earlier edit turned round (its history has to say so; a one-way against the line with no such history may be right, and is left to you). Tags (`oneway:bus`, `bus=yes`) can be edited from a divergence. Shaping roads — reconnecting, moving, drawing — is RapiD's and iD's: *Open in RapiD* carries the agency line as an overlay and pre-fills the changeset comment.
 - **Stops**: *to decide* lists what needs a human — not in OSM, probably moved (same street, further off), ambiguous (pick one). For matched stops the diff lets you tick which agency values to apply, ticked as Check stops would: the agency's codes and its address in, position out (OSM's node is usually on the sign).
@@ -119,7 +119,7 @@ tool/routes.py    road graph, bus-legal shape-guided routing, divergences
 tool/compare.py   relation ↔ pattern pairing and audit; proposed tags
 tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a .osm per proposed relation)
 tool/patch.py     the cached OSM data brought up to date with changesets, from OSM's API
-tool/serve.py     static server + /api/trace for re-routing through via points
+tool/serve.py     static server + /api/trace for re-routing through via points and around roads the bus does or doesn't use
 tool/catalog.py   Mobility Database search and download
 tool/feeddiff.py  what changed between two versions of the feed
 tool/others.py    other agencies' stops in the area, from their own feeds
@@ -138,7 +138,6 @@ tests/            unit tests for the rules; snapshot.json, what the review decid
 - The router keeps to turn restrictions with a node as via (bus exceptions honoured); one with a way as via is ignored.
 - A divergence over a road OSM has as `highway=footway`/`track` etc. reads as "no road here"; the roads query only fetches classes a bus can use.
 - Stations (`location_type=1`) and `stop_position` nodes are ignored; only platforms are matched. A platform tagged with a network none of the agency's coded stops use (an intercity coach's bay) ranks below the agency's own.
-- The via-point re-route doesn't persist across reloads.
 
 ## Built against
 
