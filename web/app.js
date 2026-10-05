@@ -488,7 +488,7 @@ function render() {
   const P = $('#panel'); P.innerHTML = '';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
-  if (S.tab === 'routes') S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
+  if (S.tab === 'routes') S.fixit && S.pattern ? FixIt.render(P) : S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.station ? Station.render(P) : S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
   else if (S.tab === 'changes') renderChanges(P);
@@ -727,7 +727,7 @@ function showDivergence(dv) {
 }
 
 function selectPattern(id) {
-  S.pattern = id; S.stop = null; S.routed = null; S.routedBy = null; S.routedWith = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null; S.station = null; S.lookStop = null;
+  S.pattern = id; S.stop = null; S.routed = null; S.routedBy = null; S.routedWith = null; S.viaMode = false; S.tab = 'routes'; S.div = null; S.review = null; S.fix = null; S.merge = null; S.fixit = null; S.station = null; S.lookStop = null;
   liveRoute();   // with road edits waiting in Changes, show the route as it would run
   render(); draw();
   const p = patternById(id);
@@ -770,11 +770,12 @@ function renderPattern(P, p) {
   if (S.routedBy === 'vias') d.append(el('div', {class: 'note'}, `Shown as you re-routed it, ${describeRouting(Edits.routingOf(p.id))}${hasRoadEdits() ? ', with your road edits in Changes' : ''}. The relation you propose follows this. Kept with your decisions; undo takes a step back.`));
   const cen = centerOf(p.shape.length ? p.shape : rt.geometry);
   const btns = el('div', {class: 'btns'});
-  btns.append(el('button', {class: 'b primary', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
+  btns.append(el('button', {class: 'b primary', title: 'Everything flagstop can do for this route without you, done; what it can\'t decide, listed', onclick: () => FixIt.open(p.id)}, 'Fix this route'));
+  btns.append(el('button', {class: 'b', onclick: () => proposeRelation(p)}, p.relations.length ? 'Fix relation → changes' : 'Create relation → changes'));
   {
     const sts = Review.stops(p).filter(st => st.o && !st.inChanges && (st.status === 'matched' || st.status === 'moved'));
     const asks = sts.reduce((n, st) => n + Object.values(st.decide).filter(d => d.pick === 'ask').length, 0);
-    btns.append(el('button', {class: 'b primary', title: "flagstop's suggestion for every difference between the agency and OSM on this route's stops, for you to check", onclick: () => Review.open(p.id)},
+    btns.append(el('button', {class: 'b', title: "flagstop's suggestion for every difference between the agency and OSM on this route's stops, for you to check", onclick: () => Review.open(p.id)},
       `Check stops${asks ? ` (${asks} question${asks > 1 ? 's' : ''})` : ''}`));
   }
   btns.append(el('button', {class: 'b', onclick: () => openIn('rapid', {...cen, zoom: 14, select: p.relations.map(a => 'r' + a.id), pattern: p, comment: `Bus route ${r.short} ${p.headsign || ''}`.trim()})}, 'Open in RapiD with line'));
@@ -900,41 +901,62 @@ async function routedWaysSplit(p, skip, say) {
   await Roads.fetchWays(tr.ways.filter(w => w > 0));
   return {ways: tr.ways, breaks: Roads.chainBreaks(tr.ways.map(w => Roads.way(w)))};
 }
-async function proposeRelation(p) {
-  if (!p.routed) return toast("This route's roads are still loading: try again in a moment", 5000);
+/** What the proposal for an itinerary's relation would do: which relation it reuses, whether its roads stay, what
+ *  the routed path needs, which stops have no node yet. Shared by the proposal and the fix-it card. */
+function relationPlan(p) {
   const rt = routedOf(p);
-  if (!p.chain_ok && !S.routed) { if (!confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return; }
   // Road edits already in Changes reshaped roads this itinerary uses: the relations on them were repaired then, so
-  // the mapper's members as read before can't be kept, and the path is traced again on the edited roads below.
+  // the mapper's members as read before can't be kept, and the path is traced again on the edited roads.
   const reshaped = new Set(Object.values(Edits.ops).filter(o => o.type === 'way' && String(o.note || '').startsWith('road: ')).map(o => o.id));
   const hit = [...rt.ways, ...p.relations.flatMap(a => a.members.filter(x => x.type === 'way').map(x => x.ref))].filter(w => reshaped.has(w));
+  const missing = p.stops.filter((sid, i) => p.stops.indexOf(sid) === i && !stopNodeRef(D.stops[sid])).map(sid => D.stops[sid]);
+  // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern's proposal has
+  // claimed (a road repair touching it, in Changes or just uploaded, is not a claim: it's still this route's relation).
+  const pids = new Set(D.patterns.map(q => q.id));
+  const claimed = new Set(Object.values(Edits.all()).filter(o => o.type === 'relation' && o.kind === 'modify' && pids.has(o.note) && o.note !== p.id).map(o => o.id));
+  const rels = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id);
+  const reuse = rels[0] || null, duplicates = rels.slice(1);
+  // The mapper's ways stay when they already run end to end along the whole line, as well as the routed path does:
+  // they may follow it where the router can't (a one-way it doesn't trust, a turn it doesn't know). Via points
+  // mean the reviewer wants the route; a road edit in Changes means they were read before it.
+  const keepWays = !!(reuse && !hit.length && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
+    reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0));
+  const breaks = p.graph ? Router.chainBreaks(rt.ways, p.graph.ways) : [];
+  const dropped = reuse && !keepWays ? reuse.ways.off_shape : [];   // the mapper's roads off the agency's line: not kept
+  const tags = {...p.proposed_tags};
+  let refKept = null;
+  if (reuse && reuse.tags.ref && tags.ref && tags.ref !== reuse.tags.ref && tags.ref.startsWith(reuse.tags.ref + ' ')) refKept = reuse.tags.ref;
+  return {p, rt, reuse, duplicates, keepWays, hit, missing, splits: breaks.filter(b => b.kind === 'split').length, gaps: breaks.filter(b => b.kind !== 'split').length,
+    chainOk: p.chain_ok || !!S.routed, dropped, tags, refKept, masters: routeOf(p).masters};
+}
+/** The itinerary's relation into Changes: rewritten (reused) or new, PTv2 members in order, the roads split where
+ *  the bus turns. opts.quiet: no toasts but failures; opts.extraTags: more tags (a timetable). -> {ok, why, key} */
+async function proposeRelation(p, opts = {}) {
+  const say = (m, ms) => { if (!opts.quiet) toast(m, ms); };
+  if (!p.routed) { toast("This route's roads are still loading: try again in a moment", 5000); return {ok: false, why: 'not routed yet'}; }
+  const x = relationPlan(p), rt = x.rt;
+  if (!x.chainOk && !opts.quiet && !confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return {ok: false, why: 'the routed path is broken'};
+  if (!x.chainOk && opts.quiet) return {ok: false, why: "the routed path is broken (a leg didn't connect): re-route it first"};
   const members = [];
-  const missing = [];
   for (const sid of p.stops) {
     const ref = stopNodeRef(D.stops[sid]), sp = (p.stop_positions || {})[sid];
     // PTv2: the stop position on the road (where the stop has one), then the platform
     if (ref && sp) members.push({type: 'node', ref: sp, role: 'stop'});
     if (ref) members.push(ref.key ? {key: ref.key, role: 'platform'} : {type: 'node', ref: ref.ref, role: 'platform'});
-    else missing.push(D.stops[sid]);
   }
-  const tags = {...p.proposed_tags};
-  // Which existing relation to reuse: the oldest one paired with this pattern that no other pattern's proposal has
-  // claimed (a road repair touching it, in Changes or just uploaded, is not a claim: it's still this route's relation).
-  const pids = new Set(D.patterns.map(q => q.id));
-  const claimed = new Set(Object.values(Edits.all()).filter(o => o.type === 'relation' && o.kind === 'modify' && pids.has(o.note) && o.note !== p.id).map(o => o.id));
-  const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
-  // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
-  // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.
-  const keepWays = reuse && !hit.length && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
-    reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0);
+  const tags = {...x.tags, ...(opts.extraTags || {})}, reuse = x.reuse, keepWays = x.keepWays;
+  let out = {ok: true, why: '', key: null};
   Edits.hold(`relation for ${routeOf(p).short} ${p.headsign || ''}`.trim());   // the splits and the relation: one undo
   try {
     if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
     else {
       // the routed path's roads, split where the bus turns partway along one: a relation whose roads don't join up
       // end to end is broken for every consumer, so that is never put in Changes
-      const {ways, breaks} = await routedWaysSplit(p, new Set(reuse ? [reuse.id] : []), m => toast(m, 8000));
-      if (breaks) { toast(`Stopped: the roads still don't join up in ${breaks} place${breaks > 1 ? 's' : ''} after splitting. The splits are in Changes; the relation isn't. Re-route (via a point, a road) and try again.`, 10000); return; }
+      const {ways, breaks} = await routedWaysSplit(p, new Set(reuse ? [reuse.id] : []), m => say(m, 8000));
+      if (breaks) {
+        toast(`Stopped: the roads still don't join up in ${breaks} place${breaks > 1 ? 's' : ''} after splitting. The splits are in Changes; the relation isn't. Re-route (via a point, a road) and try again.`, 10000);
+        return {ok: false, why: `the roads don't join up in ${breaks} place${breaks > 1 ? 's' : ''} after splitting`};
+      }
       for (const w of ways) members.push({type: 'way', ref: w, role: ''});
     }
     if (reuse) {
@@ -943,21 +965,25 @@ async function proposeRelation(p) {
       // ("16" on the bus; "16 AM" and "16 PM" in the feed): the qualifier is the relation's name's business.
       const merged = {...reuse.tags, ...tags};
       for (const k of ['name', 'from', 'to', 'description', 'colour']) if (reuse.tags[k] && !/\b(weekday|saturday|sunday|weekend|mon|tue|wed|thu|fri)\b/i.test(reuse.tags[k])) merged[k] = reuse.tags[k];
+      // a name that names a service day keeps the mapper's wording with the day taken out ("Route 6 - Fairgrounds,
+      // Woodruff Elementary - Weekday" -> "Route 6 - Fairgrounds, Woodruff Elementary"), the local style
+      if (reuse.tags.name && merged.name !== reuse.tags.name) { const bare = reuse.tags.name.replace(SERVICE_DAY, '').replace(/\s*[-–,]\s*$/, '').trim(); if (bare.length > 3) merged.name = bare; }
       if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
-      if (reuse.tags.ref && tags.ref && tags.ref !== reuse.tags.ref && tags.ref.startsWith(reuse.tags.ref + ' ')) merged.ref = reuse.tags.ref;
-      Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
-      editMasters(routeOf(p).masters, null, {type: 'relation', ref: reuse.id});
-      toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${merged.ref !== tags.ref ? ` (ref ${merged.ref} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
+      if (x.refKept) merged.ref = x.refKept;
+      out.key = Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
+      editMasters(x.masters, null, {type: 'relation', ref: reuse.id});
+      say(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${x.refKept ? ` (ref ${x.refKept} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
     } else {
-      const key = Edits.createRelation(tags, members, p.id);
-      editMasters(routeOf(p).masters, null, {key});
-      toast(`New relation in changes: ${members.length} members${routeOf(p).masters.length ? ', added to its route_master' : ''}`);
+      out.key = Edits.createRelation(tags, members, p.id);
+      editMasters(x.masters, null, {key: out.key});
+      say(`New relation in changes: ${members.length} members${x.masters.length ? ', added to its route_master' : ''}`);
     }
-    if (missing.length) toast(`${missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
-  } catch (e) { toast(e.message, 8000); console.error(e); }
+    Edits.ops[out.key].suggested = true; Edits.ops[out.key].route = routeOf(p).short;
+    if (x.missing.length) say(`${x.missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
+  } catch (e) { toast(e.message, 8000); console.error(e); out = {ok: false, why: e.message}; }
   finally { Edits.release(); }
-  await liveRoute();
-  render(); draw();
+  if (!opts.quiet) { await liveRoute(); render(); draw(); }
+  return out;
 }
 function proposeMaster(r) {
   const members = [];
@@ -969,6 +995,7 @@ function proposeMaster(r) {
     else if (p.relations.length) members.push({type: 'relation', ref: p.relations.sort((a, b) => a.id - b.id)[0].id, role: ''});
   }
   if (!members.length) return toast('No relations to put in it yet');
+  if (Object.values(Edits.ops).some(o => o.kind === 'create' && o.type === 'relation' && o.note === 'master:' + r.id)) return;   // once
   Edits.createRelation(r.proposed_master_tags, members, 'master:' + r.id);
   toast('route_master added to changes'); render();
 }
@@ -1406,7 +1433,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   const again = S.tab === b.dataset.tab;
   S.tab = b.dataset.tab;
   if (S.tab === 'stops' && again) S.station = null;
-  if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.div = null; S.routed = null; S.routedBy = null; S.viaMode = false; }
+  if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.fixit = null; S.div = null; S.routed = null; S.routedBy = null; S.viaMode = false; }
   if (S.tab !== 'stops' || again) S.stop = null;
   document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
   render(); draw();

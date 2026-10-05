@@ -384,8 +384,27 @@ class Store:
         return ', '.join(users)
 
     def _put(self, e):
+        """The object in, its history too, and the who-uses-what index kept current: a delete later in the same
+        upload must see a relation that just dropped it (OSM checks if-unused against the data as it then is)."""
+        old = self.el[e['type']].get(e['id'])
+        if old and old['visible']:
+            if old['type'] == 'way':
+                for n in old['nodes']:
+                    self.ways_of.get(n, set()).discard(old['id'])
+            if old['type'] == 'relation':
+                for m in old['members']:
+                    self.rels_of.get((m['type'], m['ref']), set()).discard(old['id'])
         self.el[e['type']][e['id']] = e
         self.hist.setdefault((e['type'], e['id']), []).append(e)
+        if e['visible']:
+            if e['type'] == 'node':
+                self.grid.setdefault(self._cell(e['lat'], e['lon']), []).append(e['id'])
+            if e['type'] == 'way':
+                for n in e['nodes']:
+                    self.ways_of.setdefault(n, set()).add(e['id'])
+            if e['type'] == 'relation':
+                for m in e['members']:
+                    self.rels_of.setdefault((m['type'], m['ref']), set()).add(e['id'])
 
 
 # ---------------------------------------------------------------- answering as OSM does

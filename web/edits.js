@@ -74,9 +74,9 @@ const Edits = {
       action, its own name stands. */
   label(text) { if (!this.holding) this.nextLabel = text; },
   /** One action in several steps over time (splits, then a relation): every save until release() is
-      one undo step, named `text`. */
-  hold(text) { this.nextLabel = text; this.holding = true; this.held = false; },
-  release() { this.holding = false; this.held = false; this.nextLabel = null; },
+      one undo step, named `text`. Holds nest: an action inside a held one belongs to the outer step. */
+  hold(text) { if (this.holding) { this.holdDepth = (this.holdDepth || 1) + 1; return; } this.nextLabel = text; this.holding = true; this.held = false; this.holdDepth = 1; },
+  release() { if ((this.holdDepth || 0) > 1) { this.holdDepth--; return; } this.holding = false; this.held = false; this.nextLabel = null; this.holdDepth = 0; },
   restore(json) { const s = JSON.parse(json); this.ops = s.ops; this.nextId = s.nextId; this.decisions = s.decisions; this.routing = s.routing || {}; this.roads = s.roads || []; this.committed = json; this.persist(json); },
   /** The reviewer's say over an itinerary's routing: {vias, avoid, require}, each a list, maybe empty. */
   routingOf(pid) { const r = this.routing[pid] || {}; return {vias: r.vias || [], avoid: r.avoid || [], require: r.require || []}; },

@@ -193,6 +193,16 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(self.call('GET', '/api/0.6/way/102.json')[0], 200)
         self.assertEqual(self.get('/api/0.6/changesets.json?user=1&limit=25')['changesets'][0]['id'], cid)
 
+    def test_a_relation_dropped_from_its_master_can_go_in_the_same_upload(self):
+        """The master loses the route in <modify>, then <delete if-unused> takes the route: OSM judges if-unused on the
+        data as it then is, so it goes. (A flagstop merge does exactly this.)"""
+        code, diff, cid = self.upload('<modify>\n  <relation id="301" version="1" changeset="CS"><tag k="type" v="route_master"/><tag k="route_master" v="bus"/><tag k="ref" v="1"/></relation>\n</modify>\n'
+                                      '<delete if-unused="true">\n  <relation id="300" version="1" changeset="CS"/>\n</delete>\n')
+        self.assertEqual(code, 200, diff)
+        got = {(e.tag, e.get('old_id')): e.attrib for e in ET.fromstring(diff)}
+        self.assertNotIn('new_id', got[('relation', '300')], 'deleted, not kept')
+        self.assertEqual(self.call('GET', '/api/0.6/relation/300.json')[0], 410)
+
     def test_stale_version_is_a_conflict_and_nothing_changes(self):
         code, diff, cid = self.upload('''<modify>
   <node id="10" version="1" changeset="CS" lat="41.7399" lon="-111.828"><tag k="name" v="A"/></node>
