@@ -1,0 +1,24 @@
+{
+  "name": "flagstop's real changesets, replayed",
+  "about": "The changesets flagstop made on the real map (user Sytys, uid 11660817, created_by=flagstop, from 2026-09-28 on; the by-hand Rapid ones between them are not flagstop's and left out), downloaded once and read-only from api.openstreetmap.org into cache/sandbox/replay/, rewritten for the sandbox (what they created gets placeholder ids, what they modified goes up at the sandbox's version), applied to the 2026-09-27 snapshot in order, and judged by the report: the baseline the tool should at least match. Not all pass, and said so: the four checks listed fail on routes that were already broken in the snapshot (route 9, 11, 15 chain gaps and one-ways against, the roundtrip=yes loops that do not close), and 'roads chained end to end' also on 16 PM Northbound, which changeset 189856305 rebuilt (146 -> 116 ways, 4 places where a way meets the next partway along it: a split still to make). If a check not listed starts to fail, or one listed stops, this fails: look, then update the list. Modifies and deletes of objects the snapshot lacks (the route_master relations, which its query does not take) are left out of the replay and listed in the step's results. Needs the snapshot, and the network the first time only.",
+  "base": "snapshot",
+  "steps": [
+    {"replay": {"changesets": [
+      189684385, 189730663, 189739386, 189829210, 189832839, 189837979, 189856007, 189856127,
+      189856144, 189856153, 189856236, 189856277, 189856290, 189856305, 189896296, 189896389
+    ]}}
+  ],
+  "expect": {
+    "report": [
+      "no road twice in a row",
+      "roads chained end to end",
+      "roundtrip=yes closes",
+      "no one-way driven against"
+    ],
+    "steps": [{"step": 0, "path": "changesets", "equals": 16}],
+    "data": [
+      {"get": "/api/0.6/relation/12721122.json", "path": "elements.0.version", "equals": 41},
+      {"changesets": 15}
+    ]
+  }
+}

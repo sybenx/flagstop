@@ -127,6 +127,7 @@ names it (`Overpass.run` in `tool/sandbox.py`): a new query in the tool is a gap
 python3 -m unittest discover -s tests     # the rules, each pinned to the case it was built for; the review against its snapshot; the relation files
 node tests/edits_test.js                  # the upload path, no browser or network: osmChange, split + relation repair, check() before upload
                                           # (discover also runs tests/test_sandbox.py: the sandbox API, and the page's upload code against it)
+                                          # and tests/test_scenarios.py: tests/scenarios/*.json through the page's modules into a sandbox, judged by its report (snapshot ones skip without one)
 python3 tests/snapshot.py                 # after rebuilding the review: what changed, stop by stop
 python3 tests/snapshot.py --update        # when the changes are meant
 ```

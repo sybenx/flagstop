@@ -5,6 +5,7 @@ edit lands here and nowhere else.
 
     python3 tool/sandbox.py snapshot [--date 2026-09-27T00:00:00Z] [--feed FEED.zip]   the area as of that date,
                                                                                       from Overpass attic -> cache/sandbox/base-<date>.json
+    python3 tool/sandbox.py snapshot --masters                                        add the route_master relations to a snapshot made before they were asked for
     python3 tool/sandbox.py serve [--port 8766] [--base cache/sandbox/base-*.json]    the sandbox API; uploads go to cache/sandbox/changes.json
     python3 tool/sandbox.py run [--port 8765] [--sandbox-port 8766] [--reset] [--refresh]
                                             everything at once: the sandbox, the review built from it (its own files,
@@ -61,6 +62,40 @@ SNAPSHOT_QUERY = """[out:json][timeout:300][maxsize:536870912][date:"{date}"];
 (.b; .b >;);
 out meta;
 """
+# the route_masters: a relation of relations, which `<` on the routes should give and (attic) doesn't: asked for by name
+MASTERS_QUERY = """[out:json][timeout:300][date:"{date}"];
+relation["type"="route"]({bbox})->.routes;
+relation(br.routes)["type"="route_master"];
+out meta;
+"""
+
+
+def fetch_masters(date, bbox, overpass):
+    s, w, n, e = bbox
+    q = MASTERS_QUERY.format(date=date, bbox=f'{s:.5f},{w:.5f},{n:.5f},{e:.5f}')
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(overpass, data=urllib.parse.urlencode({'data': q}).encode(), headers=UA), timeout=400) as r:
+                return json.load(r).get('elements', [])
+        except Exception as ex:
+            print(f'  route_masters: {ex}; again in {30 * (attempt + 1)}s', file=sys.stderr)
+            if attempt == 4:
+                raise
+            time.sleep(30 * (attempt + 1))
+
+
+def add_masters(base, overpass='https://overpass-api.de/api/interpreter'):
+    """The route_master relations, into a snapshot that lacks them."""
+    with open(base) as f:
+        raw = json.load(f)
+    meta = raw.get('sandbox', {})
+    masters = fetch_masters(meta['date'], meta['bbox'], overpass)
+    have = {(e['type'], e['id']) for e in raw['elements']}
+    new = [e for e in masters if (e['type'], e['id']) not in have]
+    raw['elements'].extend(new)
+    json.dump(raw, open(base + '.tmp', 'w')); os.replace(base + '.tmp', base)
+    print(f'{os.path.basename(base)}: {len(masters)} route_masters as of {meta["date"]}, {len(new)} new', file=sys.stderr)
+    return len(new)
 
 
 def snapshot(date, feed_path, out=None, overpass='https://overpass-api.de/api/interpreter', strip=0.05):
@@ -96,6 +131,9 @@ def snapshot(date, feed_path, out=None, overpass='https://overpass-api.de/api/in
                 seen.add(key); elements.append(el); new += 1
         print(f'  {lo:.3f}-{hi:.3f}: {new} new elements ({len(elements)} so far, {time.time() - t0:.0f}s)', file=sys.stderr)
         lo = hi
+    for el in fetch_masters(date, (s, w, n, e), overpass):
+        if (el['type'], el['id']) not in seen:
+            seen.add((el['type'], el['id'])); elements.append(el)
     raw = {'version': 0.6, 'generator': 'flagstop sandbox snapshot', 'osm3s': osm3s, 'elements': elements}
     raw['sandbox'] = {'date': date, 'bbox': [s, w, n, e], 'feed': os.path.basename(feed_path), 'fetched': now()}
     out = out or os.path.join(DIR, f'base-{date[:10]}.json')
@@ -852,7 +890,7 @@ def replay_fetch(cid, cache=None, api=REAL_API):
     return out[0], out[1]
 
 
-def replay_rewrite(osc, changeset, idmap, version_of=None):
+def replay_rewrite(osc, changeset, idmap, version_of=None, missing=None):
     """A real changeset's osmChange, made to go into the sandbox as `changeset`:
     - what it created gets placeholder ids (-1, -2, ...), and everything in it that refers to those (a way's
       nodes, a relation's members) follows; creations in the order nodes, ways, relations;
@@ -860,7 +898,9 @@ def replay_rewrite(osc, changeset, idmap, version_of=None):
       {(type, real id): sandbox id}, filled by replay_learn from each upload's diffResult);
     - modifies and deletes carry the sandbox's current version (version_of(type, id), None = not there),
       not the real one: other mappers' edits since the snapshot made those differ;
-    - metadata the server sets (timestamp, user, uid, visible) is dropped; deletes get if-unused, as flagstop's do.
+    - metadata the server sets (timestamp, user, uid, visible) is dropped; deletes get if-unused, as flagstop's do;
+    - a modify or delete of something the sandbox doesn't have: ReplayGap, or, given a list as `missing`, left out
+      of the upload and named in that list ("relation 17014378").
     -> (osmChange text, {(type, placeholder): (type, real id)})"""
     root = ET.fromstring(osc)
     by = {'create': [], 'modify': [], 'delete': []}
@@ -885,7 +925,11 @@ def replay_rewrite(osc, changeset, idmap, version_of=None):
         if action != 'create':
             v = version_of(t, i) if version_of else int(x.get('version') or 0)
             if v is None:
-                raise ReplayGap(f'{t} {real}' + (f' (sandbox {i})' if i != real else '') + ' is not in the sandbox')
+                what = f'{t} {real}' + (f' (sandbox {i})' if i != real else '')
+                if missing is None:
+                    raise ReplayGap(what + ' is not in the sandbox')
+                missing.append(what)
+                return None
             e.set('version', str(v))
         for c in x:
             if c.tag == 'nd':
@@ -902,7 +946,11 @@ def replay_rewrite(osc, changeset, idmap, version_of=None):
         blk = ET.SubElement(out, action, {'if-unused': 'true'} if action == 'delete' else {})
         # a delete the other way round: a relation before its ways before their nodes
         for x in sorted(by[action], key=lambda x: -_RANK[x.tag] if action == 'delete' else _RANK[x.tag]):
-            blk.append(convert(x, action))
+            e = convert(x, action)
+            if e is not None:
+                blk.append(e)
+        if not len(blk):
+            out.remove(blk)
     ET.indent(out)
     return ET.tostring(out, encoding='unicode') + '\n', placeholders
 
@@ -918,7 +966,8 @@ def replay_learn(diff, placeholders, idmap):
 def replay(url, ids, cache=None, api=REAL_API):
     """Real changesets, in order, into a running sandbox at `url`: each downloaded once (replay_fetch), rewritten
     (replay_rewrite), uploaded as a changeset of its own with the real one's tags. Stops at the first that
-    doesn't go in. -> [{'real', 'sandbox', 'ok', 'created', 'modified', 'deleted', 'error'}]"""
+    doesn't go in. A modify or delete of an object the snapshot lacks (made after it, or outside what it holds) is
+    left out and listed. -> [{'real', 'sandbox', 'ok', 'created', 'modified', 'deleted', 'skipped', 'error'}]"""
     def call(method, path, body=None):
         req = urllib.request.Request(url + path, data=body.encode() if body is not None else None, method=method,
                                      headers={'Authorization': 'Bearer replay', 'Content-Type': 'text/xml'})
@@ -939,10 +988,8 @@ def replay(url, ids, cache=None, api=REAL_API):
         tags['replay_of'] = str(real)
         res = {'real': real, 'sandbox': None, 'ok': False}
         results.append(res)
-        try:
-            body, placeholders = replay_rewrite(osc, 0, idmap, version_of)
-        except ReplayGap as e:
-            res['error'] = str(e); break
+        res['skipped'] = []
+        body, placeholders = replay_rewrite(osc, 0, idmap, version_of, res['skipped'])
         by = {blk.tag: len(blk) for blk in ET.fromstring(body)}
         counts = {'created': by.get('create', 0), 'modified': by.get('modify', 0), 'deleted': by.get('delete', 0)}
         if not any(counts.values()):
@@ -950,7 +997,7 @@ def replay(url, ids, cache=None, api=REAL_API):
         csx = '<osm><changeset>' + ''.join(f'<tag k={quoteattr(k)} v={quoteattr(v)}/>' for k, v in tags.items()) + '</changeset></osm>'
         code, cid = call('PUT', '/api/0.6/changeset/create', csx)
         res['sandbox'] = int(cid)
-        body, placeholders = replay_rewrite(osc, int(cid), idmap, version_of)
+        body, placeholders = replay_rewrite(osc, int(cid), idmap, version_of, [])
         code, diff = call('POST', f'/api/0.6/changeset/{cid}/upload', body)
         call('PUT', f'/api/0.6/changeset/{cid}/close')
         if code != 200:
@@ -1007,6 +1054,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd')
     s = sub.add_parser('snapshot'); s.add_argument('--date', default=DATE); s.add_argument('--feed'); s.add_argument('--out'); s.add_argument('--overpass', default='https://overpass-api.de/api/interpreter')
+    s.add_argument('--masters', action='store_true', help='only add the route_master relations to the newest snapshot')
     s = sub.add_parser('serve'); s.add_argument('--port', type=int, default=8766); s.add_argument('--base')
     s = sub.add_parser('run'); s.add_argument('--port', type=int, default=8765); s.add_argument('--sandbox-port', type=int, default=8766); s.add_argument('--feed')
     s.add_argument('--reset', action='store_true', help='forget every upload first'); s.add_argument('--refresh', action='store_true', help='build the review again from the sandbox')
@@ -1020,6 +1068,8 @@ def main(argv=None):
         res = replay(a.url, a.changesets)
         print(json.dumps(res))
         return 0 if all(r['ok'] for r in res) else 1
+    if a.cmd == 'snapshot' and a.masters:
+        return add_masters(a.out or latest_base(), a.overpass)
     if a.cmd == 'snapshot':
         return snapshot(a.date, a.feed or newest('*.zip'), a.out, a.overpass)
     base = getattr(a, 'base', None) or latest_base()

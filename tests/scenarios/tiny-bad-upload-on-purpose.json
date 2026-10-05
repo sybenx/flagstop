@@ -1,0 +1,21 @@
+{
+  "name": "a bad upload, on purpose",
+  "about": "Route 1 rewritten with its platform after the roads. The sandbox takes it (OSM would), the upload is ok, and the report must say what is wrong, and only that: this is the proof that the report catches a bad result.",
+  "base": "tiny",
+  "steps": [
+    {"modify": {"type": "relation", "id": 300, "note": "rewrite",
+      "changes": {"members": [
+        {"type": "node", "ref": 3, "role": "stop"},
+        {"type": "way", "ref": 100, "role": ""},
+        {"type": "way", "ref": 102, "role": ""},
+        {"type": "node", "ref": 10, "role": "platform"}]}}},
+    {"upload": {"comment": "Bus route 1: rebuilt", "expect": "ok"}}
+  ],
+  "expect": {
+    "report": ["PTv2 order: stops and platforms, then the roads"],
+    "data": [
+      {"get": "/api/0.6/relation/300.json", "path": "elements.0.members.*.ref", "equals": [3, 100, 102, 10]},
+      {"changesets": 1}
+    ]
+  }
+}

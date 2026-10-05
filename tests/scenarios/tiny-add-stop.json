@@ -1,0 +1,22 @@
+{
+  "name": "a stop added and put into the route",
+  "about": "A new platform beside the street, made the way the review makes one, listed in bus route 1 between the stop it already has and the roads (PTv2 order); one upload.",
+  "base": "tiny",
+  "steps": [
+    {"createNode": {"lat": 41.7399, "lon": -111.8265, "as": "stop1", "note": "new stop",
+      "tags": {"highway": "bus_stop", "public_transport": "platform", "bus": "yes", "name": "Main & 5th"}}},
+    {"modify": {"type": "relation", "id": 300, "note": "add the stop to the route",
+      "changes": {"insertMembers": {"at": 2, "members": [{"as": "stop1", "role": "platform"}]}}}},
+    {"upload": {"comment": "Bus route 1: 1 stop added", "expect": "ok"}}
+  ],
+  "expect": {
+    "report": "all pass",
+    "steps": [{"step": 2, "path": "changesetsCreated", "equals": 1}, {"step": 2, "path": "left", "equals": []}],
+    "data": [
+      {"get": "/api/0.6/relation/300.json", "path": "elements.0.members.*.ref", "equals": [3, 10, "$stop1", 100, 102]},
+      {"get": "/api/0.6/relation/300.json", "path": "elements.0.version", "equals": 2},
+      {"get": "/api/0.6/node/$stop1.json", "path": "elements.0.tags.name", "equals": "Main & 5th"},
+      {"changesets": 1}
+    ]
+  }
+}

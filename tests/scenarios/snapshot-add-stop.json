@@ -1,0 +1,18 @@
+{
+  "name": "a stop added near a real CVTD stop",
+  "about": "On the Cache Valley snapshot (skipped without one: python3 tool/sandbox.py snapshot): a platform 10 m from the real stop '79 East 200 North' in Logan, uploaded as the tool uploads one.",
+  "base": "snapshot",
+  "steps": [
+    {"createNode": {"lat": 41.73536, "lon": -111.83277, "as": "stop1", "note": "new stop",
+      "tags": {"highway": "bus_stop", "public_transport": "platform", "bus": "yes", "name": "Scenario stop, 200 North", "network": "Connect Public Transit", "operator": "Connect Public Transit"}}},
+    {"upload": {"comment": "Bus stop added near 79 East 200 North", "expect": "ok"}}
+  ],
+  "expect": {
+    "report": "all pass",
+    "data": [
+      {"get": "/api/0.6/node/$stop1.json", "path": "elements.0.tags.name", "equals": "Scenario stop, 200 North"},
+      {"get": "/api/0.6/node/11504801907.json", "path": "elements.0.version", "equals": 2},
+      {"changesets": 1}
+    ]
+  }
+}

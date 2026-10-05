@@ -1,0 +1,20 @@
+{
+  "name": "a split where the bus turns",
+  "about": "Way 100 (Main Street, nodes 1-2-3) cut at node 2, with route 1 on it and a turn restriction whose from-way ends at node 3. The piece that reaches the junction is the new one: the route must list both pieces in travel order and the restriction must follow to the piece that meets its via.",
+  "base": "tiny",
+  "steps": [
+    {"split": {"way": 100, "node": 2, "bbox": [-111.832, 41.738, -111.822, 41.742], "as": "piece"}},
+    {"upload": {"comment": "Bus route 1: Main Street split at node 2", "expect": "ok"}}
+  ],
+  "expect": {
+    "report": "all pass",
+    "data": [
+      {"get": "/api/0.6/relation/300.json", "path": "elements.0.members.*.ref", "equals": [3, 10, 100, "$piece", 102]},
+      {"get": "/api/0.6/way/100.json", "path": "elements.0.nodes", "equals": [1, 2]},
+      {"get": "/api/0.6/way/$piece.json", "path": "elements.0.nodes", "equals": [2, 3]},
+      {"get": "/api/0.6/way/$piece.json", "path": "elements.0.tags.name", "equals": "Main Street"},
+      {"get": "/api/0.6/relation/302.json", "path": "elements.0.members.*.ref", "equals": ["$piece", 3, 101]},
+      {"changesets": 1}
+    ]
+  }
+}

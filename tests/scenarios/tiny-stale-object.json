@@ -1,0 +1,23 @@
+{
+  "name": "a stale object",
+  "about": "The tool reads node 10 and renames it; another mapper renames it differently before the upload. The upload must stop, name n10 as the conflict and create no changeset; the other mapper's edit is what the sandbox keeps.",
+  "base": "tiny",
+  "steps": [
+    {"modify": {"type": "node", "id": 10, "changes": {"tags": {"name": "Main Street & 3rd"}}, "note": "rename"}},
+    {"sandboxEdit": {"comment": "rename a stop", "osc": "<modify><node id=\"10\" version=\"1\" changeset=\"{cs}\" lat=\"41.7399\" lon=\"-111.828\"><tag k=\"highway\" v=\"bus_stop\"/><tag k=\"public_transport\" v=\"platform\"/><tag k=\"bus\" v=\"yes\"/><tag k=\"name\" v=\"3rd Avenue\"/></node></modify>"}},
+    {"upload": {"comment": "Bus route 1: stop renamed", "expect": "conflict"}}
+  ],
+  "expect": {
+    "report": "all pass",
+    "steps": [
+      {"step": 2, "path": "conflicts", "equals": ["n10"]},
+      {"step": 2, "path": "changesetsCreated", "equals": 0},
+      {"step": 2, "path": "why.0", "contains": "v1 → v2"}
+    ],
+    "data": [
+      {"get": "/api/0.6/node/10.json", "path": "elements.0.tags.name", "equals": "3rd Avenue"},
+      {"get": "/api/0.6/node/10.json", "path": "elements.0.version", "equals": 2},
+      {"changesets": 1}
+    ]
+  }
+}
