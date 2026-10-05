@@ -11,6 +11,8 @@ edit lands here and nowhere else.
                                             under cache/sandbox/work/), tool/serve.py --sandbox: open the page and work
     python3 tool/sandbox.py reset                                                     forget every upload: the snapshot again
     python3 tool/sandbox.py status                                                    what has gone up, by changeset
+    python3 tool/sandbox.py report [changeset ...]                                    is what went up good and safe? pass/fail
+                                                                                      lines on the result (exit 1 on a fail)
 
 What it answers (what the tool asks, in the shapes the real servers give):
     /api/0.6/{node,way,relation}/{id}.json            /api/0.6/{nodes,ways,relations}.json?ids
@@ -672,6 +674,163 @@ def serve(port, base):
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
 
 
+# ---------------------------------------------------------------- the report: is what went up good and safe?
+def report(store, cs_ids=None):
+    """Checks on the *result* of the changesets (the log's, or the given ones), not on the diff: every bus route
+    touched is whole and in PTv2 order and drivable the way it is listed, its stop positions on its roads, nothing
+    left dangling, no new node doubling an old one, restrictions still make sense, the changesets themselves say
+    who and why. -> [{'check', 'ok', 'what', 'objects'}]"""
+    sys.path.insert(0, os.path.join(ROOT, 'tool'))
+    import compare, routes
+    css = [store.changesets[i] for i in (cs_ids or sorted(store.changesets)) if i in store.changesets]
+    lines = []
+
+    def line(check, ok, what, objects=()):
+        lines.append({'check': check, 'ok': ok, 'what': what, 'objects': [f'{t[0]}{i}' for t, i in objects] if objects and isinstance(objects[0], tuple) else list(objects)})
+    touched, created = {}, []
+    for cs in css:
+        for action, e in cs['changes']:
+            touched[(e['type'], e['id'])] = action
+            if action == 'create':
+                created.append(e)
+        tags = cs['tags']
+        line('changeset says who and why', bool(tags.get('comment')) and bool(tags.get('created_by')) and bool(tags.get('source')),
+             f"changeset {cs['id']}: comment {'yes' if tags.get('comment') else 'MISSING'}, created_by {tags.get('created_by') or 'MISSING'}, source {tags.get('source') or 'MISSING'}", [f'changeset {cs["id"]}'])
+        line('changeset comment fits', len(tags.get('comment', '')) <= 255, f"changeset {cs['id']}: {len(tags.get('comment', ''))} characters", [f'changeset {cs["id"]}'])
+    el = store.el
+    vis = lambda t, i: i in el[t] and el[t][i]['visible']
+    # the bus routes to look at: touched themselves, or over a touched way or node
+    routes_ = set()
+    for (t, i), action in touched.items():
+        if t == 'relation' and vis(t, i) and el[t][i]['tags'].get('type') == 'route':
+            routes_.add(i)
+        for rid in store.rels_of.get((t, i), ()):
+            if vis('relation', rid) and el['relation'][rid]['tags'].get('type') == 'route':
+                routes_.add(rid)
+    ways_dict = lambda ids: {w: {'nodes': el['way'][w]['nodes']} for w in ids if vis('way', w)}
+    for rid in sorted(routes_):
+        r = el['relation'][rid]
+        name = r['tags'].get('name') or f'r{rid}'
+        ms = r['members']
+        ok_members = [m for m in ms if vis(m['type'], m['ref'])]
+        line('route members exist', len(ok_members) == len(ms), f'{name}: {len(ms) - len(ok_members)} member(s) deleted or missing', [('relation', rid)])
+        ms = ok_members
+        first_way = next((k for k, m in enumerate(ms) if m['type'] == 'way'), len(ms))
+        late_stops = [m for m in ms[first_way:] if m['type'] == 'node']
+        line('PTv2 order: stops and platforms, then the roads', not late_stops, f'{name}: {len(late_stops)} stop(s) after the roads start', [('relation', rid)])
+        for m in ms[:first_way]:
+            if m['type'] == 'node':
+                t = el['node'][m['ref']]['tags']
+                if m['role'] == 'stop':
+                    line('a stop role is a stop_position', t.get('public_transport') == 'stop_position', f'{name}: n{m["ref"]} as stop has public_transport={t.get("public_transport")}', [('node', m['ref'])])
+                elif m['role'].startswith('platform'):
+                    line('a platform role is a platform', t.get('public_transport') == 'platform' or t.get('highway') == 'bus_stop', f'{name}: n{m["ref"]} as platform has public_transport={t.get("public_transport")}', [('node', m['ref'])])
+                else:
+                    line('a stop member has a role', False, f'{name}: n{m["ref"]} with role {m["role"]!r}', [('node', m['ref'])])
+        way_ids = [m['ref'] for m in ms if m['type'] == 'way' and m['role'] in ('', 'forward', 'backward')]
+        twice = [w for a, w in zip(way_ids, way_ids[1:]) if a == w]
+        line('no road twice in a row', not twice, f'{name}: {", ".join("w" + str(w) for w in twice) or "none"}', [('relation', rid)])
+        ways = ways_dict(way_ids)
+        breaks = compare.chain_breaks(way_ids, ways) if way_ids else []
+        line('roads chained end to end', not breaks, f'{name}: ' + ('; '.join(f'{b["kind"]} between w{b["a"]} and w{b["b"]} at n{b["node"]}' for b in breaks) or 'whole'), [('relation', rid)] + [('way', b['split']) for b in breaks if b['split']])
+        # driven the way it is listed: each road entered at the end the one before left it at, and drivable that way
+        against, closed_to = [], []
+        prev_exit, first_entry = None, None
+        for k, w in enumerate(way_ids):
+            if w not in ways:
+                prev_exit = None; continue
+            nodes = ways[w]['nodes']
+            tags = el['way'][w]['tags']
+            may = routes.bus_may(tags)
+            if may is None:
+                closed_to.append(w); prev_exit = None; continue
+            if nodes[0] == nodes[-1]:
+                prev_exit = None; continue
+            if prev_exit in (nodes[0], nodes[-1]):
+                entry = prev_exit
+            else:
+                nxt = set(ways.get(way_ids[k + 1], {}).get('nodes', [])) if k + 1 < len(way_ids) else set()
+                entry = nodes[-1] if nodes[0] in nxt and nodes[-1] not in nxt else nodes[0]
+            forward = entry == nodes[0]
+            if k == 0:
+                first_entry = entry
+            if not (may[0] if forward else may[1]):
+                against.append(w)
+            prev_exit = nodes[-1] if forward else nodes[0]
+        line('roads drivable by a bus', not closed_to, f'{name}: ' + (', '.join(f'w{w} ({el["way"][w]["tags"].get("highway", "no highway")}, {routes.Graph._why_blocked(el["way"][w]["tags"])})' for w in closed_to) or 'all'), [('way', w) for w in closed_to])
+        line('no one-way driven against', not against, f'{name}: ' + (', '.join(f'w{w}' for w in against) or 'none'), [('way', w) for w in against])
+        on_route = {n for w in ways for n in ways[w]['nodes']}
+        off = [m['ref'] for m in ms if m['type'] == 'node' and m['role'] == 'stop' and m['ref'] not in on_route]
+        line("stop positions on the route's roads", not off, f'{name}: ' + (', '.join(f'n{n}' for n in off) or 'all'), [('node', n) for n in off])
+        if r['tags'].get('roundtrip') == 'yes' and first_entry is not None and prev_exit is not None:
+            # where the bus set off and where it ended: the same point, or within 50 m
+            near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 50 if p in el['node'] and q in el['node'] else False
+            line('roundtrip=yes closes', first_entry == prev_exit or near(first_entry, prev_exit), f'{name}: sets off at n{first_entry}, ends at n{prev_exit}', [('relation', rid)])
+    # what was touched, as objects
+    for (t, i), action in sorted(touched.items()):
+        if not vis(t, i):
+            continue
+        e = el[t][i]
+        if t == 'way':
+            line('a way has two nodes or more', len(e['nodes']) >= 2, f'w{i}: {len(e["nodes"])} node(s)', [('way', i)])
+            gone = [n for n in e['nodes'] if not vis('node', n)]
+            line("a way's nodes exist", not gone, f'w{i}: ' + (', '.join(f'n{n}' for n in gone) or 'all there'), [('way', i)])
+        if t == 'relation':
+            gone = [m for m in e['members'] if not vis(m['type'], m['ref'])]
+            line("a relation's members exist", not gone, f'r{i}: ' + (', '.join(f'{m["type"][0]}{m["ref"]}' for m in gone) or 'all there'), [('relation', i)])
+        if action == 'delete':
+            continue
+    for (t, i), action in sorted(touched.items()):
+        if action == 'delete':
+            e = el[t][i]
+            users = store._used_by(t, i) if vis(t, i) else ''
+            still = [x for x in (store.ways_of.get(i, set()) if t == 'node' else set()) if vis('way', x)] + [x for x in store.rels_of.get((t, i), set()) if vis('relation', x)]
+            line('nothing refers to a deleted object', not still, f'{t[0]}{i}: ' + (', '.join(str(x) for x in still) or 'nothing does'), [(t, i)])
+    for e in created:
+        if e['type'] != 'node' or not vis('node', e['id']) or not e['tags']:
+            continue
+        s, w, n, ee = e['lat'] - 0.00002, e['lon'] - 0.00003, e['lat'] + 0.00002, e['lon'] + 0.00003
+        twins = [x for x in store.nodes_in(s, w, n, ee) if x != e['id'] and el['node'][x]['tags'] == e['tags']
+                 and routes.metres((e['lon'], e['lat']), (el['node'][x]['lon'], el['node'][x]['lat'])) <= 1.0]
+        line("a new node doesn't double an old one", not twins, f'n{e["id"]}: ' + (', '.join(f'n{x} within 1 m with the same tags' for x in twins) or 'alone'), [('node', e['id'])] + [('node', x) for x in twins])
+    # restrictions over touched ways: from and to still meet at via
+    seen = set()
+    for (t, i), action in touched.items():
+        if t != 'way':
+            continue
+        for rid in store.rels_of.get(('way', i), ()):
+            r = el['relation'].get(rid)
+            if not r or not r['visible'] or r['tags'].get('type') != 'restriction' or rid in seen:
+                continue
+            seen.add(rid)
+            via = [m for m in r['members'] if m['role'] == 'via']
+            ends = lambda w: {el['way'][w]['nodes'][0], el['way'][w]['nodes'][-1]} if vis('way', w) else set()
+            if len(via) == 1 and via[0]['type'] == 'node':
+                v = via[0]['ref']
+                bad = [m['ref'] for m in r['members'] if m['role'] in ('from', 'to') and m['type'] == 'way' and v not in ends(m['ref'])]
+            elif via and all(m['type'] == 'way' for m in via):
+                vn = set().union(*[ends(m['ref']) for m in via])
+                bad = [m['ref'] for m in r['members'] if m['role'] in ('from', 'to') and m['type'] == 'way' and not (ends(m['ref']) & vn)]
+            else:
+                bad = []
+            line('restriction from/to still touch via', not bad, f'r{rid}: ' + (', '.join(f'w{w}' for w in bad) or 'they do'), [('relation', rid)] + [('way', w) for w in bad])
+    return lines
+
+
+def print_report(lines):
+    bad = [x for x in lines if not x['ok']]
+    for x in lines:
+        if not x['ok']:
+            print(f"FAIL  {x['check']}: {x['what']}  [{', '.join(x['objects'])}]")
+    by = {}
+    for x in lines:
+        by.setdefault(x['check'], [0, 0])[0 if x['ok'] else 1] += 1
+    for check, (ok, fail) in by.items():
+        print(f"{'ok  ' if not fail else 'FAIL'}  {check}: {ok} pass{'' if ok == 1 else 'es'}{f', {fail} fail' if fail else ''}")
+    print(f"{len(bad)} failing of {len(lines)} checks")
+    return 1 if bad else 0
+
+
 def run(port, sb_port, feed, reset=False, refresh=False):
     """The sandbox, the review built against it, the page served against it: one command, until Ctrl-C."""
     import subprocess
@@ -709,6 +868,7 @@ def main(argv=None):
     s.add_argument('--reset', action='store_true', help='forget every upload first'); s.add_argument('--refresh', action='store_true', help='build the review again from the sandbox')
     sub.add_parser('reset')
     sub.add_parser('status')
+    s = sub.add_parser('report'); s.add_argument('changesets', nargs='*', type=int); s.add_argument('--base')
     a = ap.parse_args(argv)
     newest = lambda pat: max(glob.glob(os.path.join(ROOT, 'cache', pat)), key=os.path.getmtime, default=None)
     if a.cmd == 'snapshot':
@@ -720,6 +880,11 @@ def main(argv=None):
         return serve(a.port, base)
     if a.cmd == 'run':
         return run(a.port, a.sandbox_port, a.feed or newest('*.zip'), a.reset, a.refresh)
+    if a.cmd == 'report':
+        if not base:
+            raise SystemExit('no snapshot in cache/sandbox/')
+        store = Store(base); store.load_log()
+        return print_report(report(store, a.changesets or None))
     if a.cmd == 'reset':
         if os.path.exists(LOG):
             os.remove(LOG); print('every upload forgotten: the snapshot again (restart the sandbox)', file=sys.stderr)

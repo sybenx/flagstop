@@ -15,9 +15,9 @@ LAT, LON = 41.74, -111.83
 
 
 def tiny_map():
-    """A street (way 100: nodes 1..5 west to east) with a side street (way 101: node 3 north to 6), a bus stop
-    (node 10) by it, a stop position (node 3, on the street), a bus route over the street, a turn restriction,
-    and a building (way 200) in the corner."""
+    """A street west to east in two ways meeting at node 3 (way 100: nodes 1..3, way 102: nodes 3..5), a side
+    street from there (way 101: node 3 north to 6), a bus stop (node 10) by the junction, a stop position (node 3),
+    a bus route along the street, a turn restriction at the junction, and a building (way 200) in the corner."""
     meta = {'version': 1, 'timestamp': '2026-09-01T00:00:00Z', 'changeset': 1000, 'user': 'mapper', 'uid': 7}
     els = []
     for i in range(1, 6):
@@ -25,13 +25,14 @@ def tiny_map():
     els.append({'type': 'node', 'id': 6, 'lat': LAT + 0.001, 'lon': LON + 0.002, **meta})
     els.append({'type': 'node', 'id': 10, 'lat': LAT - 0.0001, 'lon': LON + 0.002, 'tags': {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes', 'name': 'Main & 3rd'}, **meta})
     els[2]['tags'] = {'public_transport': 'stop_position', 'bus': 'yes'}
-    els.append({'type': 'way', 'id': 100, 'nodes': [1, 2, 3, 4, 5], 'tags': {'highway': 'residential', 'name': 'Main Street'}, **meta})
+    els.append({'type': 'way', 'id': 100, 'nodes': [1, 2, 3], 'tags': {'highway': 'residential', 'name': 'Main Street'}, **meta})
+    els.append({'type': 'way', 'id': 102, 'nodes': [3, 4, 5], 'tags': {'highway': 'residential', 'name': 'Main Street'}, **meta})
     els.append({'type': 'way', 'id': 101, 'nodes': [3, 6], 'tags': {'highway': 'service'}, **meta})
     for i in (20, 21, 22):
         els.append({'type': 'node', 'id': i, 'lat': LAT + 0.0005 + (i - 20) * 0.0001, 'lon': LON + 0.0005, **meta})
     els.append({'type': 'way', 'id': 200, 'nodes': [20, 21, 22, 20], 'tags': {'building': 'yes'}, **meta})
     els.append({'type': 'relation', 'id': 300, 'tags': {'type': 'route', 'route': 'bus', 'ref': '1', 'name': 'Bus 1'},
-                'members': [{'type': 'node', 'ref': 3, 'role': 'stop'}, {'type': 'node', 'ref': 10, 'role': 'platform'}, {'type': 'way', 'ref': 100, 'role': ''}], **meta})
+                'members': [{'type': 'node', 'ref': 3, 'role': 'stop'}, {'type': 'node', 'ref': 10, 'role': 'platform'}, {'type': 'way', 'ref': 100, 'role': ''}, {'type': 'way', 'ref': 102, 'role': ''}], **meta})
     els.append({'type': 'relation', 'id': 301, 'tags': {'type': 'route_master', 'route_master': 'bus', 'ref': '1'}, 'members': [{'type': 'relation', 'ref': 300, 'role': ''}], **meta})
     els.append({'type': 'relation', 'id': 302, 'tags': {'type': 'restriction', 'restriction': 'no_left_turn'},
                 'members': [{'type': 'way', 'ref': 100, 'role': 'from'}, {'type': 'node', 'ref': 3, 'role': 'via'}, {'type': 'way', 'ref': 101, 'role': 'to'}], **meta})
@@ -99,13 +100,13 @@ class SandboxTest(unittest.TestCase):
         n = self.get('/api/0.6/node/10.json')['elements'][0]
         self.assertEqual((n['version'], n['tags']['name'], n['lat']), (1, 'Main & 3rd', LAT - 0.0001))
         w = self.get('/api/0.6/way/100/full.json')['elements']
-        self.assertEqual([e['type'] for e in w], ['node'] * 5 + ['way'])
+        self.assertEqual([e['type'] for e in w], ['node'] * 3 + ['way'])
         self.assertEqual(self.get('/api/0.6/way/100/history.json')['elements'][0]['version'], 1)
-        self.assertEqual([e['id'] for e in self.get('/api/0.6/node/3/ways.json')['elements']], [100, 101])
+        self.assertEqual([e['id'] for e in self.get('/api/0.6/node/3/ways.json')['elements']], [100, 101, 102])
         self.assertEqual(sorted(e['id'] for e in self.get('/api/0.6/node/3/relations.json')['elements']), [300, 302])
         self.assertEqual([e['id'] for e in self.get('/api/0.6/nodes.json?nodes=1,10')['elements']], [1, 10])
         m = self.get(f'/api/0.6/map.json?bbox={LON + 0.0015},{LAT - 0.0005},{LON + 0.0025},{LAT + 0.0005}')['elements']
-        self.assertEqual({e['type'] + str(e['id']) for e in m if e['type'] != 'node'}, {'way100', 'way101', 'relation300', 'relation302'})
+        self.assertEqual({e['type'] + str(e['id']) for e in m if e['type'] != 'node'}, {'way100', 'way101', 'way102', 'relation300', 'relation302'})
         self.assertTrue({e['id'] for e in m if e['type'] == 'node'} >= {1, 2, 3, 4, 5, 6, 10}, 'the ways come whole')
         self.assertEqual(self.call('GET', '/api/0.6/node/999.json')[0], 404)
         self.assertEqual(self.get('/api/0.6/notes.json?bbox=0,0,1,1')['features'], [])
@@ -132,12 +133,12 @@ class SandboxTest(unittest.TestCase):
         code, body = self.call('POST', '/api/interpreter', urllib.parse.urlencode({'data': osm.PT_QUERY.format(bbox=bbox)}), 'application/x-www-form-urlencoded')
         self.assertEqual(code, 200, body)
         stops, routes, masters, ways, nodes = osm.parse_pt(json.loads(body))
-        self.assertEqual((set(stops), set(routes), set(masters), set(ways)), ({'n10', 'n3'}, {300}, {301}, {100}))
+        self.assertEqual((set(stops), set(routes), set(masters), set(ways)), ({'n10', 'n3'}, {300}, {301}, {100, 102}))
         self.assertEqual(stops['n10']['version'], 1)
         code, body = self.call('POST', '/api/interpreter', urllib.parse.urlencode({'data': osm.ROADS_QUERY.format(bbox=bbox)}), 'application/x-www-form-urlencoded')
         self.assertEqual(code, 200, body)
         els = json.loads(body)['elements']
-        self.assertEqual({(e['type'], e['id']) for e in els if e['type'] != 'node'}, {('way', 100), ('way', 101), ('relation', 302)})
+        self.assertEqual({(e['type'], e['id']) for e in els if e['type'] != 'node'}, {('way', 100), ('way', 101), ('way', 102), ('relation', 302)})
         self.assertEqual({e['id'] for e in els if e['type'] == 'node'}, {1, 2, 3, 4, 5, 6})   # not the building's
         self.assertNotIn('version', els[0], 'out body: no meta')
         code, body = self.call('POST', '/api/interpreter', urllib.parse.urlencode({'data': 'node["amenity"="cafe"](1,2,3,4);out;'}), 'application/x-www-form-urlencoded')
@@ -176,6 +177,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(self.call('GET', '/api/0.6/way/200.json')[0], 410)
         self.assertEqual(self.get('/api/0.6/node/3.json')['elements'][0]['version'], 1, 'kept')
         self.assertEqual(self.get('/api/0.6/ways.json?ways=200')['elements'][0]['visible'], False)
+        self.assertEqual(self.get('/api/0.6/node/3.json')['elements'][0]['version'], 1)
         self.assertEqual(len(self.get('/api/0.6/way/200/history.json')['elements']), 2)
         # the changeset, as patch.py reads it
         cs = ET.fromstring(self.call('GET', f'/api/0.6/changeset/{cid}')[1]).find('changeset')
@@ -188,6 +190,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(sorted(e.get('id') for e in dl[2]), ['20', '200'])
         js = self.get(f'/api/0.6/changeset/{cid}.json?include_discussion=true')['changeset']
         self.assertEqual((js['tags']['comment'], js['comments'], js['changes_count']), ('test', [], 6))
+        self.assertEqual(self.call('GET', '/api/0.6/way/102.json')[0], 200)
         self.assertEqual(self.get('/api/0.6/changesets.json?user=1&limit=25')['changesets'][0]['id'], cid)
 
     def test_stale_version_is_a_conflict_and_nothing_changes(self):
@@ -249,6 +252,94 @@ class SandboxTest(unittest.TestCase):
         # reset: the snapshot again
         os.remove(sandbox.LOG)
         self.assertEqual(sandbox.Store(self.base).load_log(), 0)
+
+
+class ReportTest(unittest.TestCase):
+    """sandbox.report: each fault planted by hand fails exactly its line; a clean upload passes them all."""
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp()
+        sandbox.DIR = cls.dir; sandbox.LOG = os.path.join(cls.dir, 'changes.json')
+        cls.base = os.path.join(cls.dir, 'base-test.json')
+        json.dump(tiny_map(), open(cls.base, 'w'))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def uploaded(self, osc, tags=None):
+        st = sandbox.Store(self.base)
+        cid = st.create_changeset(tags if tags is not None else {'comment': 'a test', 'created_by': 'flagstop', 'source': 'GTFS'})
+        st.upload(cid, f'<osmChange version="0.6">{osc.replace("CS", str(cid))}</osmChange>')
+        st.close_changeset(cid)
+        return st
+
+    def failing(self, st):
+        return {x['check']: x for x in sandbox.report(st) if not x['ok']}
+
+    def test_a_clean_rewrite_passes(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="3" role="stop"/><member type="node" ref="10" role="platform"/>'
+                           '<member type="way" ref="100" role=""/><member type="way" ref="102" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/><tag k="name" v="Bus 1"/><tag k="roundtrip" v="no"/></relation></modify>')
+        self.assertEqual(self.failing(st), {})
+        self.assertGreater(len(sandbox.report(st)), 8)
+
+    def test_stops_after_the_roads(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="way" ref="100" role=""/><member type="node" ref="10" role="platform"/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        self.assertEqual(set(self.failing(st)), {'PTv2 order: stops and platforms, then the roads'})
+
+    def test_a_road_twice_and_a_gap(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="100" role=""/><member type="way" ref="100" role=""/>'
+                           '<member type="way" ref="101" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'no road twice in a row', 'roads chained end to end'})
+        self.assertIn('between w100 and w101', f['roads chained end to end']['what'])
+
+    def test_not_a_road(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="200" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'roads drivable by a bus'})
+        self.assertIn('w200', f['roads drivable by a bus']['what'])   # a building is not a road
+
+    def test_roundtrip_that_does_not_close(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="100" role=""/><member type="way" ref="102" role=""/>'
+                           '<tag k="type" v="route"/><tag k="route" v="bus"/><tag k="roundtrip" v="yes"/></relation></modify>')
+        self.assertEqual(set(self.failing(st)), {'roundtrip=yes closes'})
+
+    def test_a_one_way_driven_against(self):
+        # the side street made one-way northbound, and the route driving it south into the street
+        st = self.uploaded('<modify><way id="101" version="1" changeset="CS"><nd ref="3"/><nd ref="6"/><tag k="highway" v="service"/><tag k="oneway" v="yes"/></way>'
+                           '<relation id="300" version="1" changeset="CS"><member type="node" ref="10" role="platform"/><member type="way" ref="101" role=""/><member type="way" ref="102" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'no one-way driven against'}); self.assertEqual(f['no one-way driven against']['objects'], ['w101'])
+
+    def test_a_stop_position_off_the_route(self):
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="3" role="stop"/><member type="way" ref="101" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        self.assertEqual(self.failing(st), {})   # n3 is on w101
+        st = self.uploaded('<modify><relation id="300" version="1" changeset="CS"><member type="node" ref="6" role="stop"/><member type="way" ref="100" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        self.assertEqual(set(self.failing(st)), {"stop positions on the route's roads", 'a stop role is a stop_position'})
+
+    def test_a_new_node_doubling_an_old_one(self):
+        st = self.uploaded('<create><node id="-1" changeset="CS" lat="41.7399001" lon="-111.828"><tag k="highway" v="bus_stop"/><tag k="public_transport" v="platform"/><tag k="bus" v="yes"/><tag k="name" v="Main &amp; 3rd"/></node></create>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {"a new node doesn't double an old one"}); self.assertIn('n10', f["a new node doesn't double an old one"]['what'])
+
+    def test_a_split_repaired_and_one_not(self):
+        # w100 [1,2,3] split at 2: the piece at the junction keeps the id, the route lists both pieces: all whole
+        st = self.uploaded('<create><way id="-1" changeset="CS"><nd ref="1"/><nd ref="2"/><tag k="highway" v="residential"/></way></create>'
+                           '<modify><way id="100" version="1" changeset="CS"><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/></way>'
+                           '<relation id="300" version="1" changeset="CS"><member type="node" ref="3" role="stop"/><member type="node" ref="10" role="platform"/><member type="way" ref="-1" role=""/><member type="way" ref="100" role=""/><member type="way" ref="102" role=""/><tag k="type" v="route"/><tag k="route" v="bus"/></relation></modify>')
+        self.assertEqual(self.failing(st), {})
+        # the piece at the junction given to the new way, and nothing told: the restriction's from no longer reaches via, the route has a gap
+        st = self.uploaded('<create><way id="-1" changeset="CS"><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/></way></create>'
+                           '<modify><way id="100" version="1" changeset="CS"><nd ref="1"/><nd ref="2"/><tag k="highway" v="residential"/></way></modify>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'restriction from/to still touch via', 'roads chained end to end'})
+        self.assertEqual(f['restriction from/to still touch via']['objects'], ['r302', 'w100'])
+
+    def test_the_changeset_itself(self):
+        st = self.uploaded('<modify><node id="1" version="1" changeset="CS" lat="41.74" lon="-111.83"/></modify>', tags={'comment': 'x' * 300})
+        f = self.failing(st)
+        self.assertEqual(set(f), {'changeset says who and why', 'changeset comment fits'})
 
 
 if __name__ == '__main__':
