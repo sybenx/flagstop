@@ -9,4 +9,9 @@ const FLAGSTOP_OSM = {
   clientId: '',
   // the redirect URIs the app was registered with: sign-in works from these addresses
   redirects: ['http://127.0.0.1:8765/', 'http://localhost:8765/', 'https://sybenx.github.io/flagstop/'],
+  // where OSM is: empty for the real one. tool/serve.py --sandbox serves this file pointing everything at
+  // tool/sandbox.py instead, and nothing else in the page knows the difference.
+  api: '',        // the API, e.g. 'http://127.0.0.1:8766' (api.openstreetmap.org when empty)
+  www: '',        // the site, for sign-in (www.openstreetmap.org when empty)
+  overpass: '',   // one Overpass endpoint to use instead of the public ones
 };

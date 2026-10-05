@@ -13,7 +13,7 @@ import functools, glob, json, os, sys, urllib.request
 import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-API = 'https://api.openstreetmap.org/api/0.6'
+API = os.environ.get('OSM_API_URL', 'https://api.openstreetmap.org').rstrip('/') + '/api/0.6'   # OSM_API_URL: a sandbox (tool/sandbox.py)
 UA = {'User-Agent': 'flagstop (GTFS/OSM route review)'}
 ROADS = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street', 'service', 'busway',
          'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road'}
@@ -121,10 +121,11 @@ def main(argv):
     ids = [int(x) for x in argv if x.isdigit()]
     if not ids:
         raise SystemExit(__doc__)
-    newest = lambda pat: max(glob.glob(os.path.join(ROOT, 'cache', pat)), key=os.path.getmtime)
+    cache = os.environ.get('FLAGSTOP_CACHE') or os.path.join(ROOT, 'cache')   # a sandbox run keeps its files apart
+    newest = lambda pat: max(glob.glob(os.path.join(cache, pat)), key=os.path.getmtime)
     # the stops-and-routes data, and every roads file: the whole area's (if any) and each route's (cache/roads/)
     pt_path = newest('*-osm-pt.json')
-    road_paths = glob.glob(os.path.join(ROOT, 'cache', '*-osm-roads.json')) + glob.glob(os.path.join(ROOT, 'cache', 'roads', '*.json'))
+    road_paths = glob.glob(os.path.join(cache, '*-osm-roads.json')) + glob.glob(os.path.join(cache, 'roads', '*.json'))
     pt = json.load(open(pt_path))
     n = 0
     for i, rp in enumerate(road_paths or [None]):

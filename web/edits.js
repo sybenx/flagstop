@@ -5,8 +5,9 @@
    review screen can show a before/after and the upload can refuse if the object changed meanwhile. */
 'use strict';
 
-const OSM_API = 'https://api.openstreetmap.org';
-const OSM_WWW = 'https://www.openstreetmap.org';
+// the real OSM, unless config.js points at a sandbox (tool/sandbox.py)
+const OSM_API = (typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.api) || 'https://api.openstreetmap.org';
+const OSM_WWW = (typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.www) || 'https://www.openstreetmap.org';
 
 const Edits = {
   key: 'flagstop.edits',

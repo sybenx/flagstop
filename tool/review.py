@@ -188,8 +188,8 @@ def main():
     ap.add_argument('feed')
     ap.add_argument('--osm-pt')
     ap.add_argument('--osm-roads')
-    ap.add_argument('--out', default=os.path.join(ROOT, 'web', 'data'))
-    ap.add_argument('--cache', default=os.path.join(ROOT, 'cache'))
+    ap.add_argument('--out', default=os.environ.get('FLAGSTOP_DATA') or os.path.join(ROOT, 'web', 'data'))        # FLAGSTOP_DATA, FLAGSTOP_CACHE: a sandbox
+    ap.add_argument('--cache', default=os.environ.get('FLAGSTOP_CACHE') or os.path.join(ROOT, 'cache'))             # run keeps its files apart (tool/sandbox.py)
     ap.add_argument('--refresh', action='store_true', help='fetch OSM again even if cached (roads too, if a day old)')
     ap.add_argument('--refresh-roads', action='store_true', help='fetch the roads again, however recent')
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")

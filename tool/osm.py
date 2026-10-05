@@ -73,7 +73,7 @@ def fetch_pt(bbox):
     return fetch(PT_QUERY.format(bbox=_bbox(bbox)))
 
 
-NOTES_API = 'https://api.openstreetmap.org/api/0.6/notes.json'
+NOTES_API = os.environ.get('OSM_API_URL', 'https://api.openstreetmap.org').rstrip('/') + '/api/0.6/notes.json'   # OSM_API_URL: a sandbox (tool/sandbox.py)
 
 
 def fetch_notes(bbox):

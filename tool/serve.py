@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Serve the review page, and re-route a pattern on request.
 
-    python3 tool/serve.py [--port 8765] [--feed FEED.zip] [--osm-roads cache/osm-roads.json]
+    python3 tool/serve.py [--port 8765] [--feed FEED.zip] [--osm-roads cache/osm-roads.json] [--sandbox http://127.0.0.1:8766]
+
+--sandbox: the page, the review's rebuild and the patching after an upload all talk to tool/sandbox.py at that
+address instead of OpenStreetMap (config.js is served pointing there; OSM_API_URL and OVERPASS_URL are set for
+the subprocesses). The tool itself doesn't know: that is the point.
 
 Static files come from web/. With a feed and roads file loaded, the page can ask for a fresh trace
 of a pattern through extra via points the reviewer drops on the map:
@@ -32,6 +36,9 @@ import gtfs, osm, routes as routing, compare, stops as stopmatch, review
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, 'web')
 STATE = {}
+# where the review's files live: cache/ and web/data/, or wherever a sandbox run keeps its own (tool/sandbox.py)
+cache_dir = lambda: os.environ.get('FLAGSTOP_CACHE') or os.path.join(ROOT, 'cache')
+data_dir = lambda: os.environ.get('FLAGSTOP_DATA') or os.path.join(WEB, 'data')
 
 
 def load(feed_path, roads_path, pt_path):
@@ -45,7 +52,7 @@ def load(feed_path, roads_path, pt_path):
         STATE['osm_stops'], *_ = osm.parse_pt(osm.load(pt_path))
         STATE['stop_areas'] = list(getattr(osm.parse_pt, 'stop_areas', {}).values())
     # the matches the page shows (review.json), so a route's stop positions are worked out for the same stops
-    rj = os.path.join(WEB, 'data', 'review.json')
+    rj = os.path.join(data_dir(), 'review.json')
     STATE['match'] = {k: s.get('match') for k, s in json.load(open(rj))['stops'].items()} if os.path.exists(rj) else {}
     print(f'loaded {os.path.basename(feed_path)}: {len(feed.patterns)} patterns; roads per route, when opened', file=sys.stderr)
 
@@ -58,7 +65,7 @@ def roads_for(pid):
     """The roads around one itinerary: cache/roads/<it>.json if under a day old, else fetched (a small Overpass
     query); an older copy if Overpass can't be had; the whole-area roads, if there are any, as a last resort."""
     feed, p = STATE['feed'], STATE['patterns'][pid]
-    path = os.path.join(ROOT, 'cache', 'roads', review.safe(pid) + '.json')
+    path = os.path.join(cache_dir(), 'roads', review.safe(pid) + '.json')
     fresh = os.path.exists(path) and time.time() - os.path.getmtime(path) < 86400
     if not fresh:
         try:
@@ -124,7 +131,7 @@ def start_refresh(changesets=()):
             if r.returncode:
                 REFRESH.update(running=False, error=(r.stderr.strip().splitlines() or ['patch.py failed'])[-1])
                 return
-        r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, *([] if changesets else ['--refresh'])], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, '--cache', cache_dir(), '--out', data_dir(), *([] if changesets else ['--refresh'])], capture_output=True, text=True)
         if r.returncode:
             REFRESH.update(running=False, error=(r.stderr.strip().splitlines() or ['review.py failed'])[-1])
             return
@@ -161,6 +168,13 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=WEB, **k)
 
+    def translate_path(self, path):
+        """The page's data/ from wherever this run's review was written (a sandbox keeps its own)."""
+        p = urllib.parse.urlparse(path).path
+        if p.startswith('/data/'):
+            return os.path.join(data_dir(), *[x for x in p[6:].split('/') if x and x != '..'])
+        return super().translate_path(path)
+
     def end_headers(self):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Cache-Control', 'no-cache')
@@ -172,6 +186,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
+        if u.path == '/config.js' and STATE.get('sandbox'):
+            # the page pointed at the sandbox: the real config.js with its addresses filled in
+            sb = STATE['sandbox']
+            body = open(os.path.join(WEB, 'config.js')).read()
+            body = re.sub(r"clientId: '[^']*'", "clientId: 'sandbox'", body)
+            body = re.sub(r"redirects: \[[^\]]*\]", f"redirects: ['http://127.0.0.1:{self.server.server_port}/', 'http://localhost:{self.server.server_port}/']", body)
+            for k in ('api', 'www', 'overpass'):
+                body = re.sub(rf"\b{k}: ''", f"{k}: '{sb}'" if k != 'overpass' else f"{k}: '{sb}/api/interpreter'", body)
+            return self._raw(body.encode(), 'application/javascript')
         if not u.path.startswith('/api/'):
             return super().do_GET()
         if u.path == '/api/state':
@@ -215,7 +238,7 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == '/api/trace':
             return self._json(trace_json(res, vias, avoid, require))
         if u.path == '/api/relation':
-            path = os.path.join(ROOT, 'cache', f'rel-{review.safe(pid)}-via.osm')
+            path = os.path.join(cache_dir(), f'rel-{review.safe(pid)}-via.osm')
             review.write_relation_osm(path, STATE['feed'], p, res, STATE['match'], STATE['osm_stops'])
             body = open(path, 'rb').read()
             self.send_response(200)
@@ -234,7 +257,7 @@ class Handler(SimpleHTTPRequestHandler):
         return o is None or o in (f'http://{host}', f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}')
 
     def _state_path(self, key):
-        return os.path.join(os.environ.get('FLAGSTOP_STATE_DIR') or os.path.join(ROOT, 'cache', 'state'), re.sub(r'[^\w.-]+', '_', key or 'default')[:120] + '.json')
+        return os.path.join(os.environ.get('FLAGSTOP_STATE_DIR') or os.path.join(cache_dir(), 'state'), re.sub(r'[^\w.-]+', '_', key or 'default')[:120] + '.json')
 
     def do_POST(self):
         if urllib.parse.urlparse(self.path).path == '/api/state':
@@ -275,6 +298,13 @@ class Handler(SimpleHTTPRequestHandler):
         p, res = trace_with_vias(pid, vias, g, require=require, avoid=avoid)
         return self._json(trace_json(res, vias, avoid, require))
 
+    def _raw(self, body, ctype):
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json(self, obj, code=200, cors=True):
         body = json.dumps(obj).encode()
         self.send_response(code)
@@ -292,8 +322,17 @@ def main():
     ap.add_argument('--feed', help='GTFS zip (default: newest in cache/)')
     ap.add_argument('--osm-roads', help='Overpass roads JSON (default: newest *roads*.json in cache/)')
     ap.add_argument('--osm-pt', help='Overpass PT JSON (default: newest *pt*.json in cache/)')
+    ap.add_argument('--sandbox', help='a tool/sandbox.py address: the page and the rebuilds talk to it instead of OSM')
     a = ap.parse_args()
-    newest = lambda pat: max(glob.glob(os.path.join(ROOT, 'cache', pat)), key=os.path.getmtime, default=None)
+    if a.sandbox:
+        STATE['sandbox'] = a.sandbox.rstrip('/')
+        os.environ['OSM_API_URL'] = STATE['sandbox']
+        os.environ['OVERPASS_URL'] = STATE['sandbox'] + '/api/interpreter'
+        # its own cache and data, apart from the real review's
+        os.environ.setdefault('FLAGSTOP_CACHE', os.path.join(ROOT, 'cache', 'sandbox', 'work'))
+        os.environ.setdefault('FLAGSTOP_DATA', os.path.join(os.environ['FLAGSTOP_CACHE'], 'data'))
+        print(f'sandbox: {STATE["sandbox"]} stands in for OpenStreetMap; files under {cache_dir()}', file=sys.stderr)
+    newest = lambda pat: max(glob.glob(os.path.join(cache_dir(), pat)), key=os.path.getmtime, default=None)
     feed = a.feed or newest('*.zip')
     roads = a.osm_roads or newest('*roads*.json')
     pt = a.osm_pt or newest('*pt*.json')

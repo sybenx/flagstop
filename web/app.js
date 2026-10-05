@@ -98,7 +98,7 @@ const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : (p.routed ||
 /** Has the reviewer re-routed this itinerary (via points, roads the bus uses or doesn't)? */
 const constrainedRouting = p => { const r = Edits.routingOf(p.id); return !!(r.vias.length || r.avoid.length || r.require.length); };
 // ---------- a route's roads, and routing it here in the page (web/router.js) ----------
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS = typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.overpass ? [FLAGSTOP_OSM.overpass] : ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 const ROAD_CLASSES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road';
 /** The Overpass query for the roads within a tile or so of a route's line (tool/osm.py's fetch_roads_near). */
 function roadsQuery(p) {

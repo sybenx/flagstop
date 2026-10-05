@@ -100,11 +100,32 @@ Sign in with OSM from the Changes tab. flagstop signs in through one OSM app (a 
 
 One reviewed route at a time is mapping. All of it at once is an import: read [Import/Guidelines](https://wiki.openstreetmap.org/wiki/Import/Guidelines) and the [Automated Edits code of conduct](https://wiki.openstreetmap.org/wiki/Automated_Edits_code_of_conduct), check the feed's licence is compatible with ODbL (many agency feeds aren't, or need written permission), and tell the local community first.
 
+## The sandbox: the whole tool against a copy of OSM, nothing at stake
+
+`tool/sandbox.py` is a stand-in for OpenStreetMap: the Cache Valley's roads, stops and routes as they were on
+2026-09-27 (before flagstop's first upload, from Overpass's history), served the way api.openstreetmap.org,
+the sign-in and Overpass serve them. Pointed at it, the tool doesn't know the difference: the review builds from
+it, the page signs in to it, uploads land in it (versions checked, `if-unused` honoured, new ids given back), the
+refresh after an upload reads them back from it. Every upload is logged under `cache/sandbox/`; `reset` is the
+snapshot again.
+
+```bash
+python3 tool/sandbox.py snapshot        # once: the area as of 2026-09-27 -> cache/sandbox/base-2026-09-27.json
+python3 tool/sandbox.py run             # the sandbox, the review built from it, the page at :8765 (its own files under cache/sandbox/work/)
+python3 tool/sandbox.py run --reset     # forget every upload first
+python3 tool/sandbox.py status          # what has gone up, by changeset
+```
+
+`run` is also the `flagstop-sandbox` entry in `.claude/launch.json`. By hand: `tool/sandbox.py serve` on one port,
+`tool/serve.py --sandbox http://127.0.0.1:8766` on another. A query shape the sandbox doesn't know is a 400 that
+names it (`Overpass.run` in `tool/sandbox.py`): a new query in the tool is a gap there, not a wrong answer.
+
 ## Tests
 
 ```bash
 python3 -m unittest discover -s tests     # the rules, each pinned to the case it was built for; the review against its snapshot; the relation files
 node tests/edits_test.js                  # the upload path, no browser or network: osmChange, split + relation repair, check() before upload
+                                          # (discover also runs tests/test_sandbox.py: the sandbox API, and the page's upload code against it)
 python3 tests/snapshot.py                 # after rebuilding the review: what changed, stop by stop
 python3 tests/snapshot.py --update        # when the changes are meant
 ```
@@ -120,6 +141,7 @@ tool/compare.py   relation ↔ pattern pairing and audit; proposed tags
 tool/review.py    runs it all → web/data/ (review.json, a GPX per itinerary, a .osm per proposed relation)
 tool/patch.py     the cached OSM data brought up to date with changesets, from OSM's API
 tool/serve.py     static server + /api/trace for re-routing through via points and around roads the bus does or doesn't use
+tool/sandbox.py   a stand-in OSM (API, sign-in, Overpass) from a dated snapshot: the tool end to end, every edit kept local
 tool/catalog.py   Mobility Database search and download
 tool/feeddiff.py  what changed between two versions of the feed
 tool/others.py    other agencies' stops in the area, from their own feeds

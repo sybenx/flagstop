@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["tool/serve.py", "--port", "8765"],
       "port": 8765
+    },
+    {
+      "name": "flagstop-sandbox",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["tool/sandbox.py", "run", "--port", "8765"],
+      "port": 8765
     }
   ]
 }
