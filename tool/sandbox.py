@@ -10,7 +10,8 @@ edit lands here and nowhere else.
     python3 tool/sandbox.py run [--port 8765] [--sandbox-port 8766] [--reset] [--refresh]
                                             everything at once: the sandbox, the review built from it (its own files,
                                             under cache/sandbox/work/), tool/serve.py --sandbox: open the page and work
-    python3 tool/sandbox.py reset                                                     forget every upload: the snapshot again
+    python3 tool/sandbox.py reset                                                     forget every upload: the snapshot again (and the
+                                                                                      review built from it, under cache/sandbox/work/)
     python3 tool/sandbox.py status                                                    what has gone up, by changeset
     python3 tool/sandbox.py replay ID [ID ...] [--url http://127.0.0.1:8766]          real changesets (downloaded once, read-only, to
                                                                                       cache/sandbox/replay/) into a running sandbox, in order
@@ -1034,15 +1035,23 @@ def print_report(lines):
     return 1 if bad else 0
 
 
+def forget():
+    """Every upload, and the review built on the sandbox's data (it had those uploads patched in): gone."""
+    import shutil
+    if os.path.exists(LOG):
+        os.remove(LOG)
+    shutil.rmtree(os.path.join(DIR, 'work'), ignore_errors=True)
+
+
 def run(port, sb_port, feed, reset=False, refresh=False):
     """The sandbox, the review built against it, the page served against it: one command, until Ctrl-C."""
     import subprocess
     base = latest_base()
     if not base:
         raise SystemExit('no snapshot in cache/sandbox/: run `python3 tool/sandbox.py snapshot` first')
-    if reset and os.path.exists(LOG):
-        os.remove(LOG); print('reset: every upload forgotten', file=sys.stderr)
     work = os.path.join(DIR, 'work')
+    if reset:
+        forget(); print('reset: every upload forgotten, the review will be built again', file=sys.stderr)
     os.makedirs(os.path.join(work, 'data'), exist_ok=True)
     os.environ['SANDBOX_QUIET'] = '1'   # the page's every read would drown serve.py's own log
     store = Store(base)
@@ -1098,10 +1107,9 @@ def main(argv=None):
         store = Store(base); store.load_log()
         return print_report(report(store, a.changesets or None))
     if a.cmd == 'reset':
-        if os.path.exists(LOG):
-            os.remove(LOG); print('every upload forgotten: the snapshot again (restart the sandbox)', file=sys.stderr)
-        else:
-            print('nothing uploaded: the snapshot as it was', file=sys.stderr)
+        had = os.path.exists(LOG)
+        forget()
+        print('every upload forgotten, and the review built from them: the snapshot again (restart the sandbox)' if had else 'nothing uploaded: the snapshot as it was', file=sys.stderr)
         return
     if a.cmd == 'status':
         log = json.load(open(LOG)) if os.path.exists(LOG) else []
