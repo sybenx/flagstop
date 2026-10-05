@@ -62,34 +62,40 @@ SNAPSHOT_QUERY = """[out:json][timeout:300][maxsize:536870912][date:"{date}"];
 (.b; .b >;);
 out meta;
 """
-# the route_masters: a relation of relations, which `<` on the routes should give and (attic) doesn't: asked for by name
-MASTERS_QUERY = """[out:json][timeout:300][date:"{date}"];
-relation["type"="route"]({bbox})->.routes;
-relation(br.routes)["type"="route_master"];
-out meta;
-"""
+REAL_OSM = 'https://api.openstreetmap.org'
 
 
-def fetch_masters(date, bbox, overpass):
-    s, w, n, e = bbox
-    q = MASTERS_QUERY.format(date=date, bbox=f'{s:.5f},{w:.5f},{n:.5f},{e:.5f}')
-    for attempt in range(5):
+def fetch_masters(date, route_ids, api=REAL_OSM):
+    """The route_master relations over these routes as they stood on `date`: a relation of relations has no
+    place for a bbox, and Overpass attic's upward recursion (`<`, `br`) gives nothing, so the API's own history
+    is asked (read-only): each route's parents now, then each parent's version in force on the date."""
+    def get(path):
+        with urllib.request.urlopen(urllib.request.Request(f'{api}/api/0.6/{path}', headers=UA), timeout=60) as r:
+            return json.load(r)
+    parents = set()
+    for rid in route_ids:
         try:
-            with urllib.request.urlopen(urllib.request.Request(overpass, data=urllib.parse.urlencode({'data': q}).encode(), headers=UA), timeout=400) as r:
-                return json.load(r).get('elements', [])
-        except Exception as ex:
-            print(f'  route_masters: {ex}; again in {30 * (attempt + 1)}s', file=sys.stderr)
-            if attempt == 4:
+            parents |= {e['id'] for e in get(f'relation/{rid}/relations.json')['elements'] if (e.get('tags') or {}).get('type') == 'route_master'}
+        except urllib.error.HTTPError as ex:   # a route since deleted still has its history, but no parents call
+            if ex.code not in (404, 410):
                 raise
-            time.sleep(30 * (attempt + 1))
+        time.sleep(0.2)
+    out = []
+    for mid in sorted(parents):
+        then = [v for v in get(f'relation/{mid}/history.json')['elements'] if v['timestamp'] <= date]
+        if then and then[-1].get('visible', True):
+            out.append(then[-1])
+        time.sleep(0.2)
+    return out
 
 
-def add_masters(base, overpass='https://overpass-api.de/api/interpreter'):
+def add_masters(base, api=REAL_OSM):
     """The route_master relations, into a snapshot that lacks them."""
     with open(base) as f:
         raw = json.load(f)
     meta = raw.get('sandbox', {})
-    masters = fetch_masters(meta['date'], meta['bbox'], overpass)
+    routes = [e['id'] for e in raw['elements'] if e['type'] == 'relation' and (e.get('tags') or {}).get('type') == 'route']
+    masters = fetch_masters(meta['date'], routes, api)
     have = {(e['type'], e['id']) for e in raw['elements']}
     new = [e for e in masters if (e['type'], e['id']) not in have]
     raw['elements'].extend(new)
@@ -131,7 +137,8 @@ def snapshot(date, feed_path, out=None, overpass='https://overpass-api.de/api/in
                 seen.add(key); elements.append(el); new += 1
         print(f'  {lo:.3f}-{hi:.3f}: {new} new elements ({len(elements)} so far, {time.time() - t0:.0f}s)', file=sys.stderr)
         lo = hi
-    for el in fetch_masters(date, (s, w, n, e), overpass):
+    routes = [el['id'] for el in elements if el['type'] == 'relation' and (el.get('tags') or {}).get('type') == 'route']
+    for el in fetch_masters(date, routes):
         if (el['type'], el['id']) not in seen:
             seen.add((el['type'], el['id'])); elements.append(el)
     raw = {'version': 0.6, 'generator': 'flagstop sandbox snapshot', 'osm3s': osm3s, 'elements': elements}
@@ -1075,7 +1082,7 @@ def main(argv=None):
         print(json.dumps(res))
         return 0 if all(r['ok'] for r in res) else 1
     if a.cmd == 'snapshot' and a.masters:
-        return add_masters(a.out or latest_base(), a.overpass)
+        return add_masters(a.out or latest_base())
     if a.cmd == 'snapshot':
         return snapshot(a.date, a.feed or newest('*.zip'), a.out, a.overpass)
     base = getattr(a, 'base', None) or latest_base()
