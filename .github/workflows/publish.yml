@@ -39,8 +39,12 @@ jobs:
           restore-keys: flagstop-
       - name: the feed
         run: python3 tool/catalog.py "${{ vars.FEED_QUERY || 'cache valley' }}" --get
+      # FEED_ALSO (a variable, optional): another agency sharing stops, as review.py --also takes it
+      # (a GTFS URL, or passio:<system id>:<agency name> for a campus shuttle on Passio GO)
       - name: the review (stops and routes; each route's roads load in the page)
-        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh
+        run: |
+          ALSO="${{ vars.FEED_ALSO }}"
+          python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh ${ALSO:+--also "$ALSO"}
       # the relation files that review just wrote (the snapshot is of the CVTD build: not checked against another feed's)
       - name: tests (the built relation files)
         run: python3 -m unittest discover -s tests -p 'test_relations.py'

@@ -133,6 +133,14 @@ python3 tests/snapshot.py                 # after rebuilding the review: what ch
 python3 tests/snapshot.py --update        # when the changes are meant
 ```
 
+A shuttle that shares your stops but publishes no GTFS (a campus shuttle on Passio GO): `tool/review.py FEED.zip
+--also passio:<system id>:<agency name>` reads its stops from the Passio GO app's own endpoint, so the shared
+stops are known to be shared (both networks and operators listed, their route numbers kept) rather than
+guessed from tags. The system id is in the Passio GO app's URL for that agency.
+
+```bash
+```
+
 ## Layout
 
 ```

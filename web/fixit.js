@@ -10,8 +10,54 @@
 'use strict';
 
 const FixIt = {
-  open(pid) { S.fixit = {pid, answers: {}, keepDuplicates: false}; document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove()); render(); draw(); },
-  close() { S.fixit = null; render(); draw(); },
+  open(pid) {
+    S.fixit = {pid, answers: {}, keepDuplicates: false, q: null};
+    document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
+    render(); draw();
+    this.next(1);   // straight to the first thing to decide, on the map
+  },
+  close() { S.fixit = null; S.lookStop = null; render(); draw(); },
+  /** The questions about stops, in route order, that can be looked at on the map. */
+  asked(p) { return this.plan(p).decide.filter(q => q.s); },
+  /** Go to a question: the stop on the map (both points, imagery), its row lit. */
+  focus(i) {
+    const p = patternById(S.fixit.pid), qs = this.asked(p);
+    if (!qs.length) return;
+    S.fixit.q = ((i % qs.length) + qs.length) % qs.length;
+    lookAt(qs[S.fixit.q].s.id);   // renders and draws
+    const row = document.querySelector('.fixcard .decide.on'); if (row) row.scrollIntoView({block: 'nearest'});
+  },
+  /** The next unanswered question after the current one (dir -1: the previous); failing that, the next one at all. */
+  next(dir = 1) {
+    const p = patternById(S.fixit.pid), qs = this.asked(p);
+    if (!qs.length) return;
+    const at = S.fixit.q == null ? -1 : S.fixit.q;
+    for (let k = 1; k <= qs.length; k++) { const i = ((at + k * dir) % qs.length + qs.length) % qs.length; if (!qs[i].answer) return this.focus(i); }
+    this.focus(at + dir);
+  },
+  /** Answer the question in focus: 'agency' (move / the agency's / the first candidate) or 'keep'. */
+  answerCurrent(v) {
+    const p = patternById(S.fixit.pid), qs = this.asked(p), q = qs[S.fixit.q];
+    if (!q) return;
+    if (q.kind === 'which') {
+      // a key picks only what needs no judgement: the one candidate at the agency's point (within what counts as the
+      // same spot here); with several, or none, the choice is a click on the list
+      const near = q.cands.filter(c => c.dist <= FAR());
+      const pick = v === 'keep' ? 'none' : near.length === 1 ? near[0].id : null;
+      if (pick) this.set(q.s.id + ':which', pick); else toast(near.length ? 'More than one OSM stop is at the agency\'s point: pick on the list' : 'None is at the agency\'s point: pick on the list, or "none of these"', 4000);
+      return;
+    }
+    if (q.kind === 'where' && !looked(q.s.id)) return;
+    this.set(q.s.id + ':' + q.k, v);
+  },
+  /** An answer, kept; then on to the next question. */
+  set(key, v) {
+    const was = S.fixit.answers[key] === v;
+    S.fixit.answers[key] = was ? null : v;
+    if (!key.endsWith(':which')) Edits.answer(key.split(':')[0], key.split(':')[1], was ? null : v);
+    if (!was) { this.next(1); return; }
+    render(); draw();
+  },
 
   /** The plan: what will be done, what has to be decided first. */
   plan(p) {
@@ -59,8 +105,12 @@ const FixIt = {
       el('span', {class: 'k'}, 'this route'), el('span', {}, `${x.count} change${x.count === 1 ? '' : 's'}${x.open ? ` · ${x.open} to decide first` : ' · nothing to decide'}`),
       el('span', {class: 'k'}, 'upload'), el('span', {class: after > UPLOAD_CAP ? 'bad' : ''}, `${after} of ${UPLOAD_CAP} changes with this route`)));
     if (x.decide.length) {
-      const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, `Decide first: ${x.decide.length}`));
-      for (const q of x.decide) box.append(this.question(q));
+      const qs = x.decide.filter(q => q.s), at = S.fixit.q;
+      const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'},
+        el('div', {class: 'k', style: 'display:flex;align-items:center;gap:6px'}, `Decide first: ${x.decide.length}`,
+          qs.length > 1 ? el('span', {style: 'margin-left:auto'}, el('button', {class: 'b tiny', title: 'previous (↑)', onclick: () => this.next(-1)}, '↑'), ' ', el('button', {class: 'b tiny', title: 'next (↓)', onclick: () => this.next(1)}, '↓')) : null),
+        el('div', {class: 'muted small'}, 'Each one is shown on the map, with the imagery. Keys: ↓ ↑ next / previous · A agency\'s (move; the one stop at its point) · O keep OSM\'s (leave it; none of these) · I imagery'));
+      x.decide.forEach(q => box.append(this.question(q, q.s && qs.indexOf(q) === at)));
       d.append(box);
     }
     // what will be done
@@ -94,9 +144,9 @@ const FixIt = {
   },
 
   /** One thing to decide, with its choice. */
-  question(q) {
-    const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '')});
-    const set = (key, v) => { const was = S.fixit.answers[key] === v; S.fixit.answers[key] = was ? null : v; if (!key.endsWith(':which')) Edits.answer(key.split(':')[0], key.split(':')[1], was ? null : v); render(); draw(); };
+  question(q, on = false) {
+    const row = el('div', {class: 'decide' + (q.answer ? ' answered' : '') + (on ? ' on' : ''), onclick: e => { if (q.s && !e.target.closest('button, a')) this.focus(this.asked(patternById(S.fixit.pid)).indexOf(q)); }});
+    const set = (key, v) => this.set(key, v);
     if (q.kind === 'broken') {
       row.append(el('div', {}, el('b', {}, 'The route can\'t be traced whole'), el('div', {class: 'why'}, q.why + '. Re-route it (via a point, a road), or fix the map, then come back.')));
       return row;
@@ -164,3 +214,14 @@ const FixIt = {
     render(); draw();
   },
 };
+
+document.addEventListener('keydown', e => {
+  if (!S.fixit || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); FixIt.next(1); }
+  else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); FixIt.next(-1); }
+  else if (e.key === 'a') FixIt.answerCurrent('agency');
+  else if (e.key === 'o') FixIt.answerCurrent('keep');
+  else if (e.key === 'i' && typeof imagery === 'function') imagery(!S.imagery);
+});

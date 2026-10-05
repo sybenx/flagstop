@@ -270,6 +270,17 @@ class FeedChanges(unittest.TestCase):
 
 
 class OtherAgencies(unittest.TestCase):
+    def test_a_passio_go_shuttle_counts_as_another_agency(self):
+        """A campus shuttle with no GTFS, on Passio GO (as the Aggie Shuttle is): its stops, read from the app's own
+        answer, say which of this agency's stops are shared."""
+        import others
+        raw = {'stops': {'a': {'stopId': 154475, 'name': ' Public Safety ', 'latitude': '41.754534', 'longitude': '-111.812388'},
+                         'b': {'stopId': 154475, 'name': 'Public Safety', 'latitude': '41.754534', 'longitude': '-111.812388'},   # listed twice: once
+                         'c': {'stopId': 9, 'name': 'Far', 'latitude': '40.0', 'longitude': '-111.8'}}}
+        got = others.passio_stops(raw, (41.6, -111.9, 42.1, -111.7), 'Utah State University')
+        self.assertEqual(got, [{'agency': 'Utah State University', 'id': '154475', 'code': '', 'name': 'Public Safety', 'lat': 41.754534, 'lon': -111.812388}])
+
+
     def test_shared_stop_by_their_feed_lists_both(self):
         conv = {'network': 'Connect Public Transit', 'operator': 'Connect Public Transit'}
         o = osm('x', operator='Utah State University')

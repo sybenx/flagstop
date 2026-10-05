@@ -226,11 +226,21 @@ function initMap() {
   const b = D.feed.bbox;
   map = new maplibregl.Map({
     container: 'map', center: [(b[1] + b[3]) / 2, (b[0] + b[2]) / 2], zoom: 11, attributionControl: {compact: false},
-    style: {version: 8, glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources: {osm: {type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}},
-      layers: [{id: 'osm', type: 'raster', source: 'osm', paint: {'raster-saturation': -0.6, 'raster-opacity': 0.85}}]},
+    style: {version: 8, glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources: {
+      osm: {type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'},
+      // aerial imagery, for where a stop's sign or shelter is: Esri's, as iD offers it for OSM editing
+      sat: {type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19, attribution: 'Imagery © Esri, Maxar, Earthstar Geographics'}},
+      layers: [{id: 'sat', type: 'raster', source: 'sat', layout: {visibility: 'none'}}, {id: 'osm', type: 'raster', source: 'osm', paint: {'raster-saturation': -0.6, 'raster-opacity': 0.85}}]},
   });
   map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  // imagery on or off: a button by the zoom buttons, and on by itself when a stop's place is the question
+  const satCtl = {onAdd() { this.b = el('button', {class: 'sat', title: 'Aerial imagery (I)', onclick: () => imagery(!S.imagery)}, 'Imagery'); const d = el('div', {class: 'maplibregl-ctrl maplibregl-ctrl-group'}, this.b); return d; }, onRemove() {}};
+  map.addControl(satCtl, 'top-right');
+  window.imagery = on => {
+    S.imagery = on; satCtl.b.classList.toggle('on', on);
+    const apply = () => { map.setLayoutProperty('sat', 'visibility', S.imagery ? 'visible' : 'none'); map.setPaintProperty('osm', 'raster-opacity', S.imagery ? 0.3 : 0.85); };
+    if (map.isStyleLoaded()) apply(); else map.once('load', apply);   // asked before the map is up (a link straight to a stop): once it is
+  };
   map.on('load', () => {
     setTimeout(() => hashRead ? draw() : applyHash());   // after the layers below exist: draw what's open
     for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'constraints', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
@@ -620,7 +630,9 @@ function lookAt(sid) {
   S.looked.add(sid); S.lookStop = sid;
   render(); draw();
   const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat]), ...(mergedWith(s) ? [[mergedWith(s).lon, mergedWith(s).lat]] : [])];
+  if (!S.imagery && typeof imagery === 'function') imagery(true);   // the sign, the shelter, the kerb: what decides where a stop is
   fit(pts, 110);
+  map.once('moveend', () => { if (map.getZoom() < 18.5) map.easeTo({zoom: 18.5, duration: 300}); });
 }
 const looked = sid => S.looked.has(sid);
 /** The OSM stop that goes when this one moves to the agency's spot (two stops the agency made one), or null. */

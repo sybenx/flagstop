@@ -2,9 +2,11 @@
 shuttle or a coach line is known to be shared, not guessed from its tags.
 
 Found in the Mobility Database catalog (active feeds that need no key, whose area covers this network), plus
-any feed passed by hand (--also). Only their stops inside the area are read; the zips are kept in cache/others/.
+any feed passed by hand (--also: a GTFS zip, a URL, or `passio:<system id>[:<agency name>]` for a shuttle that
+publishes no GTFS but runs on Passio GO, as many campus shuttles do). Only their stops inside the area are
+read; the zips are kept in cache/others/.
 """
-import csv, io, os, sys, time, zipfile
+import csv, io, json, os, sys, time, urllib.parse, urllib.request, zipfile
 
 import catalog
 
@@ -57,16 +59,57 @@ def stops_in(zpath, bbox, agency):
     return out
 
 
+PASSIO = 'https://passiogo.com/mapGetData.php'   # the endpoint the Passio GO app itself uses: undocumented, unofficial
+
+
+def passio_fetch(system):
+    """A Passio GO system's stops, as the app gets them (one POST)."""
+    req = urllib.request.Request(f'{PASSIO}?getStops=2&deviceId=1', data=('json=' + json.dumps({'s0': str(system), 'sA': 1})).encode(),
+                                 headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'flagstop (GTFS/OSM route review)'})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)
+
+
+def passio_stops(raw, bbox, agency):
+    """[{agency, id, code, name, lat, lon}] from a Passio GO getStops answer, inside bbox."""
+    s, w, n, e = bbox
+    out, seen = [], set()
+    for st in (raw.get('stops') or {}).values():
+        la, lo = _f(st.get('latitude')), _f(st.get('longitude'))
+        sid = str(st.get('stopId') or '')
+        if la is None or lo is None or sid in seen or not (s <= la <= n and w <= lo <= e):
+            continue
+        seen.add(sid)
+        out.append({'agency': agency, 'id': sid, 'code': '', 'name': (st.get('name') or '').strip(), 'lat': la, 'lon': lo})
+    return out
+
+
 def gather(bbox, cache_dir, own='', also=()):
-    """Every other agency's stops in bbox: the catalog's feeds, then any given by hand (path or URL)."""
+    """Every other agency's stops in bbox: the catalog's feeds, then any given by hand (path, URL, or passio:...)."""
     d = os.path.join(cache_dir, 'others')
     os.makedirs(d, exist_ok=True)
     feeds = candidates(bbox, own)
-    feeds += [{'id': os.path.basename(x).split('.')[0], 'agency': os.path.basename(x).split('.')[0], 'url': x} for x in also]
+    for x in also:
+        if x.startswith('passio:'):
+            _, system, *name = x.split(':', 2)
+            feeds.append({'id': f'passio-{system}', 'agency': name[0] if name else f'Passio GO system {system}', 'passio': system})
+        else:
+            feeds.append({'id': os.path.basename(x).split('.')[0], 'agency': os.path.basename(x).split('.')[0], 'url': x})
     out = []
     for f in feeds:
-        path = f['url'] if os.path.exists(f['url']) else os.path.join(d, f"{f['id']}.zip")
         try:
+            if f.get('passio'):
+                path = os.path.join(d, f"{f['id']}.json")
+                if not os.path.exists(path) or time.time() - os.path.getmtime(path) > KEEP:
+                    print(f"other agencies: fetching {f['agency']} from Passio GO ({f['passio']})", file=sys.stderr)
+                    raw = passio_fetch(f['passio'])
+                    json.dump(raw, open(path, 'w'))
+                got = passio_stops(json.load(open(path)), bbox, f['agency'])
+                if got:
+                    print(f"other agencies: {f['agency']}: {len(got)} stops here", file=sys.stderr)
+                out += got
+                continue
+            path = f['url'] if os.path.exists(f['url']) else os.path.join(d, f"{f['id']}.zip")
             if path != f['url'] and (not os.path.exists(path) or time.time() - os.path.getmtime(path) > KEEP):
                 print(f"other agencies: fetching {f['agency']} ({f['id']})", file=sys.stderr)
                 open(path, 'wb').write(catalog.get(f['url'], binary=True))

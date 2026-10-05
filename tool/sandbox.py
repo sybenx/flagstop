@@ -1096,7 +1096,7 @@ def forget():
     shutil.rmtree(os.path.join(DIR, 'work'), ignore_errors=True)
 
 
-def run(port, sb_port, feed, reset=False, refresh=False):
+def run(port, sb_port, feed, reset=False, refresh=False, also=()):
     """The sandbox, the review built against it, the page served against it: one command, until Ctrl-C."""
     import subprocess
     base = latest_base()
@@ -1117,7 +1117,7 @@ def run(port, sb_port, feed, reset=False, refresh=False):
     env = {**os.environ, 'OSM_API_URL': sb, 'OVERPASS_URL': sb + '/api/interpreter', 'FLAGSTOP_CACHE': work, 'FLAGSTOP_DATA': os.path.join(work, 'data'), 'SANDBOX_QUIET': '1'}
     if refresh or not os.path.exists(os.path.join(work, 'data', 'review.json')):
         print('the review, from the sandbox ...', file=sys.stderr)
-        subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, *(['--refresh'] if refresh else [])], env=env, check=True)
+        subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), feed, *(['--refresh'] if refresh else []), *[a for x in also for a in ('--also', x)]], env=env, check=True)
     try:
         subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'serve.py'), '--port', str(port), '--feed', feed, '--sandbox', sb], env=env)
     except KeyboardInterrupt:
@@ -1133,6 +1133,7 @@ def main(argv=None):
     s = sub.add_parser('serve'); s.add_argument('--port', type=int, default=8766); s.add_argument('--base')
     s = sub.add_parser('run'); s.add_argument('--port', type=int, default=8765); s.add_argument('--sandbox-port', type=int, default=8766); s.add_argument('--feed')
     s.add_argument('--reset', action='store_true', help='forget every upload first'); s.add_argument('--refresh', action='store_true', help='build the review again from the sandbox')
+    s.add_argument('--also', action='append', default=[], help="another agency sharing stops, as review.py --also takes it (passio:<system>:<name> for a Passio GO shuttle)")
     sub.add_parser('reset')
     sub.add_parser('status')
     s = sub.add_parser('report'); s.add_argument('changesets', nargs='*', type=int); s.add_argument('--base')
@@ -1153,7 +1154,7 @@ def main(argv=None):
             raise SystemExit('no snapshot in cache/sandbox/: run `python3 tool/sandbox.py snapshot` first')
         return serve(a.port, base)
     if a.cmd == 'run':
-        return run(a.port, a.sandbox_port, a.feed or newest('*.zip'), a.reset, a.refresh)
+        return run(a.port, a.sandbox_port, a.feed or newest('*.zip'), a.reset, a.refresh, a.also)
     if a.cmd == 'report':
         if not base:
             raise SystemExit('no snapshot in cache/sandbox/')
