@@ -103,7 +103,8 @@ One reviewed route at a time is mapping. All of it at once is an import: read [I
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests     # the rules, each pinned to the case it was built for; the review against its snapshot
+python3 -m unittest discover -s tests     # the rules, each pinned to the case it was built for; the review against its snapshot; the relation files
+node tests/edits_test.js                  # the upload path, no browser or network: osmChange, split + relation repair, check() before upload
 python3 tests/snapshot.py                 # after rebuilding the review: what changed, stop by stop
 python3 tests/snapshot.py --update        # when the changes are meant
 ```

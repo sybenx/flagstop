@@ -839,3 +839,6 @@ const Roads = {
     this.pick = null; map.getCanvas().style.cursor = ''; this.status();
   },
 };
+
+// tests/edits_test.js: under Node the page's other globals (Edits, m, OSM_API) are set by the test before it calls in
+if (typeof module !== 'undefined') module.exports = Roads;

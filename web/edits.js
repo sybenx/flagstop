@@ -163,7 +163,8 @@ const Edits = {
   },
   delete(type, id, base, note) {
     const key = type[0] + id;
-    this.ops[key] = {kind: 'delete', type, id, base: JSON.parse(JSON.stringify(base)), tags: base.tags, note};
+    // a node keeps its position: the osmChange needs one even before check() reads the current one from OSM
+    this.ops[key] = {kind: 'delete', type, id, base: JSON.parse(JSON.stringify(base)), tags: base.tags, note, ...(type === 'node' && base.lat != null ? {lat: base.lat, lon: base.lon} : {})};
     this.save();
     return key;
   },
@@ -277,8 +278,20 @@ const Edits = {
   },
 
   // --- upload ------------------------------------------------------------
+  /** The network, as one seam: the page's fetch; tests put their own here. */
+  fetch(...a) { return fetch(...a); },
+  /** An XML reply -> a document. The page's DOMParser; without one (tests, under Node) just enough of one for
+      the elements of an upload's diffResult: getElementsByTagName, getAttribute, hasAttribute. */
+  parseXml(text) {
+    if (typeof DOMParser !== 'undefined') return new DOMParser().parseFromString(text, 'text/xml');
+    const els = [...text.matchAll(/<(node|way|relation)\b([^>]*?)\/?>/g)].map(([, tag, a]) => {
+      const attrs = Object.fromEntries([...a.matchAll(/([\w:]+)="([^"]*)"/g)].map(x => [x[1], x[2]]));
+      return {tag, getAttribute: k => k in attrs ? attrs[k] : null, hasAttribute: k => k in attrs};
+    });
+    return {getElementsByTagName: tag => els.filter(e => e.tag === tag)};
+  },
   async api(path, opts = {}) {
-    const r = await fetch(OSM_API + path, {...opts, headers: {Authorization: 'Bearer ' + this.auth.token(), ...(opts.headers || {})}});
+    const r = await this.fetch(OSM_API + path, {...opts, headers: {Authorization: 'Bearer ' + this.auth.token(), ...(opts.headers || {})}});
     // 401: OSM no longer takes this sign-in (the app was revoked or re-registered, or the token expired).
     // Forget it, so the page asks for a fresh one instead of sending the dead one again; the changes stay.
     if (r.status === 401) { this.auth.signOut(); throw Object.assign(new Error("OSM didn't accept the sign-in: it was revoked or has expired"), {signedOut: true}); }
@@ -290,7 +303,7 @@ const Edits = {
     const versions = {}, conflicts = [];
     for (const [key, op] of Object.entries(this.ops)) {
       if (op.kind === 'create') continue;
-      const r = await fetch(`${OSM_API}/api/0.6/${op.type}/${op.id}.json`);
+      const r = await this.fetch(`${OSM_API}/api/0.6/${op.type}/${op.id}.json`);
       if (r.status === 410 || r.status === 404) { conflicts.push({key, why: 'deleted on OSM'}); continue; }
       const el = (await r.json()).elements[0];
       versions[key] = el.version;
@@ -324,14 +337,14 @@ const Edits = {
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});
     onStatus('opening changeset…');
-    const tags = {created_by: 'flagstop', comment, source: source || 'GTFS', host: location.origin};
+    const tags = {created_by: 'flagstop', comment, source: source || 'GTFS', host: typeof location !== 'undefined' ? location.origin : ''};
     const csXml = `<osm><changeset>${Object.entries(tags).map(([k, v]) => `<tag k="${this.xmlEsc(k)}" v="${this.xmlEsc(v)}"/>`).join('')}</changeset></osm>`;
     const id = (await (await this.api('/api/0.6/changeset/create', {method: 'PUT', headers: {'Content-Type': 'text/xml'}, body: csXml})).text()).trim();
     onStatus(`uploading to changeset ${id}…`);
     let diff;
     try {
       const res = await this.api(`/api/0.6/changeset/${id}/upload`, {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: this.osc(id, versions)});
-      diff = new DOMParser().parseFromString(await res.text(), 'text/xml');
+      diff = this.parseXml(await res.text());
     } finally {
       onStatus('closing changeset…');
       await this.api(`/api/0.6/changeset/${id}/close`, {method: 'PUT'});
@@ -365,3 +378,5 @@ const Edits = {
     for (const key of Object.keys(this.ops)) if (!skipped.includes(key)) delete this.ops[key];
   },
 };
+
+if (typeof module !== 'undefined') module.exports = Edits;   // tests/edits_test.js
