@@ -248,9 +248,12 @@ def main():
     best, chosen, scores = compare.pair(feed, None, rels, rel_ways, coords, match)
     # the roads, only when asked to route everything now (tests, a hosted build); else each route when opened
     g = routing.Graph(roads_raw) if roads_raw else None
-    masters_by_ref = {}
+    masters_by_ref, masters_of_rel = {}, {}
     for m in masters.values():
         masters_by_ref.setdefault((m['tags'].get('ref') or '').strip(), []).append(m['id'])
+        for mm in m['members']:
+            if mm['type'] == 'relation':
+                masters_of_rel.setdefault(mm['ref'], []).append(m['id'])
 
     patterns_out = []
     for p in feed.patterns:
@@ -276,8 +279,11 @@ def main():
         pids = [p.id for p in feed.patterns if p.route_id == r.id]
         if not pids:
             continue
+        # the route's masters: those holding a relation paired with one of its itineraries (route 16's "16 AM" and
+        # "16 PM" share one master, ref 16), else one with its ref; a new master is proposed only when there is neither
+        held = sorted({mid for pid in pids for rid in best.get(pid, []) if pid in chosen.get(rid, []) for mid in masters_of_rel.get(rid, [])})
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
-                           'patterns': pids, 'masters': masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
+                           'patterns': pids, 'masters': held or masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
     # open OSM notes by a stop (its agency point or its OSM node): someone saw something there
     notes = [{'id': f['properties']['id'], 'lon': f['geometry']['coordinates'][0], 'lat': f['geometry']['coordinates'][1],

@@ -211,11 +211,7 @@ const Merge = {
     const say = m => toast(m, 8000);
     Edits.hold(`one relation for route ${x.r.short}`);   // the splits and the relation: one undo
     try {
-      for (const b of x.splits) {
-        say(`Splitting ${this.roadName(p, b)} where the bus turns…`);
-        await Roads.load([b.lon - 0.003, b.lat - 0.002, b.lon + 0.003, b.lat + 0.002]);
-        if (Roads.way(b.split) && Roads.way(b.split).nodes.includes(b.node)) await Roads.splitAt(b.split, b.node, new Set(x.rels.map(a => a.id)));   // its own relations are rewritten after: not repaired here
-      }
+      await splitWhereTheBusTurns(p, x.splits, new Set(x.rels.map(a => a.id)), say);   // its own relations are rewritten after: not repaired here
       say('Routing it on the result…');
       const tr = await traceWith(p.id, {});
       await Roads.fetchWays(tr.ways.filter(w => w > 0));

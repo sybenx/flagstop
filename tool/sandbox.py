@@ -824,6 +824,28 @@ def report(store, cs_ids=None):
             near = lambda p, q: routes.metres((el['node'][p]['lon'], el['node'][p]['lat']), (el['node'][q]['lon'], el['node'][q]['lat'])) <= 150 if p in el['node'] and q in el['node'] else False
             closes = first_entry == prev_exit or near(first_entry, prev_exit) or (len(way_ids) > 1 and way_ids[0] == way_ids[-1])
             line('roundtrip=yes closes', closes, f'{name}: sets off at n{first_entry} (w{way_ids[0]}), ends at n{prev_exit} (w{way_ids[-1]})', [('relation', rid)])
+    # route masters: a route in one master, and no second master for the same routes
+    masters_of = {}
+    for m in el['relation'].values():
+        if m['visible'] and m['tags'].get('type') == 'route_master':
+            for x in m['members']:
+                if x['type'] == 'relation':
+                    masters_of.setdefault(x['ref'], []).append(m['id'])
+    in_masters = set(routes_)
+    for (t, i), action in touched.items():   # a touched master's routes too
+        if t == 'relation' and vis(t, i) and el[t][i]['tags'].get('type') == 'route_master':
+            in_masters |= {x['ref'] for x in el[t][i]['members'] if x['type'] == 'relation' and vis('relation', x['ref'])}
+    for rid in sorted(in_masters):
+        ms = masters_of.get(rid, [])
+        name = el['relation'][rid]['tags'].get('name') or f'r{rid}'
+        line('a route is in one master', len(ms) <= 1, f'{name}: in ' + (', '.join(f'r{m}' for m in ms) or 'no master'), [('relation', rid)] + [('relation', m) for m in ms])
+    for (t, i), action in touched.items():
+        if t == 'relation' and vis(t, i) and el[t][i]['tags'].get('type') == 'route_master':
+            m = el[t][i]
+            mine = {x['ref'] for x in m['members'] if x['type'] == 'relation'}
+            twins = [o['id'] for o in el['relation'].values() if o['visible'] and o['id'] != i and o['tags'].get('type') == 'route_master'
+                     and (o['tags'].get('ref') == m['tags'].get('ref') or mine & {x['ref'] for x in o['members'] if x['type'] == 'relation'})]
+            line('no second master for the same routes', not twins, f'r{i} (ref {m["tags"].get("ref")}): ' + (', '.join(f'r{x}' for x in twins) or 'the only one'), [('relation', i)] + [('relation', x) for x in twins])
     # what was touched, as objects
     for (t, i), action in sorted(touched.items()):
         if not vis(t, i):

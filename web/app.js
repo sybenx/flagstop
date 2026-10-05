@@ -875,15 +875,39 @@ function timetableLine(a, p, op) {
 }
 
 /** Build the relation op(s) for a pattern from the routed ways and matched platforms. */
-function proposeRelation(p) {
+/** Split the roads where the bus turns partway along one (breaks of kind 'split' from the router's chain check),
+ *  each with every relation through it repaired (Roads), except `skip`: relations the caller rewrites anyway.
+ *  -> how many were split */
+async function splitWhereTheBusTurns(p, breaks, skip = new Set(), say = () => {}) {
+  let n = 0;
+  for (const b of breaks.filter(x => x.kind === 'split' && x.split)) {
+    const name = ((p.way_tags || {})[b.split] || {}).name || `w${b.split}`;
+    say(`Splitting ${name} where the bus turns…`);
+    await Roads.load([b.lon - 0.003, b.lat - 0.002, b.lon + 0.003, b.lat + 0.002]);
+    const w = Roads.way(b.split);
+    if (w && w.nodes.includes(b.node) && w.nodes[0] !== b.node && w.nodes[w.nodes.length - 1] !== b.node) { await Roads.splitAt(b.split, b.node, skip); n++; }
+  }
+  return n;
+}
+/** The routed path's roads, split where the bus turns partway along one, and traced again on the result (with
+ *  every road edit in Changes). -> {ways, breaks: how many places still don't join up} */
+async function routedWaysSplit(p, skip, say) {
+  const rt = routedOf(p), breaks = Router.chainBreaks(rt.ways, p.graph.ways).filter(b => p.graph.coord.has(b.node))
+    .map(b => ({...b, lon: p.graph.coord.get(b.node)[0], lat: p.graph.coord.get(b.node)[1]}));
+  if (breaks.some(b => b.kind === 'split')) await splitWhereTheBusTurns(p, breaks, skip, say);
+  if (!hasRoadEdits() && !breaks.length) return {ways: rt.ways, breaks: 0};
+  const tr = await traceWith(p.id, {});
+  await Roads.fetchWays(tr.ways.filter(w => w > 0));
+  return {ways: tr.ways, breaks: Roads.chainBreaks(tr.ways.map(w => Roads.way(w)))};
+}
+async function proposeRelation(p) {
   if (!p.routed) return toast("This route's roads are still loading: try again in a moment", 5000);
   const rt = routedOf(p);
   if (!p.chain_ok && !S.routed) { if (!confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return; }
-  // The routed path and the relations here were read before any road edit in Changes: building from them
-  // would put back ways that were split or reconnected, and undo the repair made to the relation.
+  // Road edits already in Changes reshaped roads this itinerary uses: the relations on them were repaired then, so
+  // the mapper's members as read before can't be kept, and the path is traced again on the edited roads below.
   const reshaped = new Set(Object.values(Edits.ops).filter(o => o.type === 'way' && String(o.note || '').startsWith('road: ')).map(o => o.id));
   const hit = [...rt.ways, ...p.relations.flatMap(a => a.members.filter(x => x.type === 'way').map(x => x.ref))].filter(w => reshaped.has(w));
-  if (hit.length && !confirm(`Road edits in Changes reshape ${[...new Set(hit)].map(w => 'w' + w).join(', ')}, which this itinerary uses. The relations on them were already repaired; this proposal is from before those edits and would undo that.\n\nUpload the road edits and re-run tool/review.py --refresh first. Propose anyway?`)) return;
   const members = [];
   const missing = [];
   for (const sid of p.stops) {
@@ -899,26 +923,38 @@ function proposeRelation(p) {
   const reuse = p.relations.filter(a => !claimed.has(a.id) && !(Edits.get('r' + a.id) || {}).kind?.startsWith('del')).sort((a, b) => a.id - b.id)[0];
   // The mapper's ways stay when they already run end to end along the whole line: they may follow it where the
   // router can't (a one-way it doesn't trust, a turn it doesn't know). Via points mean the reviewer wants the route.
-  const keepWays = reuse && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
+  const keepWays = reuse && !hit.length && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
     reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0);
-  if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
-  else for (const w of rt.ways) members.push({type: 'way', ref: w, role: ''});
-  if (reuse) {
-    // keep name if the mapper's is fine and only add what's missing? No: the proposed tags are the GTFS scheme; keep theirs where ours is generic.
-    // The GTFS scheme's structural tags go in; the mapper's free text stays unless it names a service day,
-    // which is the very thing being merged away.
-    const merged = {...reuse.tags, ...tags};
-    for (const k of ['name', 'from', 'to', 'description', 'colour']) if (reuse.tags[k] && !/\b(weekday|saturday|sunday|weekend|mon|tue|wed|thu|fri)\b/i.test(reuse.tags[k])) merged[k] = reuse.tags[k];
-    if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
-    Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
-    editMasters(routeOf(p).masters, null, {type: 'relation', ref: reuse.id});
-    toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}`);
-  } else {
-    const key = Edits.createRelation(tags, members, p.id);
-    editMasters(routeOf(p).masters, null, {key});
-    toast(`New relation in changes: ${members.length} members${routeOf(p).masters.length ? ', added to its route_master' : ''}`);
-  }
-  if (missing.length) toast(`${missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
+  Edits.hold(`relation for ${routeOf(p).short} ${p.headsign || ''}`.trim());   // the splits and the relation: one undo
+  try {
+    if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
+    else {
+      // the routed path's roads, split where the bus turns partway along one: a relation whose roads don't join up
+      // end to end is broken for every consumer, so that is never put in Changes
+      const {ways, breaks} = await routedWaysSplit(p, new Set(reuse ? [reuse.id] : []), m => toast(m, 8000));
+      if (breaks) { toast(`Stopped: the roads still don't join up in ${breaks} place${breaks > 1 ? 's' : ''} after splitting. The splits are in Changes; the relation isn't. Re-route (via a point, a road) and try again.`, 10000); return; }
+      for (const w of ways) members.push({type: 'way', ref: w, role: ''});
+    }
+    if (reuse) {
+      // The GTFS scheme's structural tags go in; the mapper's free text stays unless it names a service day,
+      // which is the very thing being merged away. The mapper's ref stays when the agency's is it plus a qualifier
+      // ("16" on the bus; "16 AM" and "16 PM" in the feed): the qualifier is the relation's name's business.
+      const merged = {...reuse.tags, ...tags};
+      for (const k of ['name', 'from', 'to', 'description', 'colour']) if (reuse.tags[k] && !/\b(weekday|saturday|sunday|weekend|mon|tue|wed|thu|fri)\b/i.test(reuse.tags[k])) merged[k] = reuse.tags[k];
+      if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
+      if (reuse.tags.ref && tags.ref && tags.ref !== reuse.tags.ref && tags.ref.startsWith(reuse.tags.ref + ' ')) merged.ref = reuse.tags.ref;
+      Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
+      editMasters(routeOf(p).masters, null, {type: 'relation', ref: reuse.id});
+      toast(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${merged.ref !== tags.ref ? ` (ref ${merged.ref} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
+    } else {
+      const key = Edits.createRelation(tags, members, p.id);
+      editMasters(routeOf(p).masters, null, {key});
+      toast(`New relation in changes: ${members.length} members${routeOf(p).masters.length ? ', added to its route_master' : ''}`);
+    }
+    if (missing.length) toast(`${missing.length} stops have no OSM node yet — add them (Stops) and propose again`, 6000);
+  } catch (e) { toast(e.message, 8000); console.error(e); }
+  finally { Edits.release(); }
+  await liveRoute();
   render(); draw();
 }
 function proposeMaster(r) {

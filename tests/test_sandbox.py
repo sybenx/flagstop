@@ -336,6 +336,12 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(set(f), {'restriction from/to still touch via', 'roads chained end to end'})
         self.assertEqual(f['restriction from/to still touch via']['objects'], ['r302', 'w100'])
 
+    def test_a_second_master_for_the_same_route(self):
+        st = self.uploaded('<create><relation id="-1" changeset="CS"><member type="relation" ref="300" role=""/><tag k="type" v="route_master"/><tag k="route_master" v="bus"/><tag k="ref" v="1 AM"/></relation></create>')
+        f = self.failing(st)
+        self.assertEqual(set(f), {'a route is in one master', 'no second master for the same routes'})
+        self.assertIn('r301', f['no second master for the same routes']['what'])
+
     def test_the_changeset_itself(self):
         st = self.uploaded('<modify><node id="1" version="1" changeset="CS" lat="41.74" lon="-111.83"/></modify>', tags={'comment': 'x' * 300})
         f = self.failing(st)
