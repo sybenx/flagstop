@@ -119,6 +119,21 @@ const Edits = {
     for (const [k, op] of Object.entries(this.uploaded)) if (new Date(op.at).getTime() <= t || new Date(op.at).getTime() < week) delete this.uploaded[k];
     try { localStorage.setItem(this.key + '.uploaded', JSON.stringify(this.uploaded)); } catch (e) {}
   },
+  /** The overlay against the server: an upload it holds as mine that OSM has no changeset of mine for never went up
+   *  here (a sandbox reset; site data carried to another server) and would lay ghosts over the data. One request. */
+  async verifyUploaded() {
+    const me = this.auth.user();
+    if (!me || !Object.keys(this.uploaded).length) return 0;
+    try {
+      const r = await this.fetch(`${OSM_API}/api/0.6/changesets.json?user=${me.id}&limit=100`);
+      if (!r.ok) return 0;
+      const mine = new Set(((await r.json()).changesets || []).map(c => String(c.id)));
+      let dropped = 0;
+      for (const [k, op] of Object.entries(this.uploaded)) if (!mine.has(String(op.uploaded))) { delete this.uploaded[k]; dropped++; }
+      if (dropped) { try { localStorage.setItem(this.key + '.uploaded', JSON.stringify(this.uploaded)); } catch (e) {} }
+      return dropped;
+    } catch (e) { return 0; }   // offline: the overlay stays, and settles with time
+  },
   remove(key) { delete this.ops[key]; this.save(); },
   clear() { this.ops = {}; this.roads = []; this.save(); },
   /** A road edit is many ops that only make sense together (a new node, the way using it, the relations

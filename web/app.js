@@ -1419,6 +1419,8 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   Edits.load(d.agency.agency_name);
   Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
   Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });
+  // what this browser holds as uploaded and not yet in the data: only what OSM has a changeset of mine for
+  if (Edits.auth.user()) Edits.verifyUploaded().then(n => { if (n) { toast(`${n} upload${n > 1 ? 's' : ''} this browser remembered aren't on OSM: forgotten`, 6000); render(); draw(); } });
   // the reviewer's say over the open route changed under it (undo, redo, another browser's copy): route again
   Edits.listeners.push(() => { if (S.pattern && S.routedWith != null && JSON.stringify(Edits.routingOf(S.pattern)) !== S.routedWith) liveRoute(); });
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
