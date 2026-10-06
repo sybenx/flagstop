@@ -117,7 +117,7 @@ const Review = {
             el('div', {}, el('b', {}, `? ${what}`), k === 'position' ? '' : ` ${from} → ${to}`), el('div', {class: 'why'}, dk.why),
             k === 'position' ? el('div', {style: 'margin:4px 0'}, lookButtons(s, o)) : null,
             el('span', {class: 'btns'},
-              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? "move to the agency's point" : "agency's")),
+              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : "move to the agency's point") : "agency's")),
               el('button', {class: 'b tiny' + (v === 'keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'keep' ? null : 'keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'keep' ? '✓ ' : '') + (k === 'position' ? 'leave it' : "keep OSM's")),
               k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
         } else {
@@ -154,7 +154,7 @@ const Review = {
       for (const st of this.stops(p)) if (st.o && st.status === 'moved' && this.pick(st).position) Edits.decisions[st.s.id] = st.o.id;
       for (const st of changing) {
         const c = this.change(st), s = st.s, o = st.o;
-        const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
+        const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
         Edits.ops[key].suggested = true;   // counts toward the per-upload cap
         Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
         // two stops the agency made one: the one moved here stays, the other goes

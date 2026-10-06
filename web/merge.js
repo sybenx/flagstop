@@ -224,7 +224,7 @@ const Merge = {
           const tags = {}, diff = q.s.match.diff || {};
           for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
           if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !q.o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
-          Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {lat: q.s.lat, lon: q.s.lon, tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+          Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
           const gone = mergedWith(q.s);   // two stops made one: the other goes
           if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }

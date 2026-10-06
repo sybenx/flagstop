@@ -11,7 +11,7 @@ import math, re, argparse, datetime, json, os, sys, time
 from xml.sax.saxutils import quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff, others
+import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff, others, positions
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -225,6 +225,23 @@ def main():
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
     typical, far = stopmatch.calibrate(match)
     print(f'positions: usually {typical} m apart; the same spot within {far} m', file=sys.stderr)
+    # The agency's moves, from the feed versions kept: a stop it moved is found in OSM where it used to be
+    vs = positions.versions(a.cache, slug)
+    jumped = positions.jumps(vs)
+    if jumped:
+        print(f'positions: the agency moved {len(jumped)} stops since an earlier feed version', file=sys.stderr)
+    claimed = {m['osm'][0]['id'] for m in match.values() if m and m['status'] == 'matched' and m.get('osm')}
+    for sid, j in jumped.items():
+        m = match.get(sid)
+        if not m or m['status'] != 'missing':
+            continue
+        old = [(stopmatch.dist(j['from'][1], j['from'][0], o['lat'], o['lon']), o) for o in osm_stops.values()
+               if o['id'] not in claimed and stopmatch.is_platform(o) and stopmatch.dist(j['from'][1], j['from'][0], o['lat'], o['lon']) <= far]
+        if old:
+            d, o = min(old, key=lambda x: x[0])
+            s = feed.stops[sid]
+            m.update(status='moved', osm=[{'id': o['id'], 'dist': round(stopmatch.dist(s.lat, s.lon, o['lat'], o['lon'])), 'score': 1.0, 'how': 'moved'}])
+            claimed.add(o['id'])
     for sid, m in match.items():   # what counts as a different position, now that it's known
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['diff'] = stopmatch.diff(feed, feed.stops[sid], osm_stops[m['osm'][0]['id']])
@@ -245,6 +262,20 @@ def main():
                 near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
                 m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
+    # A stop the agency moved: where OSM's node goes, by how the node got where it is (its history)
+    api = os.environ.get('OSM_API_URL', 'https://api.openstreetmap.org').rstrip('/')
+    for sid, j in jumped.items():
+        m = match.get(sid)
+        if not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None):
+            continue
+        o = osm_stops[m['osm'][0]['id']]
+        if o['id'][0] != 'n':
+            continue
+        prov = positions.provenance(positions.history(api, o['osm_id'], a.cache, a.refresh), positions.agency_points(vs, sid))
+        pl = positions.plan(feed.stops[sid], o, j, prov, stopmatch.FAR)
+        if pl:
+            m['decide']['position'] = {'pick': 'ask', 'why': pl['why']}
+            m.update(move_to=pl['to'], move_how=pl['how'], provenance=prov, jump=j)
     stop_areas = list(getattr(osm.parse_pt, 'stop_areas', {}).values())
     # Which relation is which pattern.
     best, chosen, scores = compare.pair(feed, None, rels, rel_ways, coords, match)

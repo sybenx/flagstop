@@ -85,6 +85,12 @@ def _osm_text(o):
     return ' '.join(x for x in (t.get('name'), t.get('description'), t.get('alt_name'), t.get('official_name')) if x)
 
 
+def is_platform(o):
+    """A platform, where people wait: highway=bus_stop or public_transport=platform (not a stop position or station)."""
+    t = o['tags']
+    return t.get('highway') == 'bus_stop' or t.get('public_transport') == 'platform'
+
+
 def match(feed, osm_stops, across=None):
     """-> {gtfs_stop_id: result}, [extra osm stops]
 

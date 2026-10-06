@@ -192,7 +192,7 @@ const FixIt = {
         if (y.add) { const k = Edits.createNode(s.lat, s.lon, s.proposed_tags, `${s.ref} ${s.name}`); Edits.ops[k].suggested = true; Edits.ops[k].route = r.short; continue; }
         if (y.change) {
           const o = y.st.o, c = y.change;
-          const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
+          const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
           Edits.ops[key].suggested = true; Edits.ops[key].route = r.short;
           if (c.move && mergedWith(s)) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
         }

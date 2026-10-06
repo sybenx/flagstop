@@ -61,6 +61,14 @@ The page lists itineraries worst first. Open one:
 - **OSM only** lists bus stops in OSM that no stop in the agency's data claims. This agency's (by network or operator, old names included, or tagged with neither) can be shown on the map and, if gone, removed: a stop another relation still uses is left and said, one that's a point in a sidewalk loses only its stop tags. Other operators' are listed, never touched.
 - **Changes** holds everything you decided, with a before/after per object. It leaves as one changeset uploaded with your OSM login, as an osmChange file for JOSM, or as Level0 text. Before uploading, every touched object is re-read from OSM and the upload stops if someone edited it since flagstop looked.
 
+## Where a stop is
+
+The agency's point and OSM's node are good at different things: the agency's point changes when the stop moves (often before anyone edits OSM), but is rough in absolute terms; a carefully mapped node is on the pole. So flagstop asks whether the stop moved, not which is right (`tool/positions.py`). It keeps every feed version's stop points; when the agency's point jumped (10 m or more) between versions and OSM's node is still at the old spot, that's a question to look at, and the node goes:
+- to the agency's new point, when the node came from the agency's data in the first place (made at one of its points, never moved since);
+- by the same amount as the agency's move, when a mapper placed the node by hand (its history shows it moved after it was made): the mapper's precision is kept, the move followed.
+
+Without a jump, a difference within the usual gap is two placements of the same stop and OSM's spot stays; a larger one is a question, as before. A stop the agency moved is also found in OSM where it used to be, not reported missing.
+
 ## A new feed
 
 Each build keeps a short summary of the feed version it reviewed (in `cache/`). When the agency publishes a new one, the Routes page opens with what changed since the last version: stops added, gone, moved or renamed, routes added or gone, routes calling at different stops. That's where to look first; a stop gone from the feed turns up in *OSM only*, to remove after a look.
@@ -158,6 +166,7 @@ tool/serve.py     static server + /api/trace for re-routing through via points a
 tool/sandbox.py   a stand-in OSM (API, sign-in, Overpass) from a dated snapshot: the tool end to end, every edit kept local
 tool/catalog.py   Mobility Database search and download
 tool/feeddiff.py  what changed between two versions of the feed
+tool/positions.py where a stop is: the agency's moves (feed history) and how OSM's node got where it is (node history)
 tool/others.py    other agencies' stops in the area, from their own feeds
 web/app.js        the page (MapLibre, vendored; OSM raster tiles)
 web/edits.js      the change basket: osmChange, Level0, OAuth sign-in, upload with conflict check

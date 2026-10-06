@@ -195,6 +195,35 @@ class Store:
         self.lock = threading.RLock()
         self._index()
 
+    def earlier(self, t, i):
+        """The object's real versions from before the snapshot (it holds only the one current then): read once
+        from OSM, read-only, kept in cache/sandbox/history/, so a node's history says, as on OSM, whether a mapper
+        moved it by hand. [] when it starts at version 1, or OSM can't be reached and nothing is kept."""
+        first = (self.hist.get((t, i)) or [{}])[0]
+        if (first.get('version') or 1) <= 1:
+            return []
+        path = os.path.join(DIR, 'history', f'{t}-{i}.json')
+        if not os.path.exists(path):
+            try:
+                req = urllib.request.Request(f'https://api.openstreetmap.org/api/0.6/{t}/{i}/history.json', headers=UA)
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    vs = json.load(r)['elements']
+            except Exception as ex:
+                print(f'history of {t} {i}: {ex}', file=sys.stderr)
+                return []
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w') as f:
+                json.dump(vs, f)
+        with open(path) as f:
+            vs = json.load(f)
+        out = []
+        for v in vs:
+            if v['version'] >= first['version']:
+                break
+            v = dict(v); v.setdefault('tags', {}); v.setdefault('visible', True)
+            out.append(v)
+        return out
+
     def _index(self):
         self.grid, self.ways_of, self.rels_of = {}, {}, {}
         for n in self.el['node'].values():
@@ -682,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
         if mm and method == 'GET':
             t, i, sub, js = mm.group(1), int(mm.group(2)), mm.group(3), mm.group(4)
             if sub == 'history':
-                return self._osm_json([api_json(v) for v in st.hist.get((t, i), [])]) if (t, i) in st.hist else self._text(f'{t} {i} not found', 404)
+                return self._osm_json([api_json(v) for v in st.earlier(t, i) + st.hist.get((t, i), [])]) if (t, i) in st.hist else self._text(f'{t} {i} not found', 404)
             e = st.get(t, i)
             if sub == 'full':
                 els = []

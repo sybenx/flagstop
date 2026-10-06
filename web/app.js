@@ -635,6 +635,10 @@ function lookAt(sid) {
   map.once('moveend', () => { if (map.getZoom() < 18.5) map.easeTo({zoom: 18.5, duration: 300}); });
 }
 const looked = sid => S.looked.has(sid);
+/** Where a stop goes when it's moved: the agency's point, or (the agency moved it, and a mapper had placed OSM's
+ *  node by hand) OSM's node shifted by the agency's move. [lon, lat] (tool/positions.py) */
+const moveTo = s => (s && s.match && s.match.move_to) || [s.lon, s.lat];
+const moveLL = s => { const [lon, lat] = moveTo(s); return {lat, lon}; };
 /** The OSM stop that goes when this one moves to the agency's spot (two stops the agency made one), or null. */
 const mergedWith = s => (s && s.match && s.match.merged_with && D.osm_stops[s.match.merged_with.id]) || null;
 /** The stop being looked at, drawn to stand out: OSM's stop now, the agency's spot, and the move between. */
@@ -642,7 +646,9 @@ function lookFeatures() {
   const s = S.lookStop && D.stops[S.lookStop];
   if (!s) return [];
   const c = (s.match && s.match.osm) || [], o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
-  const to = [s.lon, s.lat], out = [point(to, {kind: 'to', label: `agency: ${s.name}`})];
+  const shift = s.match && s.match.move_how === 'shift';
+  const to = moveTo(s), out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : `agency: ${s.name}`})];
+  if (shift) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
   if (o) {
     const now = osmPos(o), dm = Math.round(m(now, to));
     out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
@@ -1096,7 +1102,7 @@ function renderStop(P, s) {
       el('button', {class: 'b primary', onclick: async () => {
         Edits.hold(`${s.name}: ${gone ? 'two stops made one' : 'moved'}`);
         try {
-          Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {lat: s.lat, lon: s.lon, tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`);
+          Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {...moveLL(s), tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`);
           const kept = gone ? await removeStops([gone], new Set(), `merged into ${s.name}`) : [];
           toast(kept.length ? `Moved; not removed, something else uses it: ${kept.join('; ')}` : gone ? 'Moved, and the other removed: in Changes' : 'Node move added to changes', 6000);
         } finally { Edits.release(); }
@@ -1169,7 +1175,7 @@ function osmStopBox(s, o, c, pickable) {
       for (const [k, cb] of Object.entries(checks)) { if (!cb.checked) continue; if (k === 'position') move = true; else tags[k] = diff[k].gtfs; }
       if (diff.tagging && (o.tags.highway !== 'bus_stop' || o.tags.public_transport !== 'platform')) Object.assign(tags, {highway: 'bus_stop', public_transport: 'platform', bus: 'yes'});
       if (!s.proposed_tags['gtfs:stop_id'] || true) tags['gtfs:stop_id'] = s.id;
-      Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(move ? {lat: s.lat, lon: s.lon} : {})}, `${s.ref} ${s.name}`);
+      Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
       toast('Added to changes'); render(); draw();
     }}, 'Apply ticked → changes'), el('span', {class: 'muted', style: 'align-self:center'}, 'gtfs:stop_id is always added')));
   } else if (diff) box.append(el('div', {style: 'color:var(--ok)'}, 'Tags agree with the feed.'));

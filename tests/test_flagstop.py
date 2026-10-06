@@ -328,6 +328,43 @@ class RouterParity(unittest.TestCase):
         self.assertEqual(router_parity.main([]), 0)
 
 
+class StopMoves(unittest.TestCase):
+    """The agency's point says when a stop moved; a hand-placed OSM node says exactly where (tool/positions.py)."""
+    def setUp(self):
+        import positions
+        self.P = positions
+        self.v1 = {'version': 'v1', 'stops': {'a': {'lat': 41.7400, 'lon': -111.8300}, 'b': {'lat': 41.7500, 'lon': -111.8300}}}
+        self.v2 = {'version': 'v2', 'stops': {'a': {'lat': 41.7404, 'lon': -111.8300}, 'b': {'lat': 41.75002, 'lon': -111.8300}}}   # a: 44 m; b: 2 m (jitter)
+
+    def test_jumps(self):
+        j = self.P.jumps([self.v1, self.v2])
+        self.assertEqual(list(j), ['a'])
+        self.assertEqual((j['a']['m'], j['a']['version']), (44, 'v2'))
+
+    def test_provenance(self):
+        P = self.P
+        moved = [{'version': 1, 'lat': 41.74, 'lon': -111.83}, {'version': 2, 'lat': 41.74005, 'lon': -111.83}]   # 5.5 m: moved by someone
+        copied = [{'version': 1, 'lat': 41.74001, 'lon': -111.83}, {'version': 2, 'lat': 41.74001, 'lon': -111.83}]   # 1 m off the feed's point, never moved
+        elsewhere = [{'version': 1, 'lat': 41.7401, 'lon': -111.83}]
+        pts = [(41.74, -111.83)]
+        self.assertEqual(P.provenance(moved, pts), 'hand')
+        self.assertEqual(P.provenance(copied, pts), 'feed')
+        self.assertEqual(P.provenance(elsewhere, pts), 'unknown')
+
+    def test_plan(self):
+        P = self.P
+        j = P.jumps([self.v1, self.v2])['a']
+        old = {'lat': 41.74003, 'lon': -111.82995}    # OSM still at the old spot, 4-5 m off the agency's old point
+        new = {'lat': 41.74041, 'lon': -111.83}
+        by_hand = P.plan(None, old, j, 'hand', far=15)
+        self.assertEqual(by_hand['how'], 'shift')
+        self.assertAlmostEqual(by_hand['to'][1], 41.74003 + 0.0004, places=7)   # the node's own offset kept
+        self.assertAlmostEqual(by_hand['to'][0], -111.82995, places=7)
+        self.assertEqual(P.plan(None, old, j, 'feed', far=15)['to'], j['to'])     # copied from the feed: the feed's new point
+        self.assertIsNone(P.plan(None, new, j, 'hand', far=15))                     # OSM already has it at the new spot
+        self.assertIsNone(P.plan(None, old, None, 'hand', far=15))                  # no move in the feed's history
+
+
 class Web(unittest.TestCase):
     def test_scripts_parse(self):
         node = shutil.which('node')
