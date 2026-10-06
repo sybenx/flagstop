@@ -1,8 +1,6 @@
 {
  "patterns": {
   "5714:0:19560:20": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2516833
    ],
@@ -12,8 +10,6 @@
    ]
   },
   "5715:0:19734:26": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2516850
    ],
@@ -23,8 +19,6 @@
    ]
   },
   "5716:0:31200:22": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2435767
    ],
@@ -34,8 +28,6 @@
    ]
   },
   "5718:0:19738:22": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2435759
    ],
@@ -45,8 +37,6 @@
    ]
   },
   "5721:0:25192:16": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2435757
    ],
@@ -56,8 +46,6 @@
    ]
   },
   "5722:0:19792:34": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12720634
    ],
@@ -67,8 +55,6 @@
    ]
   },
   "5723:0:32000:35": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12720664
    ],
@@ -78,8 +64,6 @@
    ]
   },
   "5731:0:30386:24+5731:1:31365:17": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12720821,
     17014960
@@ -90,8 +74,6 @@
    ]
   },
   "5734:0:27490:24": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12721122
    ],
@@ -100,8 +82,6 @@
    ]
   },
   "5734:1:27489:18": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     17015540
    ],
@@ -110,8 +90,6 @@
    ]
   },
   "5735:0:19035:36+5735:1:19036:32": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12720941,
     17014999
@@ -122,8 +100,6 @@
    ]
   },
   "5738:0:31903:24+5738:1:20937:23": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12720868
    ],
@@ -133,8 +109,6 @@
    ]
   },
   "5739:0:27487:20": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     12721039
    ],
@@ -143,8 +117,6 @@
    ]
   },
   "5739:1:27488:21": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     17015539
    ],
@@ -153,8 +125,6 @@
    ]
   },
   "5741:0:29240:19": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2431265
    ],
@@ -164,8 +134,6 @@
    ]
   },
   "5742:0:27002:19": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2435752
    ],
@@ -175,8 +143,6 @@
    ]
   },
   "5743:0:28203:21": {
-   "chain_ok": true,
-   "divergences": 0,
    "relations": [
     2431287,
     12720778
@@ -312,9 +278,9 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 1111 North 800 East",
-    "network": "ask",
+    "network": "agency: Aggie Bus;Connect Public Transit",
     "network:wikidata": "agency",
-    "operator": "ask",
+    "operator": "agency: Utah State university;Connect Public Transit",
     "position": "keep",
     "ref": "agency",
     "route_ref": "agency"
@@ -420,7 +386,7 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 100 East 1600 North",
-    "network": "ask",
+    "network": "agency: Green LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
@@ -3567,9 +3533,9 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 650 North 1200 East",
-    "network": "ask",
+    "network": "agency: Aggie Shuttle;Connect Public Transit",
     "network:wikidata": "agency",
-    "operator": "ask",
+    "operator": "agency: Utah State University;Connect Public Transit",
     "position": "keep",
     "ref": "agency",
     "route_ref": "agency"
@@ -3608,7 +3574,7 @@
    "picks": {
     "description": "agency",
     "gtfs:stop_id": "agency",
-    "network": "ask",
+    "network": "agency: Blue LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
@@ -3623,7 +3589,7 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 105 East 1600 North",
-    "network": "ask",
+    "network": "agency: Blue LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
@@ -3638,7 +3604,7 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 1341 North Main",
-    "network": "ask",
+    "network": "agency: 16, LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
@@ -3654,7 +3620,7 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 1045 North Main",
-    "network": "ask",
+    "network": "agency: 16, LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
@@ -3670,7 +3636,7 @@
     "description": "agency",
     "gtfs:stop_id": "agency",
     "name": "agency: 745 North Main",
-    "network": "ask",
+    "network": "agency: 16, LOOPs;Connect Public Transit",
     "network:wikidata": "agency",
     "operator": "agency: Connect Public Transit",
     "position": "keep",
