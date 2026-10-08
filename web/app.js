@@ -705,13 +705,46 @@ function markUndo(key, s) {
  *  A point already beside the road stays (a stop on the left of a one-way street is one). p: the itinerary it's
  *  added for, else any routed one calling there. -> {at: [lon, lat], kerb: true if moved there} */
 function newStopSpot(s, p) {
-  return kerbFor([s.lon, s.lat], [p, ...D.patterns.filter(x => x.stops.includes(s.id))]);
+  return kerbFor([s.lon, s.lat], [p, ...D.patterns.filter(x => x.stops.includes(s.id))], -0.5, false, s.id);
+}
+/** Where each of an itinerary's stops is along its routed path, in order: the segment index for each, found going
+ *  forward from the one before, so a loop that drives a street both ways puts each stop on its own pass of it (route
+ *  15 on 600 South, Smithfield: east past one stop, west past another much later). Kept per routed path. */
+function stopSegments(q, g) {
+  if (q._segOf === g) return q._seg;
+  const out = [];
+  let from = 0;
+  for (const sid of q.stops) {
+    const t = D.stops[sid], kx = 111320 * Math.cos(t.lat * Math.PI / 180), ky = 110540;
+    let best = null;
+    for (let i = from; i < g.length - 1; i++) {
+      const a = g[i], b = g[i + 1], vx = (b[0] - a[0]) * kx, vy = (b[1] - a[1]) * ky, wx = (t.lon - a[0]) * kx, wy = (t.lat - a[1]) * ky, L2 = vx * vx + vy * vy;
+      const u = L2 ? Math.max(0, Math.min(1, (wx * vx + wy * vy) / L2)) : 0, d = Math.hypot(wx - u * vx, wy - u * vy);
+      if (!best || d < best.d - 0.01) best = {i, d};
+      else if (best.d < 40 && d > best.d + 150) break;   // past it: the nearest pass, not a later one of the same street
+    }
+    out.push(best ? best.i : from);
+    if (best) from = best.i;
+  }
+  q._segOf = g; q._seg = out;
+  return out;
+}
+/** The way the bus goes at a point of its path (segment i, fraction u): from 15 m before it to 15 m after, along the
+ *  path, so a short piece at a junction doesn't decide it. -> [dx, dy] in metres. */
+function heading(g, i, u, kx, ky, reach = 15) {
+  const at = (j, f) => [g[j][0] + (g[j + 1][0] - g[j][0]) * f, g[j][1] + (g[j + 1][1] - g[j][1]) * f];
+  const len = j => Math.hypot((g[j + 1][0] - g[j][0]) * kx, (g[j + 1][1] - g[j][1]) * ky);
+  let j = i, left = reach, back = at(i, u), f = u;   // back: walk 15 m against the path
+  for (let rem = len(j) * f; ; ) { if (rem >= left || j === 0) { const L = len(j) || 1; back = at(j, Math.max(0, (rem - Math.min(left, rem)) / L)); break; } left -= rem; j--; rem = len(j); }
+  let k = i, right = reach, fwd = at(i, u);
+  for (let rem = len(k) * (1 - f); ; ) { if (rem >= right || k === g.length - 2) { const L = len(k) || 1; fwd = at(k, Math.min(1, 1 - (rem - Math.min(right, rem)) / L)); break; } right -= rem; k++; rem = len(k); }
+  return [(fwd[0] - back[0]) * kx, (fwd[1] - back[1]) * ky];
 }
 /** A point beside the bus's road or in it: {at: [lon, lat], kerb: true if in it (at: the kerb beside it, on the side
  *  buses pull in at), d: metres from the middle of the road, half: centre to kerb (m)}. pats: itineraries to measure
  *  against, the first routed one. margin: how far inside the kerb counts as in the road (0.5 m past it, for a new
  *  stop's rough point; well inside it for a node someone placed). */
-function kerbFor(pt, pats, margin = -0.5, ownSide = false) {
+function kerbFor(pt, pats, margin = -0.5, ownSide = false, sid = null) {
   const q = pats.find(x => x && x.routed && x.graph);
   if (!q) return {at: pt};
   const rt = routedOf(q), geom = rt.geometry || [];
@@ -724,9 +757,17 @@ function kerbFor(pt, pats, margin = -0.5, ownSide = false) {
       f({d: Math.hypot(wx - u * vx, wy - u * vy), a, vx, vy, u, L: Math.sqrt(L2), left: vx * wy - vy * wx > 0});
     }
   };
-  let best = null;
-  near(geom, x => { if (!best || x.d < best.d) best = x; });
+  // a stop of this itinerary: looked for only on its own stretch of the path, between the stops either side of it
+  let lo = 0, hi = geom.length - 2;
+  const k = sid ? q.stops.indexOf(sid) : -1;
+  if (k >= 0) { const seg = stopSegments(q, geom); lo = k > 0 ? seg[k - 1] : 0; hi = k + 1 < seg.length ? seg[k + 1] : geom.length - 2; }
+  let best = null, bi = -1;
+  near(geom.slice(lo, hi + 2), x => { if (!best || x.d < best.d) best = x; });
   if (!best) return {at: pt};
+  bi = lo + geom.slice(lo, hi + 2).indexOf(best.a);
+  // the way the bus goes there, over 30 m of path (not one short piece at a junction)
+  const [hx, hy] = heading(geom, bi, best.u, kx, ky), hl = Math.hypot(hx, hy) || 1;
+  const L = best.L, dir = {vx: hx / hl * L, vy: hy / hl * L};
   // how wide the road is: its width, its lanes, or what its kind usually is (centre to kerb, m)
   let road = null;
   for (const wid of rt.ways || []) {
@@ -736,13 +777,15 @@ function kerbFor(pt, pats, margin = -0.5, ownSide = false) {
   const t = (road && road.tags) || {}, hw = String(t.highway || '').replace(/_link$/, '');
   const half = parseFloat(t.width) > 0 ? parseFloat(t.width) / 2 : parseInt(t.lanes) > 0 ? parseInt(t.lanes) * 3.25 / 2 :
     ({motorway: 7.5, trunk: 7, primary: 6, secondary: 5.5, tertiary: 4.5, unclassified: 3.5, residential: 4, living_street: 3, service: 2.5, busway: 3.5}[hw] || 4);
-  if (best.d > half + margin) return {at: pt, d: best.d, half};   // beside the road already
+  const fx = (pt[0] - best.a[0]) * kx - best.u * best.vx, fy = (pt[1] - best.a[1]) * ky - best.u * best.vy;   // from the path to the point
+  const isLeft = dir.vx * fy - dir.vy * fx > 0;
+  if (best.d > half + margin) return {at: pt, d: best.d, half, left: isLeft};   // beside the road already
   // the kerb, a step onto the pavement: on the side buses pull in at; for a node someone placed (ownSide), the kerb
   // on the side it's on (a stop on the left of a one-way street isn't taken across), unless it's on the middle line
-  const side = ownSide && best.d > 1 ? (best.left ? 'left' : 'right') : ((D.positions && D.positions.kerb) || 'right');
+  const side = ownSide && best.d > 1 ? (isLeft ? 'left' : 'right') : ((D.positions && D.positions.kerb) || 'right');
   const sign = side === 'right' ? 1 : -1, off = half + 1.5;
-  const nx = sign * best.vy / best.L, ny = -sign * best.vx / best.L;
-  return {at: [best.a[0] + (best.u * best.vx + nx * off) / kx, best.a[1] + (best.u * best.vy + ny * off) / ky], kerb: true, d: best.d, half};
+  const nx = sign * dir.vy / L, ny = -sign * dir.vx / L;
+  return {at: [best.a[0] + (best.u * best.vx + nx * off) / kx, best.a[1] + (best.u * best.vy + ny * off) / ky], kerb: true, d: best.d, half, left: side === 'left'};
 }
 /** OSM's stops in the road (a node placed on the centre line, at the agency's point, say), on a route just routed:
  *  each a question, to the nearer kerb (on the middle line: the side buses pull in at). A node that's a point of the road itself
@@ -755,7 +798,7 @@ function markInRoad(p) {
     if (!o || o.id[0] !== 'n' || !m || m.inroad !== undefined || vertices.has(osmNumId(o))) continue;
     const pos = (m.decide || {}).position;
     if (pos && pos.pick !== 'keep') { m.inroad = null; continue; }
-    const k = kerbFor(osmPos(o), [p], -1, true);   // well inside the kerb: a node someone placed, not a rough point
+    const k = kerbFor(osmPos(o), [p], -1, true, sid);   // well inside the kerb: a node someone placed, not a rough point
     m.inroad = k.kerb ? {at: k.at, d: Math.round(k.d)} : null;
     if (k.kerb) (m.decide = m.decide || {}).position = {pick: 'ask', inroad: true,
       why: `OSM's stop is in the road, ${Math.round(k.d)} m from its middle: to the kerb beside it?`};
@@ -776,7 +819,11 @@ function lookFeatures() {
   if (o) {
     const now = osmPos(o), dm = Math.round(m(now, to));
     out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
-    if (dm >= 3) out.push(line([now, to], {label: `${dm} m`}));
+    // a move from one side of the road to the other: said on the map, not left to be noticed
+    const pats = [S.pattern && patternById(S.pattern), ...D.patterns.filter(x => x.stops.includes(s.id))];
+    const a = kerbFor(now, pats, -1e9, true, s.id), b = kerbFor(to, pats, -1e9, true, s.id);
+    const across = a.d > 2 && b.d > 2 && a.left != null && b.left != null && a.left !== b.left;
+    if (dm >= 3) out.push(line([now, to], {label: across ? `${dm} m, across the road` : `${dm} m`}));
   }
   for (const x of spot.restore ? [] : c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
   const g = mergedWith(s);
