@@ -608,10 +608,13 @@ class Detours(unittest.TestCase):
         p = type('P', (), {'stops': ['a', 'temp', 'b']})
         match = {'a': {'osm': [{'id': 'n1'}]}, 'temp': {'temporary': True, 'osm': []}, 'b': {'osm': [{'id': 'n3'}]}}
         rel = {'members': [{'type': 'node', 'ref': 1, 'role': 'platform'}, {'type': 'node', 'ref': 2, 'role': 'platform'}, {'type': 'node', 'ref': 3, 'role': 'platform'}, {'type': 'way', 'ref': 9, 'role': ''}]}
-        self.assertEqual(review.detour_of(p, [rel], match), {'temporary': ['temp'], 'skipped': ['n2']})
-        rel_followed = {'members': [m for m in rel['members'] if m['ref'] != 2]}
-        self.assertIsNone(review.detour_of(p, [rel_followed], match), 'nothing skipped: OSM follows the detour already')
-        self.assertIsNone(review.detour_of(p, [], match), 'no relation to keep')
+        self.assertEqual(review.detour_of(p, [rel], match), {'temporary': ['temp'], 'skipped': ['n2'], 'followed': False})
+        rel_same = {'members': [m for m in rel['members'] if m['ref'] != 2]}
+        self.assertIsNone(review.detour_of(p, [rel_same], match), "nothing skipped, the temporary stop not in it: nothing to say")
+        on = dict(match, temp={'temporary': True, 'status': 'matched', 'osm': [{'id': 'n5'}]})
+        rel_followed = {'members': rel_same['members'] + [{'type': 'node', 'ref': 5, 'role': 'platform'}]}
+        self.assertEqual(review.detour_of(p, [rel_followed], on), {'temporary': ['temp'], 'skipped': [], 'followed': True}, 'OSM follows the detour: restorable')
+        self.assertIsNone(review.detour_of(p, [], match), 'no relation')
 
 
 if __name__ == '__main__':

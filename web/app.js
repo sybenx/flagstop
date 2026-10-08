@@ -901,15 +901,18 @@ function renderPattern(P, p) {
   }
   if (p.loop && p.loop.length) d.append(el('div', {class: 'note'}, `One loop, run by one bus: the feed splits each trip in two at ${D.stops[p.split_at] ? D.stops[p.split_at].name : 'a stop'}, but the bus carries straight on and passengers ride through. In OSM it's one round-trip relation.`));
   if (p.detour) {
-    // on a detour: OSM keeps the regular route unless the reviewer says to map the detour (a long one)
-    const names = ids => ids.map(x => (D.stops[x] || D.osm_stops[x] || {}).name || ((D.osm_stops[x] || {}).tags || {}).name || x);
-    const mapping = mapsDetour(p);
-    d.append(el('div', {class: 'note'}, el('b', {}, 'On a detour. '),
-      `The agency runs it through ${names(p.detour.temporary).join(', ')}, and skips ${p.detour.skipped.length} stop${p.detour.skipped.length > 1 ? 's' : ''} OSM's relation has (${names(p.detour.skipped).join(', ')}). `,
-      mapping ? "Mapping the detour: the relation follows the agency's route while it lasts, with a note saying it's a diversion. Put the regular route back when it's over."
-        : "OSM maps the regular route: the relation's stops and roads stay as they are while it lasts; its codes, names and timetable are still brought up to date.",
-      el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => { Edits.answer('route:' + p.id, 'detour', mapping ? null : 'map'); render(); draw(); }},
-        mapping ? 'Keep the regular route' : 'Map the detour instead (one lasting months)'))));
+    // on a detour: mapped as the agency runs it (a detour of weeks), or the regular route kept; restorable from history
+    const names = ids => ids.map(x => (D.stops[x] || {}).name || ((D.osm_stops[x] || {}).tags || {}).name || x);
+    const keep = keepsRegular(p), dt = p.detour;
+    const what = `The agency runs it through ${names(dt.temporary).join(', ')}` + (dt.skipped.length ? `, and skips ${dt.skipped.length} stop${dt.skipped.length > 1 ? 's' : ''} OSM's relation has (${names(dt.skipped).join(', ')})` : '') + '. ';
+    const now = dt.followed ? "OSM's relation follows the detour now. " : '';
+    const plan = keep ? "The regular route is kept: the relation's stops and roads stay as they are; its codes, names and timetable are still brought up to date."
+      : "Mapped as the agency runs it while it lasts (worth it for a detour of weeks), with a note on the relation saying it's a diversion. The stops it goes round stay in OSM.";
+    d.append(el('div', {class: 'note'}, el('b', {}, 'On a detour. '), what, now, plan,
+      el('div', {class: 'btns'},
+        dt.skipped.length || keep ? el('button', {class: 'b tiny', onclick: () => { Edits.answer('route:' + p.id, 'detour', keep ? null : 'keep'); render(); draw(); }},
+          keep ? 'Map the detour instead' : 'Keep the regular route instead (a short detour)') : null,
+        dt.followed ? el('button', {class: 'b tiny', onclick: () => restoreRegular(p)}, 'Restore the regular route (from the relation\'s history)') : null)));
   }
   if (p.temporary) d.append(el('div', {class: 'note warn'}, 'Only run by a short-dated service: a detour or a special. Usually not mapped; see ? for the convention.'));
   const sc = rt.score || {};
@@ -1085,12 +1088,52 @@ function relationPlan(p) {
 }
 /** The itinerary's relation into Changes: rewritten (reused) or new, PTv2 members in order, the roads split where
  *  the bus turns. opts.quiet: no toasts but failures; opts.extraTags: more tags (a timetable). -> {ok, why, key} */
-/** The itinerary is on a detour (tool/review.py detour_of: temporary stops, and stops of OSM's relation it goes round)
- *  and the reviewer hasn't said to map the detour: OSM keeps the regular route, so its relation's stops and roads
- *  are left as they are, and only its tags are brought up to date. */
-const mapsDetour = p => ((Edits.answers['route:' + p.id] || {}).detour === 'map');
-const detoured = p => !!(p && p.detour && !mapsDetour(p));
+/** An itinerary on a detour (tool/review.py detour_of: temporary stops, and OSM's relation going round them or
+ *  following them). An agency that publishes only long detours (CVTD) has them worth mapping while they last: the
+ *  relation follows the feed, with a note saying it's a diversion. The reviewer can keep the regular route instead
+ *  (a short one): then the relation's stops and roads are left as they are, only its tags brought up to date. */
+const keepsRegular = p => !!(p && p.detour && ((Edits.answers['route:' + p.id] || {}).detour === 'keep'));
+const mapsDetour = p => !!(p && p.detour && !keepsRegular(p));
+const detoured = p => keepsRegular(p);   // the regular route is OSM's (or restored, in Changes): leave the relation as it is
 const DIVERSION = "Diversion: the agency's temporary route (detour); back to the regular route when it's over";
+/** The regular route back: the relation's newest version without the detour's temporary stops, from its history
+ *  (a request to OSM), its stops and roads as they were, checked to still be there and to join up. Its tags stay
+ *  as they are now, but the diversion note. -> true when it's in Changes. */
+async function restoreRegular(p) {
+  const temp = new Set(p.detour.temporary.map(sid => matchedOsm(D.stops[sid])).filter(Boolean).map(o => osmNumId(o)));
+  const rel = p.relations.find(a => a.members.some(m => m.type === 'node' && temp.has(m.ref))) || keptRelation(p);
+  if (!rel) return toast('No relation to restore'), false;
+  toast('Reading the relation\'s history…');
+  let vs;
+  try { vs = (await (await fetch(`${OSM_API}/api/0.6/relation/${rel.id}/history.json`)).json()).elements; } catch (e) { toast(`Couldn't read its history: ${e.message}`, 6000); return false; }
+  const old = vs.slice(0, -1).reverse().find(v => v.visible !== false && !(v.members || []).some(m => m.type === 'node' && temp.has(m.ref)));
+  if (!old) return toast("Its history has no version without the detour's stops", 6000), false;
+  const members = old.members.map(m => ({type: m.type, ref: m.ref, role: m.role}));
+  // what of it is still there: stops deleted since, or roads, can't come back this way
+  const nodes = members.filter(m => m.type === 'node').map(m => m.ref), ways = members.filter(m => m.type === 'way').map(m => m.ref);
+  let gone = new Set();
+  try {
+    if (nodes.length) for (const e of (await (await fetch(`${OSM_API}/api/0.6/nodes.json?nodes=${nodes.join(',')}`)).json()).elements) if (e.visible === false) gone.add('n' + e.id);
+    await Roads.fetchWays(ways);
+    for (const w of ways) if (!Roads.way(w)) gone.add('w' + w);
+  } catch (e) { toast(`Couldn't check its members: ${e.message}`, 6000); return false; }
+  if (gone.size) return toast(`Not restored: ${gone.size} of its stops or roads are gone from OSM since (${[...gone].slice(0, 4).join(', ')}). Restore it by hand in RapiD or JOSM.`, 9000), false;
+  const breaks = Roads.chainBreaks(ways.map(w => Roads.way(w)));
+  if (breaks) return toast(`Not restored: its roads don't join up any more in ${breaks} place${breaks > 1 ? 's' : ''} (split or redrawn since). Restore it by hand in RapiD or JOSM.`, 9000), false;
+  const cur = Edits.get('r' + rel.id), tags = {...((cur && cur.tags) || rel.tags)};
+  // the detour's: its note, and its shape (the regular route's shape id is the old version's, or none)
+  const removeTags = [...(tags.note === DIVERSION ? ['note'] : []), ...(tags['gtfs:shape_id'] && !(old.tags || {})['gtfs:shape_id'] ? ['gtfs:shape_id'] : [])];
+  const set = (old.tags || {})['gtfs:shape_id'] ? {'gtfs:shape_id': old.tags['gtfs:shape_id']} : {};
+  Edits.hold(`${routeOf(p).short}: the regular route back`);
+  try {
+    const key = Edits.modify('relation', rel.id, relBase(rel), {members, tags: set, removeTags}, `${routeOf(p).short}: regular route restored (as v${old.version}, ${(old.timestamp || '').slice(0, 10)})`);
+    Edits.ops[key].route = routeOf(p).short; Edits.save();
+    Edits.answer('route:' + p.id, 'detour', 'keep');   // and kept: the next refresh doesn't map the detour again
+  } finally { Edits.release(); }
+  toast(`The regular route, as relation v${old.version} had it (${(old.timestamp || '').slice(0, 10)}), in Changes`, 6000);
+  render(); draw();
+  return true;
+}
 async function proposeRelation(p, opts = {}) {
   const say = (m, ms) => { if (!opts.quiet) toast(m, ms); };
   if (!p.routed) { toast("This route's roads are still loading: try again in a moment", 5000); return {ok: false, why: 'not routed yet'}; }
@@ -1137,7 +1180,10 @@ async function proposeRelation(p, opts = {}) {
       if (reuse.tags.name && merged.name !== reuse.tags.name) { const bare = reuse.tags.name.replace(SERVICE_DAY, '').replace(/\s*[-–,]\s*$/, '').trim(); if (bare.length > 3) merged.name = bare; }
       if (reuse.both_directions && reuse.tags.name && !/bound|inbound|outbound/i.test(reuse.tags.name)) merged.name = tags.name;
       if (x.refKept) merged.ref = x.refKept;
-      out.key = Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
+      // the detour's over (or kept as the regular route): its diversion note goes
+      const unnote = merged.note === DIVERSION && !mapsDetour(p);
+      if (unnote) delete merged.note;
+      out.key = Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members, ...(unnote ? {removeTags: ['note']} : {})}, p.id);
       editMasters(x.masters, null, {type: 'relation', ref: reuse.id});
       say(asIs ? `Relation r${reuse.id}: its tags in changes; its stops and roads as they are (the route is on a detour)` : `Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${x.refKept ? ` (ref ${x.refKept} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
     } else {
@@ -1485,7 +1531,9 @@ function changesetComment() {
   const dropped = rels.filter(o => o.kind === 'delete').length, kept = rels.filter(o => o.kind === 'modify'), made = rels.filter(o => o.kind === 'create');
   if (dropped && kept.length) parts.push(`merged ${n(dropped + kept.length, 'relation')} into ${kept.length === 1 ? 'one' : kept.length}`);
   else if (dropped) parts.push(`removed ${n(dropped, 'duplicate relation')}`);
-  const rebuilt = kept.filter(o => Edits.diff(o).some(x => x.k === 'members')).length;
+  const restored = kept.filter(o => /regular route restored/.test(o.note || '')).length;   // restoreRegular
+  if (restored) parts.push(`regular route restored on ${n(restored, 'relation')} (the detour unmapped)`);
+  const rebuilt = kept.filter(o => !/regular route restored/.test(o.note || '') && Edits.diff(o).some(x => x.k === 'members')).length;
   if (kept.some(o => Edits.diff(o).some(x => x.k === 'opening_hours'))) parts.push('timetable hours added');
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);

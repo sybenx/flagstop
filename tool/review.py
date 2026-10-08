@@ -446,17 +446,20 @@ def round_pts(pts):
 
 def detour_of(p, audits, match):
     """An itinerary the agency runs on a detour: it calls at temporary stops ('Temp Stop', '(Detour)'), and OSM's
-    relation for it has stops it doesn't call at (the ones the detour goes round). -> {'temporary': [stop ids],
-    'skipped': [OSM ids]} or None. OSM maps the regular route: the page leaves the relation's stops and roads as
-    they are while it lasts. (Temporary stops OSM's relation already has, nothing skipped: a detour OSM followed,
-    or one long enough to be the route now: not this.)"""
+    relation for it either goes round them by the regular route (stops it has that the itinerary skips) or follows
+    the detour already (the temporary stops are in it). -> {'temporary': [stop ids], 'skipped': [OSM ids],
+    'followed': bool} or None. The page maps the detour by default (an agency publishing only long detours: worth
+    mapping while they last), can keep the regular route instead, and can restore it from the relation's history."""
     temps = [sid for sid in dict.fromkeys(p.stops) if (match.get(sid) or {}).get('temporary')]
     if not temps or not audits:
         return None
-    ours = {(match.get(sid) or {}).get('osm', [{}])[0].get('id') for sid in p.stops if (match.get(sid) or {}).get('osm')}
-    skipped = list(dict.fromkeys(f"n{x['ref']}" for au in audits for x in au.get('members', [])
-                                 if x['type'] == 'node' and (x.get('role') or '').startswith('platform') and f"n{x['ref']}" not in ours))
-    return {'temporary': temps, 'skipped': skipped} if skipped else None
+    top = lambda sid: (match.get(sid) or {}).get('osm', [{}])[0].get('id') if (match.get(sid) or {}).get('osm') else None
+    ours = {top(sid) for sid in p.stops} - {None}
+    plats = {f"n{x['ref']}" for au in audits for x in au.get('members', []) if x['type'] == 'node' and (x.get('role') or '').startswith('platform')}
+    skipped = [o for o in dict.fromkeys(f"n{x['ref']}" for au in audits for x in au.get('members', [])
+                                        if x['type'] == 'node' and (x.get('role') or '').startswith('platform')) if o not in ours]
+    followed = any(top(sid) in plats for sid in temps if (match.get(sid) or {}).get('status') == 'matched')
+    return {'temporary': temps, 'skipped': skipped, 'followed': followed} if skipped or followed else None
 
 
 def write_roads(feed, out, cache, budget=20 * 60):

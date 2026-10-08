@@ -64,8 +64,11 @@ const Merge = {
       const asked = decide.filter(q => !(q.kind === 'missing' && q.s.match && q.s.match.temporary));
       return {p, r, rels, keep, drop, master, name, tags, stops, decide: asked, open: asked.filter(q => !q.answer).length, questions, stale: [], splits: [], timetable, clash, uneven, gone: [], detour: true};
     }
-    if (p.detour) tags.note = DIVERSION;   // mapping the detour: say so on the relation
-    return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone};
+    if (mapsDetour(p)) tags.note = DIVERSION;   // mapping the detour: say so on the relation
+    const removeTags = tags.note === DIVERSION && !mapsDetour(p) ? (delete tags.note, ['note']) : [];   // the detour's over: the note goes
+    // stops a detour goes round are coming back: not offered for removal
+    const kept = gone.filter(o => !(D.detoured || {})[o.id]);
+    return {p, r, rels, keep, drop, master, name, tags, removeTags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone: kept};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
   goneStops(x) {
@@ -173,7 +176,9 @@ const Merge = {
           x.detour ? null : el('li', {}, (x.stops.length < p.stops.length
             // (a stop OSM hasn't got counts once it's added, below)
             ? `give it ${x.stops.length} of the feed's ${p.stops.length} stops in order, and ${p.stops.length - x.stops.length > 1 ? 'those' : 'the one'} not in OSM if you add ${p.stops.length - x.stops.length > 1 ? 'them' : 'it'} below`
-            : `give it the feed's ${x.stops.length} stops in order`) + (x.stale.length ? `; ${x.stale.length} it has now ${x.stale.length > 1 ? "aren't" : "isn't"} on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
+            : `give it the feed's ${x.stops.length} stops in order`) + (x.stale.length ? `; ${x.stale.length} it has now ${x.stale.length > 1 ? "aren't" : "isn't"} on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')
+            + (mapsDetour(p) && x.stale.some(o => (D.detoured || {})[o.id]) ? " (the detour goes round them: they stay in OSM, for when it's over)" : '')),
+          mapsDetour(p) ? el('li', {}, `note on it that it's a diversion (note=${DIVERSION}): the route is on a detour, mapped while it lasts`) : null,
           x.detour ? null : el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: this.hours(x) ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
@@ -251,7 +256,7 @@ const Merge = {
       // sidewalk line loses its bus stop tags instead of being deleted (deleting it would break the line)
       const kept = await removeStops(x.gone.filter(o => (S.merge.gone || {})[o.id] === 'remove'), new Set(x.rels.map(a => a.id)));
       if (kept.length) say(`Not removed, something else uses them: ${kept.join('; ')}`);
-      const key = Edits.modify('relation', x.keep.id, relBase(x.keep), {tags, members}, `${x.r.short}: one relation for one route`);
+      const key = Edits.modify('relation', x.keep.id, relBase(x.keep), {tags, members, removeTags: x.removeTags || []}, `${x.r.short}: one relation for one route`);
       Edits.ops[key].suggested = true; Edits.ops[key].route = x.r.short;
       for (const a of x.drop) {
         Edits.delete('relation', a.id, relBase(a), `duplicate of route ${x.r.short}`);
