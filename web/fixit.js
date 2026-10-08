@@ -92,7 +92,9 @@ const FixIt = {
     const adds = stops.filter(y => y.add).length, changes = stops.filter(y => y.change).length;
     const splitOps = x.keepWays ? 0 : x.splits * 2;   // a split: the way and its new piece (repairs of other relations too, uncounted)
     const count = adds + changes + 1 + splitOps + (S.fixit.keepDuplicates ? 0 : x.duplicates.length) + (x.masters.length ? 0 : 1);
-    return {p, r, stops, decide, open, done, x, timetable, hours, adds, changes, count};
+    // splitting a road also changes every other relation on it (a highway route, another bus): found when it's split
+    const more = splitOps > 0;
+    return {p, r, stops, decide, open, done, x, timetable, hours, adds, changes, count, more};
   },
 
   render(P) {
@@ -102,8 +104,9 @@ const FixIt = {
     d.append(el('div', {class: 'head'}, refBadge(r), el('h3', {}, `Fix ${r.short} ${p.headsign || ''}`.trim())));
     const inBasket = Edits.count(), after = inBasket + x.count;
     d.append(el('div', {class: 'kv'},
-      el('span', {class: 'k'}, 'this route'), el('span', {}, `${x.count} change${x.count === 1 ? '' : 's'}${x.open ? ` · ${x.open} to decide first` : ' · nothing to decide'}`),
-      el('span', {class: 'k'}, 'upload'), el('span', {class: after > UPLOAD_CAP ? 'bad' : ''}, `${after} of ${UPLOAD_CAP} changes with this route`)));
+      el('span', {class: 'k'}, 'this route'), el('span', {}, `${x.more ? 'at least ' : ''}${x.count} change${x.count === 1 ? '' : 's'}${x.open ? ` · ${x.open} to decide first` : ' · nothing to decide'}`),
+      el('span', {class: 'k'}, 'upload'), el('span', {class: after > UPLOAD_CAP ? 'bad' : ''}, `${x.more ? 'at least ' : ''}${after} of ${UPLOAD_CAP} changes with this route`)));
+    if (x.more) d.append(el('div', {class: 'muted small'}, "Plus one for each other relation on a road it splits (a highway's route, another bus route): known once it's split."));
     if (x.decide.length) {
       const qs = x.decide.filter(q => q.s), at = S.fixit.q;
       const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'},
@@ -137,7 +140,7 @@ const FixIt = {
     if (x.done.length) d.append(el('div', {class: 'muted small'}, x.done.join(' · ')));
     const why = x.open ? `Decide the ${x.open} above first` : after > UPLOAD_CAP ? `That makes ${after} changes; ${UPLOAD_CAP} at most per upload. Upload what's in Changes first.` : null;
     d.append(el('div', {class: 'btns', style: 'margin-top:10px'},
-      el('button', {class: 'b primary', disabled: why ? '' : null, title: why || '', onclick: () => this.apply(p)}, `Do it: ${x.count} change${x.count === 1 ? '' : 's'} to Changes`),
+      el('button', {class: 'b primary', disabled: why ? '' : null, title: why || '', onclick: () => this.apply(p)}, `Do it: ${x.more ? 'at least ' : ''}${x.count} change${x.count === 1 ? '' : 's'} to Changes`),
       el('button', {class: 'b', onclick: () => this.close()}, 'Not now')),
       why ? el('div', {class: 'muted small'}, why) : el('div', {class: 'muted small'}, 'Then upload from Changes. Nothing goes to OSM until you do.'));
     P.append(d);
