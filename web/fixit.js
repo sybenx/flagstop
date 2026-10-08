@@ -73,6 +73,7 @@ const FixIt = {
         if (a === 'none') stops.push({st, add: true}); else if (a) stops.push({st, pick: a});
         continue;
       }
+      if (!st.o && detoured(p) && s.match && s.match.temporary) { done.push(`${s.name}: the detour's, left out`); continue; }   // the regular route is kept
       if (!st.o) { stops.push({st, add: true}); continue; }   // not in OSM: added
       const pk = Review.pick(st);
       for (const [k, dk] of Object.entries(st.decide)) {
@@ -85,12 +86,13 @@ const FixIt = {
       if (c.any) stops.push({st, change: c});
     }
     const x = relationPlan(p);
-    if (x.gaps || !x.chainOk) decide.push({kind: 'broken', why: x.chainOk ? `the routed path has ${x.gaps} gap${x.gaps > 1 ? 's' : ''}: a road missing or cut on the map` : "the routed path is broken: a leg didn't connect"});
+    if ((x.gaps || !x.chainOk) && !(detoured(p) && x.reuse)) decide.push({kind: 'broken', why: x.chainOk ? `the routed path has ${x.gaps} gap${x.gaps > 1 ? 's' : ''}: a road missing or cut on the map` : "the routed path is broken: a leg didn't connect"});
     const timetable = Merge.timetable(p, x.reuse ? [x.reuse] : []);
     const hours = !timetable.clash.length && Object.keys(timetable.tags).length;
     const open = decide.filter(q => q.kind === 'broken' || !q.answer).length;
     const adds = stops.filter(y => y.add).length, changes = stops.filter(y => y.change).length;
-    const splitOps = x.keepWays ? 0 : x.splits * 2;   // a split: the way and its new piece (repairs of other relations too, uncounted)
+    const asIs = detoured(p) && x.reuse;   // on a detour: the relation's stops and roads stay
+    const splitOps = x.keepWays || asIs ? 0 : x.splits * 2;   // a split: the way and its new piece (repairs of other relations too, uncounted)
     const count = adds + changes + 1 + splitOps + (S.fixit.keepDuplicates ? 0 : x.duplicates.length) + (x.masters.length ? 0 : 1);
     // splitting a road also changes every other relation on it (a highway route, another bus): found when it's split
     const more = splitOps > 0;
@@ -123,10 +125,11 @@ const FixIt = {
       el('a', {href: '#', class: 'muted', style: 'margin-left:6px', onclick: e => { e.preventDefault(); Review.open(p.id); }}, 'see each')));
     if (x.adds) ul.append(el('li', {}, `${x.adds} stop${x.adds > 1 ? 's' : ''} the agency has and OSM hasn't: added at the agency's point (at the kerb beside it, where that's in the road), with its tags`));
     const relWhat = rp.reuse ? `relation ${rp.reuse.tags.name || 'r' + rp.reuse.id} rewritten` : 'a new relation';
-    ul.append(el('li', {}, `${relWhat}: the agency's ${p.stops.length} stops in order, then the roads of its line` +
+    if (detoured(p) && rp.reuse) ul.append(el('li', {}, `relation ${rp.reuse.tags.name || 'r' + rp.reuse.id}: its tags brought up to date; its stops and roads as they are (the route is on a detour, and OSM maps the regular route)`));
+    else ul.append(el('li', {}, `${relWhat}: the agency's ${p.stops.length} stops in order, then the roads of its line` +
       (rp.keepWays ? ' (the mapper\'s roads kept: they already follow the line)' : rp.splits ? `, split where the bus turns partway along a road (${rp.splits})` : '') +
       (rp.refKept ? `; ref ${rp.refKept} kept (the agency's "${rp.tags.ref}" is it with a qualifier)` : '')));
-    if (rp.dropped.length) ul.append(el('li', {}, `${rp.dropped.length} road${rp.dropped.length > 1 ? 's' : ''} the relation drove that the agency's line doesn't, dropped: `,
+    if (rp.dropped.length && !(detoured(p) && rp.reuse)) ul.append(el('li', {}, `${rp.dropped.length} road${rp.dropped.length > 1 ? 's' : ''} the relation drove that the agency's line doesn't, dropped: `,
       el('span', {class: 'muted'}, [...new Set(rp.dropped.map(w => w.name || `w${w.way}`))].slice(0, 8).join(', ') + (new Set(rp.dropped.map(w => w.name || w.way)).size > 8 ? ', …' : '')),
       el('span', {class: 'muted'}, ' (if the bus does drive one, say so on the map: "bus uses this road")')));
     if (x.hours) ul.append(el('li', {}, `the timetable on it: ${Object.entries(x.timetable.tags).map(([k, v]) => `${k}=${v}`).join(', ')}`));
@@ -196,6 +199,7 @@ const FixIt = {
         if (y.change) {
           const o = y.st.o, c = y.change;
           const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
+          if (c.move) markUndo(key, s);
           Edits.ops[key].suggested = true; Edits.ops[key].route = r.short;
           if (c.move && mergedWith(s)) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
         }

@@ -19,6 +19,8 @@ import json, math, os, sys, urllib.request
 JUMP = 10      # m: the agency's point moving at least this much between feed versions is the stop moving
 SAME = 2.5     # m: a node within this of an agency point was put there from the agency's data
 HELD = 1.0     # m: a node version this far from the one before it was moved by someone
+AWAY = 50      # m: a move this long, leaving the node this far from the agency's spot, is away from the stop (a
+               #    mapper putting a node on its sign moves it less: that's placing it, not moving it away)
 REUSED = 400   # m: past this it isn't the stop moving along its street; the id is another stop's now
 
 
@@ -87,18 +89,38 @@ def history(api, node_id, cache_dir, refresh=False, version=None):
     path = os.path.join(cache_dir, 'history', f'node-{node_id}.json')
     if not refresh and os.path.exists(path):
         hs = json.load(open(path))
-        if not version or (hs and (hs[-1].get('version') or 0) >= version):
+        # (kept before the changeset was: read again, once)
+        if (not version or (hs and (hs[-1].get('version') or 0) >= version)) and (not hs or 'changeset' in hs[-1]):
             return hs
     try:
         req = urllib.request.Request(f'{api}/api/0.6/node/{node_id}/history.json', headers={'User-Agent': 'flagstop (GTFS/OSM route review)'})
         with urllib.request.urlopen(req, timeout=60) as r:
-            hs = [{k: e.get(k) for k in ('version', 'lat', 'lon', 'user', 'timestamp')} for e in json.load(r)['elements']]
+            hs = [{k: e.get(k) for k in ('version', 'lat', 'lon', 'user', 'timestamp', 'changeset')} for e in json.load(r)['elements']]
     except Exception as e:
         print(f'history of n{node_id}: {e}', file=sys.stderr)
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump(hs, open(path, 'w'))
     return hs
+
+
+def moved_away(history, point, far, away=AWAY):
+    """OSM's node was at the agency's spot and someone moved it away: {'user', 'date', 'changeset', 'm', 'back':
+    [lon, lat]} of the edit that did (back: where it was before), or None. history: oldest first; point: the
+    agency's (lat, lon); far: metres within which it counts as at the agency's spot. Only the latest such edit,
+    and only if nothing after it brought the node back."""
+    hs = [h for h in history or [] if h.get('lat') is not None]
+    near = lambda h: dist(h['lat'], h['lon'], point[0], point[1]) <= far
+    if len(hs) < 2 or dist(hs[-1]['lat'], hs[-1]['lon'], point[0], point[1]) < away:
+        return None   # at the spot, or near enough that someone may have placed it on the sign
+    for i in range(len(hs) - 1, 0, -1):
+        if near(hs[i - 1]) and not near(hs[i]):
+            a, b = hs[i - 1], hs[i]
+            if dist(a['lat'], a['lon'], b['lat'], b['lon']) < away:
+                return None   # a short move, placing it: the mapper's
+            return {'user': b.get('user'), 'date': (b.get('timestamp') or '')[:10], 'changeset': b.get('changeset'),
+                    'm': round(dist(a['lat'], a['lon'], b['lat'], b['lon'])), 'back': [a['lon'], a['lat']], 'version': b.get('version')}
+    return None
 
 
 def plan(stop, node, jump, prov, far):

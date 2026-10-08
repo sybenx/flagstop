@@ -392,6 +392,20 @@ class StopMoves(unittest.TestCase):
         self.assertIsNone(P.plan(None, new, j, 'hand', far=15))                     # OSM already has it at the new spot
         self.assertIsNone(P.plan(None, old, None, 'hand', far=15))                  # no move in the feed's history
 
+    def test_moved_away_from_the_agency_spot(self):
+        P = self.P
+        at = {'lat': 41.719789, 'lon': -111.835135}
+        hist = [{'version': 1, **at, 'user': 'a', 'timestamp': '2024-01-09T00:00:00Z', 'changeset': 1},
+                {'version': 2, **at, 'user': 'b', 'timestamp': '2025-04-02T00:00:00Z', 'changeset': 2},
+                {'version': 3, 'lat': 41.717576, 'lon': -111.836611, 'user': 'c', 'timestamp': '2026-02-05T00:00:00Z', 'changeset': 3}]
+        away = P.moved_away(hist, (41.719811, -111.835184), 15)
+        self.assertEqual((away['user'], away['date'], away['changeset'], away['back']), ('c', '2026-02-05', 3, [-111.835135, 41.719789]))
+        self.assertGreater(away['m'], 250)
+        self.assertIsNone(P.moved_away(hist[:2], (41.719811, -111.835184), 15), 'still at the spot')
+        self.assertIsNone(P.moved_away(hist[2:], (41.719811, -111.835184), 15), 'never was at it: made elsewhere')
+        placed = hist[:2] + [{'version': 3, 'lat': 41.719789 + 24 / 110540, 'lon': -111.835135, 'user': 'd', 'timestamp': '2025-08-05T00:00:00Z', 'changeset': 4}]
+        self.assertIsNone(P.moved_away(placed, (41.719811, -111.835184), 15), 'moved 24 m onto its sign: placed by hand, not moved away')
+
     def test_a_move_across_a_version_without_the_stop_still_counts(self):
         gap = {'version': 'detour', 'stops': {'b': self.v1['stops']['b']}}   # 'a' dropped for a detour
         j = self.P.jumps([self.v1, gap, self.v2])
@@ -406,7 +420,7 @@ class StopMoves(unittest.TestCase):
         d = tempfile.mkdtemp()
         try:
             os.makedirs(os.path.join(d, 'history'))
-            json.dump([{'version': 1, 'lat': 41.74, 'lon': -111.83}], open(os.path.join(d, 'history', 'node-5.json'), 'w'))
+            json.dump([{'version': 1, 'lat': 41.74, 'lon': -111.83, 'changeset': 7}], open(os.path.join(d, 'history', 'node-5.json'), 'w'))
             nowhere = 'http://127.0.0.1:9'   # nothing listens: a fetch fails
             self.assertEqual(len(self.P.history(nowhere, 5, d, version=1)), 1, 'the copy kept is current')
             self.assertIsNone(self.P.history(nowhere, 5, d, version=2), 'OSM has a newer version: the old copy is not used')
@@ -585,6 +599,19 @@ class KerbSide(unittest.TestCase):
             self.assertEqual(review.side((os_['n3']['lon'], os_['n3']['lat']), paths['3'][0], kerb=5), 'right', "where traffic keeps left, the left kerb is the stop's side")
         finally:
             review.KERB = 'right'
+
+
+class Detours(unittest.TestCase):
+    """An itinerary on a detour: temporary stops, and stops of OSM's relation it skips."""
+
+    def test_detour_of(self):
+        p = type('P', (), {'stops': ['a', 'temp', 'b']})
+        match = {'a': {'osm': [{'id': 'n1'}]}, 'temp': {'temporary': True, 'osm': []}, 'b': {'osm': [{'id': 'n3'}]}}
+        rel = {'members': [{'type': 'node', 'ref': 1, 'role': 'platform'}, {'type': 'node', 'ref': 2, 'role': 'platform'}, {'type': 'node', 'ref': 3, 'role': 'platform'}, {'type': 'way', 'ref': 9, 'role': ''}]}
+        self.assertEqual(review.detour_of(p, [rel], match), {'temporary': ['temp'], 'skipped': ['n2']})
+        rel_followed = {'members': [m for m in rel['members'] if m['ref'] != 2]}
+        self.assertIsNone(review.detour_of(p, [rel_followed], match), 'nothing skipped: OSM follows the detour already')
+        self.assertIsNone(review.detour_of(p, [], match), 'no relation to keep')
 
 
 if __name__ == '__main__':

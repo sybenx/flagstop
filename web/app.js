@@ -399,8 +399,10 @@ function draw() {
     set('shape', p.shape.length ? [line(p.shape)] : []);
     // proposing a merge: show the relations as they are, or the route as the one relation would have it
     const mv = S.merge && S.merge.pid === p.id ? S.merge.view : null;
-    set('routed', r.geometry.length && mv !== 'now' ? [line(r.geometry)] : []);
-    set('rel', mv === 'proposed' ? [] : p.relations.flatMap(a => a.geometry.map(g => line(g, {id: a.id}))));
+    // (on a detour, the one relation is the kept one as it is: its roads, not the detour's path)
+    const asIs = mv === 'proposed' && detoured(p), kept = asIs && keptRelation(p);
+    set('routed', r.geometry.length && mv !== 'now' && !asIs ? [line(r.geometry)] : []);
+    set('rel', asIs ? (kept ? kept.geometry.map(g => line(g, {id: kept.id})) : []) : mv === 'proposed' ? [] : p.relations.flatMap(a => a.geometry.map(g => line(g, {id: a.id}))));
     set('div', r.divergences.map(d => point([d.lon, d.lat], {d: JSON.stringify({...d, shape: undefined, path: undefined})})));
     set('divpath', r.divergences.flatMap(d => [d.shape && d.shape.length > 1 ? line(d.shape) : null, d.path && d.path.length > 1 ? line(d.path) : null].filter(Boolean)));
     const f = stopFeatures(p.stops);
@@ -630,8 +632,9 @@ function renderRoutes(P) {
 /** After undoing someone's edit: a record of it for their changeset. It reads as what it is, tool output:
     facts (ids, versions, changesets, effect), no greeting, no thanks. The reviewer posts it, or doesn't. */
 function revertNote(u, newId) {
-  const dir = u.now.replace('one-way ', '');
-  const text = `[flagstop] Reverted direction of way ${u.way} (${u.name}) in changeset ${newId}. This edit made it ${u.was}, leaving no ${dir}bound way here.${u.route ? ` Used by bus route ${u.route}.` : ''}`;
+  const text = u.kind === 'stop'
+    ? `[flagstop] Moved bus stop node ${u.node} (${u.name}) back ${u.m} m to its position before this edit, in changeset ${newId}. The agency's stop is at that position (GTFS).`
+    : `[flagstop] Reverted direction of way ${u.way} (${u.name}) in changeset ${newId}. This edit made it ${u.was}, leaving no ${u.now.replace('one-way ', '')}bound way here.${u.route ? ` Used by bus route ${u.route}.` : ''}`;
   const ta = el('textarea', {rows: 3, style: 'width:100%;margin-top:4px'}); ta.value = text;
   return el('div', {class: 'note', style: 'margin-top:10px'},
     el('b', {}, `Record for ${u.user}'s changeset ${u.changeset}`), el('div', {class: 'muted'}, 'This upload undid part of it. To leave a record there, copy this into the comment box on their changeset:'),
@@ -685,10 +688,18 @@ const looked = sid => S.looked.has(sid);
 /** Where a stop goes when it's moved: OSM's node shifted by the agency's move, when the agency moved it and a mapper
  *  had placed the node by hand (its offset from the agency's point kept; tool/positions.py); else the agency's
  *  point, or the kerb beside it when that's in the road, as for a new stop (newStopSpot). -> {at: [lon, lat], kerb} */
-const moveSpot = s => s.match && s.match.move_how === 'shift' && s.match.move_to ? {at: s.match.move_to} :
+const moveSpot = s => s.match && (s.match.move_how === 'shift' || s.match.move_how === 'restore') && s.match.move_to ? {at: s.match.move_to, restore: s.match.move_how === 'restore'} :
   s.match && s.match.inroad ? {at: s.match.inroad.at, kerb: true, inroad: true} : newStopSpot(s, S.pattern && patternById(S.pattern));
 const moveTo = s => moveSpot(s).at;
 const moveLL = s => { const [lon, lat] = moveTo(s); return {lat, lon}; };
+/** A stop moved back to where it was before someone moved it away (tool/positions.py moved_away): the op says whose
+ *  edit it undoes, so the Changes tab says so and offers a record for their changeset after the upload. */
+function markUndo(key, s) {
+  const a = s.match && s.match.move_how === 'restore' && s.match.moved_away, op = key && Edits.ops[key];
+  if (!a || !op) return;
+  op.undoes = {kind: 'stop', user: a.user, changeset: a.changeset, date: a.date, node: op.id, m: a.m, name: s.name};
+  Edits.save();
+}
 /** Where a new stop goes: the agency's point, unless that's in the road (often the centre line, or the middle of a
  *  junction): then at the kerb beside it, on the side buses pull in at (the build finds which, D.positions.kerb).
  *  A point already beside the road stays (a stop on the left of a one-way street is one). p: the itinerary it's
@@ -760,14 +771,14 @@ function lookFeatures() {
   const shift = s.match && s.match.move_how === 'shift';
   // where it goes, moved or new: at the kerb, when the agency's point is in the road
   const spot = moveSpot(s), to = spot.at;
-  const out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : spot.inroad ? 'goes here: the kerb beside it' : spot.kerb ? `goes here: at the kerb by the agency's point` : `agency: ${s.name}`})];
-  if (shift || (spot.kerb && !spot.inroad)) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
+  const out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : spot.restore ? 'goes back: where it was before it was moved away' : spot.inroad ? 'goes here: the kerb beside it' : spot.kerb ? `goes here: at the kerb by the agency's point` : `agency: ${s.name}`})];
+  if (shift || spot.restore || (spot.kerb && !spot.inroad)) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
   if (o) {
     const now = osmPos(o), dm = Math.round(m(now, to));
     out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
     if (dm >= 3) out.push(line([now, to], {label: `${dm} m`}));
   }
-  for (const x of c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
+  for (const x of spot.restore ? [] : c.slice(1)) { const q = D.osm_stops[x.id]; if (q && q !== o) out.push(point([q.lon, q.lat], {kind: 'other', label: `also: ${q.tags.name || q.id} (OSM)`})); }
   const g = mergedWith(s);
   if (g && !c.some(x => x.id === g.id)) out.push(point([g.lon, g.lat], {kind: 'now', label: `goes: ${g.tags.name || g.id} (OSM)`}));
   return out;
@@ -889,6 +900,17 @@ function renderPattern(P, p) {
       'Probably one per timetable; GTFS says it\'s the same route every day. ', el('button', {class: 'b primary tiny', onclick: () => Merge.open(p)}, 'See the proposed merge')));
   }
   if (p.loop && p.loop.length) d.append(el('div', {class: 'note'}, `One loop, run by one bus: the feed splits each trip in two at ${D.stops[p.split_at] ? D.stops[p.split_at].name : 'a stop'}, but the bus carries straight on and passengers ride through. In OSM it's one round-trip relation.`));
+  if (p.detour) {
+    // on a detour: OSM keeps the regular route unless the reviewer says to map the detour (a long one)
+    const names = ids => ids.map(x => (D.stops[x] || D.osm_stops[x] || {}).name || ((D.osm_stops[x] || {}).tags || {}).name || x);
+    const mapping = mapsDetour(p);
+    d.append(el('div', {class: 'note'}, el('b', {}, 'On a detour. '),
+      `The agency runs it through ${names(p.detour.temporary).join(', ')}, and skips ${p.detour.skipped.length} stop${p.detour.skipped.length > 1 ? 's' : ''} OSM's relation has (${names(p.detour.skipped).join(', ')}). `,
+      mapping ? "Mapping the detour: the relation follows the agency's route while it lasts, with a note saying it's a diversion. Put the regular route back when it's over."
+        : "OSM maps the regular route: the relation's stops and roads stay as they are while it lasts; its codes, names and timetable are still brought up to date.",
+      el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => { Edits.answer('route:' + p.id, 'detour', mapping ? null : 'map'); render(); draw(); }},
+        mapping ? 'Keep the regular route' : 'Map the detour instead (one lasting months)'))));
+  }
   if (p.temporary) d.append(el('div', {class: 'note warn'}, 'Only run by a short-dated service: a detour or a special. Usually not mapped; see ? for the convention.'));
   const sc = rt.score || {};
   d.append(el('div', {class: 'kv'},
@@ -1063,6 +1085,12 @@ function relationPlan(p) {
 }
 /** The itinerary's relation into Changes: rewritten (reused) or new, PTv2 members in order, the roads split where
  *  the bus turns. opts.quiet: no toasts but failures; opts.extraTags: more tags (a timetable). -> {ok, why, key} */
+/** The itinerary is on a detour (tool/review.py detour_of: temporary stops, and stops of OSM's relation it goes round)
+ *  and the reviewer hasn't said to map the detour: OSM keeps the regular route, so its relation's stops and roads
+ *  are left as they are, and only its tags are brought up to date. */
+const mapsDetour = p => ((Edits.answers['route:' + p.id] || {}).detour === 'map');
+const detoured = p => !!(p && p.detour && !mapsDetour(p));
+const DIVERSION = "Diversion: the agency's temporary route (detour); back to the regular route when it's over";
 async function proposeRelation(p, opts = {}) {
   const say = (m, ms) => { if (!opts.quiet) toast(m, ms); };
   if (!p.routed) { toast("This route's roads are still loading: try again in a moment", 5000); return {ok: false, why: 'not routed yet'}; }
@@ -1070,20 +1098,24 @@ async function proposeRelation(p, opts = {}) {
   const made = Object.values(Edits.uploaded).find(o => o.kind === 'create' && o.type === 'relation' && o.note === p.id);
   if (made) { const why = `its new relation went up in changeset ${made.uploaded}, and the data here doesn't have it yet: refresh from OSM first`; say(`Not added: ${why}`, 8000); return {ok: false, why}; }
   const x = relationPlan(p), rt = x.rt;
+  const asIs = detoured(p) && x.reuse;   // on a detour: the regular route's stops and roads stay
+  if (asIs) x.chainOk = true;
   if (!x.chainOk && !opts.quiet && !confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return {ok: false, why: 'the routed path is broken'};
   if (!x.chainOk && opts.quiet) return {ok: false, why: "the routed path is broken (a leg didn't connect): re-route it first"};
-  const members = [];
-  for (const sid of p.stops) {
+  const members = asIs ? ((Edits.get('r' + x.reuse.id) || {}).members || x.reuse.members).map(m => ({...m})) : [];
+  for (const sid of asIs ? [] : p.stops) {
     const ref = stopNodeRef(D.stops[sid]), sp = (p.stop_positions || {})[sid];
     // PTv2: the stop position on the road (where the stop has one), then the platform
     if (ref && sp) members.push({type: 'node', ref: sp, role: 'stop'});
     if (ref) members.push(ref.key ? {key: ref.key, role: 'platform'} : {type: 'node', ref: ref.ref, role: 'platform'});
   }
-  const tags = {...x.tags, ...(opts.extraTags || {})}, reuse = x.reuse, keepWays = x.keepWays;
+  const tags = {...x.tags, ...(opts.extraTags || {}), ...(p.detour && mapsDetour(p) ? {note: DIVERSION} : {})}, reuse = x.reuse, keepWays = x.keepWays;
+  if (asIs) { if (reuse.tags['gtfs:shape_id']) tags['gtfs:shape_id'] = reuse.tags['gtfs:shape_id']; else delete tags['gtfs:shape_id']; }   // the detour's shape isn't the route's
   let out = {ok: true, why: '', key: null};
   Edits.hold(`relation for ${routeOf(p).short} ${p.headsign || ''}`.trim());   // the splits and the relation: one undo
   try {
-    if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
+    if (asIs) { /* its stops and roads, as they are */ }
+    else if (keepWays) for (const m of reuse.members) { if (m.type === 'way') members.push({...m}); }
     else {
       // the routed path's roads, split where the bus turns partway along one: a relation whose roads don't join up
       // end to end is broken for every consumer, so that is never put in Changes
@@ -1107,7 +1139,7 @@ async function proposeRelation(p, opts = {}) {
       if (x.refKept) merged.ref = x.refKept;
       out.key = Edits.modify('relation', reuse.id, relBase(reuse), {tags: merged, members}, p.id);
       editMasters(x.masters, null, {type: 'relation', ref: reuse.id});
-      say(`Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${x.refKept ? ` (ref ${x.refKept} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
+      say(asIs ? `Relation r${reuse.id}: its tags in changes; its stops and roads as they are (the route is on a detour)` : `Relation r${reuse.id} rewritten in changes: ${members.length} members${keepWays ? ' (its ways kept: they already follow the line)' : ''}${x.refKept ? ` (ref ${x.refKept} kept: the agency's "${tags.ref}" is it with a qualifier)` : ''}`);
     } else {
       out.key = Edits.createRelation(tags, members, p.id);
       editMasters(x.masters, null, {key: out.key});
@@ -1231,22 +1263,26 @@ function renderStop(P, s) {
   } else if (st === 'moved') {
     const c = s.match.osm[0], oo = D.osm_stops[c.id];
     const gone = mergedWith(s);   // two stops the agency made one: the other goes when this one moves
-    d.append(el('h2', {style: 'margin-left:0'}, gone ? 'Two stops made one' : 'Probably moved'));
-    d.append(el('div', {class: 'small'}, gone ? s.match.decide.position.why + '.' : [`Nothing within 60 m, but OSM has `, el('b', {}, oo.tags.name || oo.id), ` ${c.dist} m away on the same street${oo.tags.ref === s.ref ? ' with the same code' : ''}. Most likely the stop moved and OSM still has the old spot.`]));
+    const away = s.match.move_how === 'restore' && s.match.moved_away;   // the node was here, until someone moved it
+    d.append(el('h2', {style: 'margin-left:0'}, gone ? 'Two stops made one' : away ? 'Moved away from it' : 'Probably moved'));
+    d.append(el('div', {class: 'small'}, gone ? s.match.decide.position.why + '.' : away
+      ? [`OSM's `, el('b', {}, oo.tags.name || oo.id), ` was at the agency's spot until ${away.user} moved it ${away.m} m away on ${away.date} (`, el('a', {href: `https://www.openstreetmap.org/changeset/${away.changeset}`, target: '_blank'}, `changeset ${away.changeset}`), `). The stop didn't move: the node did. Putting it back is the suggestion.`]
+      : [`Nothing within 60 m, but OSM has `, el('b', {}, oo.tags.name || oo.id), ` ${c.dist} m away on the same street${oo.tags.ref === s.ref ? ' with the same code' : ''}. Most likely the stop moved and OSM still has the old spot.`]));
     d.append(el('div', {class: 'btns'},
       el('button', {class: 'b primary', onclick: async () => {
         Edits.hold(`${s.name}: ${gone ? 'two stops made one' : 'moved'}`);
         try {
-          Edits.decisions[s.id] = oo.id; Edits.modify('node', osmNumId(oo), nodeBase(oo), {...moveLL(s), tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`);
+          Edits.decisions[s.id] = oo.id; markUndo(Edits.modify('node', osmNumId(oo), nodeBase(oo), {...moveLL(s), tags: identityTags(s)}, `${s.ref} ${s.name}: ${away ? 'put back' : `moved ${c.dist} m`}`), s);
           const kept = gone ? await removeStops([gone], new Set(), `merged into ${s.name}`) : [];
           toast(kept.length ? `Moved; not removed, something else uses it: ${kept.join('; ')}` : gone ? 'Moved, and the other removed: in Changes' : 'Node move added to changes', 6000);
         } finally { Edits.release(); }
         render(); draw();
-      }}, gone ? `Move it here (${c.dist} m) and remove ${gone.tags.name || gone.id}` : `Move that node here (${c.dist} m)`),
+      }}, gone ? `Move it here (${c.dist} m) and remove ${gone.tags.name || gone.id}` : away ? 'Put it back where it was' : `Move that node here (${c.dist} m)`),
       el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.save(); toast('Treated as the same stop, position kept'); render(); draw(); }}, 'Same stop, keep OSM\'s position'),
       el('button', {class: 'b', onclick: () => placeNewStop(s)}, 'Different stop — add new')));
     d.append(osmStopBox(s, oo, c, false));
-    for (const c2 of s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
+    // (its history explains it: the other stops of that name or street nearby aren't candidates)
+    for (const c2 of away ? [] : s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
     if (gone && !s.match.osm.some(c2 => c2.id === gone.id)) d.append(osmStopBox(s, gone, {how: 'the other side', dist: s.match.merged_with.dist}, false));
   } else {
     d.append(el('h2', {style: 'margin-left:0'}, st === 'ambiguous' ? 'Which is it?' : 'OSM stop'));
@@ -1312,7 +1348,8 @@ function osmStopBox(s, o, c, pickable) {
       for (const [k, cb] of Object.entries(checks)) { if (!cb.checked) continue; if (k === 'position') move = true; else tags[k] = diff[k].gtfs; }
       if (diff.tagging && (o.tags.highway !== 'bus_stop' || o.tags.public_transport !== 'platform')) Object.assign(tags, {highway: 'bus_stop', public_transport: 'platform', bus: 'yes'});
       if (!s.proposed_tags['gtfs:stop_id'] || true) tags['gtfs:stop_id'] = s.id;
-      Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
+      const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
+      if (move) markUndo(key, s);
       toast('Added to changes'); render(); draw();
     }}, 'Apply ticked → changes'), el('span', {class: 'muted', style: 'align-self:center'}, 'gtfs:stop_id is always added')));
   } else if (diff) box.append(el('div', {style: 'color:var(--ok)'}, 'Tags agree with the feed.'));
@@ -1337,6 +1374,17 @@ function placeNewStop(s) {
 // ---------- OSM-only stops ----------
 /** OSM stops no stop in the agency's data claims. The agency's own (its network, as its matched stops carry
  *  it) may be gone: look on the map, then remove. Other operators' are listed, never touched. */
+/** Removing a stop that's out of the agency's feed: two steps. A feed published during a detour leaves out stops
+ *  that come back after it, and nothing in GTFS says which: only someone who's seen it gone (imagery, the street) or
+ *  the agency's word. g: {osm id: null | 'ask' | 'remove'}. */
+function goneButtons(g, o, seen) {
+  const st = g[o.id], stop = e => e && e.stopPropagation();
+  if (st === 'remove') return [el('button', {class: 'b tiny chosen', onclick: e => { stop(e); g[o.id] = null; render(); }}, "✓ It's gone: remove it")];
+  if (st === 'ask') return [el('div', {class: 'small', style: 'flex-basis:100%'}, "Not in the agency's feed now. If that's a detour, it'll be back. Remove it only if you've seen it isn't there any more (imagery, or on the street), or the agency says it's gone for good."),
+    el('button', {class: 'b tiny', onclick: e => { stop(e); g[o.id] = 'remove'; render(); }}, "Yes, it's gone: remove it"),
+    el('button', {class: 'b tiny', onclick: e => { stop(e); g[o.id] = null; render(); }}, 'Leave it')];
+  return [el('button', {class: 'b tiny', disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { stop(e); g[o.id] = 'ask'; render(); }}, "It's gone…")];
+}
 function renderExtra(P) {
   const mine = o => (D.extra_owner || {})[o.id] !== 'other';   // the agency's, by network/operator, or saying nothing
   const nearestGtfs = o => { let b = null, bd = 1e9; for (const s of Object.values(D.stops)) { const d = m([o.lon, o.lat], [s.lon, s.lat]); if (d < bd) { bd = d; b = s; } } return [b, bd]; };
@@ -1344,7 +1392,7 @@ function renderExtra(P) {
   const ours = rows.filter(r => mine(r.o)), theirs = rows.filter(r => !mine(r.o));
   const g = S.extraGone || (S.extraGone = {});
   const chosen = ours.filter(r => g[r.o.id] === 'remove');
-  P.append(el('div', {class: 'hint'}, `Bus stops in OSM within 400 m of this network that no stop in the agency's data claims. ${ours.length} look like this agency's (by their network or operator, or none): moved, or gone. Look at each on the map; if it isn't there any more, it can come out of OSM.`));
+  P.append(el('div', {class: 'hint'}, `Bus stops in OSM within 400 m of this network that no stop in the agency's data claims. ${ours.length} look like this agency's (by their network or operator, or none): moved, gone, or left out of the feed for a while (a detour). Look at each on the map; only one that isn't there any more comes out of OSM.`));
   if (chosen.length) P.append(el('div', {class: 'btns'}, el('button', {class: 'b primary', onclick: async () => {
     Edits.hold(`remove ${chosen.length} stop${chosen.length > 1 ? 's' : ''} that are gone`);
     try {
@@ -1361,9 +1409,10 @@ function renderExtra(P) {
       el('div', {class: 'grow'}, el('div', {class: 't'}, o.tags.name || '(no name)'), el('div', {class: 's'}, [o.tags.ref ? 'ref ' + o.tags.ref : null, o.tags.operator || o.tags.network, o.tags.route_ref ? 'routes ' + o.tags.route_ref : null, `${Math.round(ng[1])} m from ${ng[0].name}`].filter(Boolean).join(' · ')),
         (o.served_by || []).length ? el('div', {class: 'small muted'}, `In ${o.served_by.join(', ')}'s own feed: still served, not gone.`) : null,
         (() => { const into = Object.values(D.stops).find(t => t.match && t.match.merged_with && t.match.merged_with.id === o.id); return into ? el('div', {class: 'small muted'}, 'The agency merged it into ', el('a', {href: '#', onclick: e => { e.preventDefault(); e.stopPropagation(); showStop(into.id); }}, into.name), ': removed when that one moves.') : null; })(),
-        removable && !op && !(o.served_by || []).length ? el('div', {class: 'btns', style: 'margin-top:4px'},
+        (D.detoured || {})[o.id] ? el('div', {class: 'small muted'}, `Route ${D.detoured[o.id].join(', ')}'s detour goes round it: back when the detour's over. Left as it is.`) : null,
+        removable && !op && !(o.served_by || []).length && !(D.detoured || {})[o.id] ? el('div', {class: 'btns', style: 'margin-top:4px'},
           el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: e => { e.stopPropagation(); S.looked.add('osm:' + o.id); render(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); popupOsm(o.id, [o.lon, o.lat]); }}, 'Show on map'),
-          el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: e => { e.stopPropagation(); g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone"),
+          ...goneButtons(g, o, seen),
           seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:6px', onclick: e => { e.preventDefault(); e.stopPropagation(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null) : null,
         op ? el('span', {class: 'chip edit'}, op.uploaded ? (op.kind === 'delete' ? 'removed' : 'uploaded') : op.kind === 'delete' ? 'to remove' : 'edited') : null,
         o.notes && o.notes.length ? noteLines(o.notes) : null),

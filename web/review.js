@@ -155,6 +155,7 @@ const Review = {
       for (const st of changing) {
         const c = this.change(st), s = st.s, o = st.o;
         const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
+        if (c.move) markUndo(key, s);
         Edits.ops[key].suggested = true;   // counts toward the per-upload cap
         Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
         // two stops the agency made one: the one moved here stays, the other goes

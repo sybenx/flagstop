@@ -312,6 +312,18 @@ def main():
         if pl:
             m['decide']['position'] = {'pick': 'ask', 'why': pl['why']}
             m.update(move_to=pl['to'], move_how=pl['how'], provenance=prov, jump=j)
+    # OSM's node was at the agency's spot until someone moved it away (a slip of the mouse, an edit about something
+    # else): its history says so, and where it was. Putting it back is the suggestion, still asked, on the map.
+    for sid, m in match.items():
+        if not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None) or m.get('move_how') or m.get('merged_with'):
+            continue
+        o, s = osm_stops[m['osm'][0]['id']], feed.stops[sid]
+        if o['id'][0] != 'n' or stopmatch.dist(s.lat, s.lon, o['lat'], o['lon']) <= stopmatch.FAR:
+            continue
+        away = positions.moved_away(positions.history(api, o['osm_id'], a.cache, a.refresh, o.get('version')), (s.lat, s.lon), stopmatch.FAR)
+        if away:
+            m['decide']['position'] = {'pick': 'ask', 'why': f"OSM's stop was at the agency's spot until {away['user']} moved it {away['m']} m away on {away['date']} (changeset {away['changeset']}): put it back where it was?"}
+            m.update(move_to=away['back'], move_how='restore', moved_away=away)
     stop_areas = list(getattr(osm.parse_pt, 'stop_areas', {}).values())
     # Which relation is which pattern.
     best, chosen, scores = compare.pair(feed, None, rels, rel_ways, coords, match)
@@ -332,6 +344,7 @@ def main():
             au['both_directions'] = len(chosen.get(au['id'], [])) > 1
             au['also_covers'] = [x for x in chosen.get(au['id'], []) if x != p.id]
         patterns_out.append({
+            'detour': detour_of(p, audits, match),
             'id': p.id, 'route_id': p.route_id, 'direction': p.direction, 'direction_name': p.direction_name, 'headsign': p.headsign,
             'shape_id': p.shape_id, 'stops': p.stops, 'trips': p.trips, 'variants': p.variants, 'temporary': p.temporary,
             'alt_shapes': p.alt_shapes, 'alt_stops': p.alt_stops, 'loop': p.loop, 'split_at': p.split_at,
@@ -393,6 +406,9 @@ def main():
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
         'feed_changes': feed_changes,
         'extra_stops': extra,
+        # OSM stops a detour goes round, by route (an itinerary's 'detour'): they're coming back, not gone
+        'detoured': {oid: sorted({feed.routes[p.route_id].ref for p in feed.patterns if (pd := next((x for x in patterns_out if x['id'] == p.id), None)) and pd['detour'] and oid in pd['detour']['skipped']})
+                     for oid in {o for x in patterns_out if x['detour'] for o in x['detour']['skipped']}},
         'extra_owner': {k: 'other' if osm_stops[k].get('served_by') else stopmatch.owner(feed, osm_stops[k], conv, aliases) for k in extra if k in osm_stops},
         'other_agencies': sorted({x['agency'] for x in other_stops}),
         'unpaired_relations': unpaired,
@@ -426,6 +442,21 @@ def write_gpx(path, feed, p):
 
 def round_pts(pts):
     return [[round(x, 6), round(y, 6)] for x, y in pts]
+
+
+def detour_of(p, audits, match):
+    """An itinerary the agency runs on a detour: it calls at temporary stops ('Temp Stop', '(Detour)'), and OSM's
+    relation for it has stops it doesn't call at (the ones the detour goes round). -> {'temporary': [stop ids],
+    'skipped': [OSM ids]} or None. OSM maps the regular route: the page leaves the relation's stops and roads as
+    they are while it lasts. (Temporary stops OSM's relation already has, nothing skipped: a detour OSM followed,
+    or one long enough to be the route now: not this.)"""
+    temps = [sid for sid in dict.fromkeys(p.stops) if (match.get(sid) or {}).get('temporary')]
+    if not temps or not audits:
+        return None
+    ours = {(match.get(sid) or {}).get('osm', [{}])[0].get('id') for sid in p.stops if (match.get(sid) or {}).get('osm')}
+    skipped = list(dict.fromkeys(f"n{x['ref']}" for au in audits for x in au.get('members', [])
+                                 if x['type'] == 'node' and (x.get('role') or '').startswith('platform') and f"n{x['ref']}" not in ours))
+    return {'temporary': temps, 'skipped': skipped} if skipped else None
 
 
 def write_roads(feed, out, cache, budget=20 * 60):

@@ -57,6 +57,14 @@ const Merge = {
     const unpicked = stops.filter(x => x.o && (x.s.match || {}).status === 'ambiguous')
       .flatMap(x => x.s.match.osm.map(c => ({o: D.osm_stops[c.id], sid: x.s.id}))).filter(x => x.o && !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
     const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
+    // on a detour (and not told to map it): the kept relation's stops and roads stay as they are, the regular route;
+    // so nothing is left off it, nothing split, and the detour's temporary stops aren't asked about
+    if (detoured(p)) {
+      if (keep.tags['gtfs:shape_id']) tags['gtfs:shape_id'] = keep.tags['gtfs:shape_id']; else delete tags['gtfs:shape_id'];   // the detour's shape isn't the route's
+      const asked = decide.filter(q => !(q.kind === 'missing' && q.s.match && q.s.match.temporary));
+      return {p, r, rels, keep, drop, master, name, tags, stops, decide: asked, open: asked.filter(q => !q.answer).length, questions, stale: [], splits: [], timetable, clash, uneven, gone: [], detour: true};
+    }
+    if (p.detour) tags.note = DIVERSION;   // mapping the detour: say so on the relation
     return {p, r, rels, keep, drop, master, name, tags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
@@ -70,8 +78,7 @@ const Merge = {
         el('div', {style: 'margin:4px 0'}, el('button', {class: 'b tiny' + (seen ? '' : ' primary'), onclick: () => { S.looked.add('osm:' + o.id); S.lookStop = null; render(); draw(); map.flyTo({center: [o.lon, o.lat], zoom: 18}); }}, 'Show on map'),
           seen ? el('a', {href: '#', class: 'muted small', style: 'margin-left:8px', onclick: e => { e.preventDefault(); openIn('rapid', {lon: o.lon, lat: o.lat, zoom: 19, select: [o.id]}); }}, 'imagery') : null),
         el('div', {class: 'btns'},
-          el('button', {class: 'b tiny' + (on ? ' chosen' : ''), disabled: seen ? null : '', title: seen ? '' : 'Show it on the map first', onclick: () => { g[o.id] = on ? null : 'remove'; render(); }}, (on ? '✓ ' : '') + "It's gone: remove it from OSM"),
-          el('button', {class: 'b tiny' + (!on ? ' chosen' : ''), onclick: () => { g[o.id] = null; render(); }}, (!on ? '✓ ' : '') + 'Leave it'))));
+          ...goneButtons(g, o, seen), g[o.id] ? null : el('button', {class: 'b tiny chosen', onclick: () => { g[o.id] = null; render(); }}, '✓ Leave it'))));
     }
     return box;
   },
@@ -162,11 +169,12 @@ const Merge = {
       el('div', {class: 'fixstep want'}, el('div', {class: 'k'}, 'flagstop would'),
         el('ul', {class: 'mergelist'},
           el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"`),
-          el('li', {}, (x.stops.length < p.stops.length
+          x.detour ? el('li', {}, "keep its stops and roads as OSM has them: the route is on a detour, and OSM maps the regular route (see the route's page to map the detour instead)") : null,
+          x.detour ? null : el('li', {}, (x.stops.length < p.stops.length
             // (a stop OSM hasn't got counts once it's added, below)
             ? `give it ${x.stops.length} of the feed's ${p.stops.length} stops in order, and ${p.stops.length - x.stops.length > 1 ? 'those' : 'the one'} not in OSM if you add ${p.stops.length - x.stops.length > 1 ? 'them' : 'it'} below`
             : `give it the feed's ${x.stops.length} stops in order`) + (x.stale.length ? `; ${x.stale.length} it has now ${x.stale.length > 1 ? "aren't" : "isn't"} on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
-          el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
+          x.detour ? null : el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: this.hours(x) ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
             ` and put the timetable on it (times at its first stop, ${D.stops[p.stops[0]].name}): `, el('code', {}, Object.entries(x.timetable).map(([k, v]) => `${k}=${v}`).join('  ')),
@@ -178,7 +186,7 @@ const Merge = {
     d.append(el('div', {class: 'seg'},
       el('button', {class: 'b' + (S.merge.view === 'now' ? ' on' : ''), onclick: () => this.show('now')}, 'OSM now'),
       el('button', {class: 'b' + (S.merge.view === 'proposed' ? ' on' : ''), onclick: () => this.show('proposed')}, 'Proposed')),
-      el('div', {class: 'muted small'}, S.merge.view === 'now' ? 'On the map: the relations as they are (purple); red rings are the stops that would come out.' : 'On the map: the route as the one relation would have it (blue), and its stops.'));
+      el('div', {class: 'muted small'}, S.merge.view === 'now' ? 'On the map: the relations as they are (purple); red rings are the stops that would come out.' : x.detour ? 'On the map: the kept relation, as it stays: the regular route (purple), not the detour.' : 'On the map: the route as the one relation would have it (blue), and its stops.'));
     d.append(el('h2', {style: 'margin-left:0'}, 'Does this look right?'),
       el('div', {class: 'btns'},
         el('button', {class: 'b primary', disabled: x.open ? '' : null, title: x.open ? 'Decide the stops above first' : '', onclick: () => this.accept()}, x.open ? `Looks right (decide ${x.open} stop${x.open > 1 ? 's' : ''} first)` : 'Looks right: add to Changes'),
@@ -215,10 +223,10 @@ const Merge = {
     Edits.hold(`one relation for route ${x.r.short}`);   // the splits and the relation: one undo
     try {
       await splitWhereTheBusTurns(p, x.splits, new Set(x.rels.map(a => a.id)), say);   // its own relations are rewritten after: not repaired here
-      say('Routing it on the result…');
-      const tr = await traceWith(p.id, {});
+      say(x.detour ? 'Keeping its stops and roads…' : 'Routing it on the result…');
+      const tr = x.detour ? {ways: []} : await traceWith(p.id, {});
       await Roads.fetchWays(tr.ways.filter(w => w > 0));
-      const breaks = Roads.chainBreaks(tr.ways.map(w => Roads.way(w)));
+      const breaks = x.detour ? 0 : Roads.chainBreaks(tr.ways.map(w => Roads.way(w)));
       if (breaks) return say(`Stopped: the roads still don't join up in ${breaks} place${breaks > 1 ? 's' : ''}. The splits are in Changes; nothing else was changed.`);
       // the stop decisions: moves, a stop picked out of several, stops added
       const added = {};
@@ -227,7 +235,7 @@ const Merge = {
           const tags = {}, diff = q.s.match.diff || {};
           for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
           if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !q.o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
-          Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`);
+          markUndo(Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: ${q.s.match.move_how === 'restore' ? 'put back where it was' : "moved to the agency's spot"}`), q.s);
           const gone = mergedWith(q.s);   // two stops made one: the other goes
           if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }
@@ -236,7 +244,8 @@ const Merge = {
       }
       const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};
       const sp = p.stop_positions || {};   // PTv2: a stop's stop position on the road, then its platform
-      const members = [...x.stops.flatMap(st => [...(sp[st.s.id] ? [{type: 'node', ref: sp[st.s.id], role: 'stop'}] : []), plat(st)]), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
+      const members = x.detour ? ((Edits.get('r' + x.keep.id) || {}).members || x.keep.members).map(m => ({...m}))   // the regular route, as it is
+        : [...x.stops.flatMap(st => [...(sp[st.s.id] ? [{type: 'node', ref: sp[st.s.id], role: 'stop'}] : []), plat(st)]), ...tr.ways.map(w => ({type: 'way', ref: w, role: ''}))];
       const tags = {...x.tags, ...(hours ? x.timetable : {})};
       // stops gone for real: only if nothing else on OSM uses them (another relation); a stop that's a point on a
       // sidewalk line loses its bus stop tags instead of being deleted (deleting it would break the line)
