@@ -532,5 +532,60 @@ class OtherFeeds(unittest.TestCase):
         d = json.load(open(os.path.join(out, 'review.json')))
         self.assertEqual(len(d['patterns']), 3)
 
+class Lines(unittest.TestCase):
+    """'16 AM' and '16 PM': one line run two ways at two times. One route_master (ref 16), a relation per way it's run
+    (ref 16, the time in its name), stops list 16."""
+
+    def routes(self, *shorts):
+        import gtfs
+        rs = {str(i): gtfs.Route(id=str(i), short=x, long='', desc='Logan, Preston', type='3', color='', text_color='', url='', agency='') for i, x in enumerate(shorts)}
+        gtfs.lines(rs)
+        return rs
+
+    def test_time_of_day_routes_are_one_line(self):
+        rs = self.routes('16 AM', '16 PM', '9 Express', '9', '4 Night', '21')
+        self.assertEqual({r.short: r.ref for r in rs.values()}, {'16 AM': '16', '16 PM': '16', '9 Express': '9 Express', '9': '9', '4 Night': '4 Night', '21': '21'})
+
+    def test_one_master_and_their_refs(self):
+        import compare
+        f = Feed()
+        f.routes = self.routes('16 AM', '16 PM')
+        m0, m1 = compare.proposed_master_tags(f, '0', {}), compare.proposed_master_tags(f, '1', {})
+        self.assertEqual(m0, m1)
+        self.assertEqual((m0['ref'], m0['name'], m0['gtfs:route_id']), ('16', 'Bus 16: Logan, Preston', '0;1'))
+        s = Stop('100 Main St'); s.routes = {'0', '1'}
+        self.assertEqual(stops.proposed_tags(f, s)['route_ref'], '16')
+
+
+class KerbSide(unittest.TestCase):
+    """Which side buses pull in at, from where OSM's stops with the agency's codes are: right, or left where traffic
+    keeps left; and 'across the street' follows it."""
+
+    def setup(self, east):
+        f = Feed()
+        path = [(-111.83, 41.70 + i * 0.001) for i in range(25)]   # northward
+        osm_stops, paths = {}, {}
+        for i in range(12):
+            s = Stop(f'{i} Main St', lat=41.701 + i * 0.0015, lon=-111.83, id=str(i), code=f'c{i}')
+            f.stops[s.id] = s
+            paths[s.id] = [path]
+            osm_stops[f'n{i}'] = {'id': f'n{i}', 'lat': s.lat, 'lon': -111.83 + (1 if east else -1) * 10 / 83000, 'tags': {'highway': 'bus_stop', 'ref': f'c{i}'}}
+        return f, paths, osm_stops
+
+    def test_right_and_left(self):
+        for east, want in ((True, 'right'), (False, 'left')):
+            with self.subTest(east=east):
+                f, paths, os_ = self.setup(east)
+                self.assertEqual(review.kerb_side(f, paths, os_), want)
+
+    def test_the_kerb_side_is_never_across(self):
+        f, paths, os_ = self.setup(False)
+        try:
+            review.KERB = review.kerb_side(f, paths, os_)
+            self.assertEqual(review.side((os_['n3']['lon'], os_['n3']['lat']), paths['3'][0], kerb=5), 'right', "where traffic keeps left, the left kerb is the stop's side")
+        finally:
+            review.KERB = 'right'
+
+
 if __name__ == '__main__':
     unittest.main()

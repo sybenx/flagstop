@@ -42,10 +42,11 @@ jobs:
         run: python3 tool/catalog.py "$FEED_QUERY" --get
       # FEED_ALSO (a variable, optional): another agency sharing stops, as review.py --also takes it
       # (a GTFS URL, or passio:<system id>:<agency name> for a campus shuttle on Passio GO)
-      - name: the review (stops and routes; each route's roads load in the page)
+      # with each route's roads: the page reads them instead of public Overpass, which is often busy
+      - name: the review (stops and routes, and each route's roads)
         env:
           ALSO: ${{ vars.FEED_ALSO }}
-        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh ${ALSO:+--also "$ALSO"}
+        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --roads-per-route ${ALSO:+--also "$ALSO"}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

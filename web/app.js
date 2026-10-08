@@ -134,6 +134,13 @@ async function roadsFor(p) {
       break;   // the server answered, without roads for it
     } catch (e) { /* no server (a published copy of the page), or the connection dropped */ }
   }
+  // a published copy: the roads its build fetched, the same day as its review (review.py --roads-per-route)
+  if (!SERVER) {
+    try {
+      const r = await fetch(`data/roads/${p.id.replace(/[^A-Za-z0-9]/g, '_')}.json`);
+      if (r.ok) return await r.json();
+    } catch (e) { /* not there: Overpass */ }
+  }
   let last = null;
   // each server, then again after a pause (a busy one is often free a few seconds on); the one that answers is
   // asked first next time
@@ -678,6 +685,40 @@ const looked = sid => S.looked.has(sid);
  *  node by hand) OSM's node shifted by the agency's move. [lon, lat] (tool/positions.py) */
 const moveTo = s => (s && s.match && s.match.move_to) || [s.lon, s.lat];
 const moveLL = s => { const [lon, lat] = moveTo(s); return {lat, lon}; };
+/** Where a new stop goes: the agency's point, unless that's in the road (often the centre line, or the middle of a
+ *  junction): then at the kerb beside it, on the side buses pull in at (the build finds which, D.positions.kerb).
+ *  A point already beside the road stays (a stop on the left of a one-way street is one). p: the itinerary it's
+ *  added for, else any routed one calling there. -> {at: [lon, lat], kerb: true if moved there} */
+function newStopSpot(s, p) {
+  const pt = [s.lon, s.lat], q = [p, ...D.patterns.filter(x => x.stops.includes(s.id))].find(x => x && x.routed && x.graph);
+  if (!q) return {at: pt};
+  const rt = routedOf(q), geom = rt.geometry || [];
+  const kx = 111320 * Math.cos(s.lat * Math.PI / 180), ky = 110540;
+  const near = (line, f) => {   // the nearest segment of a line to the point, in metres
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = line[i], b = line[i + 1], vx = (b[0] - a[0]) * kx, vy = (b[1] - a[1]) * ky, wx = (pt[0] - a[0]) * kx, wy = (pt[1] - a[1]) * ky, L2 = vx * vx + vy * vy;
+      if (!L2) continue;
+      const u = Math.max(0, Math.min(1, (wx * vx + wy * vy) / L2));
+      f({d: Math.hypot(wx - u * vx, wy - u * vy), a, vx, vy, u, L: Math.sqrt(L2)});
+    }
+  };
+  let best = null;
+  near(geom, x => { if (!best || x.d < best.d) best = x; });
+  if (!best) return {at: pt};
+  // how wide the road is: its width, its lanes, or what its kind usually is (centre to kerb, m)
+  let road = null;
+  for (const wid of rt.ways || []) {
+    const w = q.graph.ways.get(wid);
+    if (w) near(w.nodes.map(n => q.graph.coord.get(n)).filter(Boolean), x => { if (!road || x.d < road.d) road = {d: x.d, tags: w.tags || {}}; });
+  }
+  const t = (road && road.tags) || {}, hw = String(t.highway || '').replace(/_link$/, '');
+  const half = parseFloat(t.width) > 0 ? parseFloat(t.width) / 2 : parseInt(t.lanes) > 0 ? parseInt(t.lanes) * 3.25 / 2 :
+    ({motorway: 7.5, trunk: 7, primary: 6, secondary: 5.5, tertiary: 4.5, unclassified: 3.5, residential: 4, living_street: 3, service: 2.5, busway: 3.5}[hw] || 4);
+  if (best.d > half + 0.5) return {at: pt};   // beside the road already
+  const sign = ((D.positions && D.positions.kerb) || 'right') === 'right' ? 1 : -1, off = half + 1.5;   // the kerb, a step onto the pavement
+  const nx = sign * best.vy / best.L, ny = -sign * best.vx / best.L;
+  return {at: [best.a[0] + (best.u * best.vx + nx * off) / kx, best.a[1] + (best.u * best.vy + ny * off) / ky], kerb: true};
+}
 /** The OSM stop that goes when this one moves to the agency's spot (two stops the agency made one), or null. */
 const mergedWith = s => (s && s.match && s.match.merged_with && D.osm_stops[s.match.merged_with.id]) || null;
 /** The stop being looked at, drawn to stand out: OSM's stop now, the agency's spot, and the move between. */
@@ -686,8 +727,10 @@ function lookFeatures() {
   if (!s) return [];
   const c = (s.match && s.match.osm) || [], o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
   const shift = s.match && s.match.move_how === 'shift';
-  const to = moveTo(s), out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : `agency: ${s.name}`})];
-  if (shift) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
+  // a stop OSM hasn't got: where it would go (at the kerb, when the agency's point is in the road)
+  const fresh = !o && !c.length ? newStopSpot(s, S.pattern && patternById(S.pattern)) : null;
+  const to = fresh ? fresh.at : moveTo(s), out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : fresh && fresh.kerb ? `goes here: at the kerb by the agency's point` : `agency: ${s.name}`})];
+  if (shift || (fresh && fresh.kerb)) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
   if (o) {
     const now = osmPos(o), dm = Math.round(m(now, to));
     out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
@@ -1049,7 +1092,9 @@ async function proposeRelation(p, opts = {}) {
 function proposeMaster(r) {
   // waiting in Changes, or uploaded and not in the data yet: either way it's there, and isn't made twice
   const all = Edits.all(), members = [];
-  for (const pid of r.patterns) {
+  // a time-of-day line ('16 AM' and '16 PM'): one master for the line, every itinerary of it in it
+  const key = 'master:' + (r.line_patterns && r.line_patterns.length > r.patterns.length ? 'line:' + r.line : r.id);
+  for (const pid of r.line_patterns || r.patterns) {
     const p = patternById(pid);
     if (p.temporary) continue;
     const key = Object.keys(all).find(k => all[k].type === 'relation' && all[k].note === pid && all[k].kind !== 'delete');
@@ -1059,17 +1104,17 @@ function proposeMaster(r) {
   }
   if (!members.length) return toast('No relations to put in it yet');
   const sig = x => { const y = Edits.resolveMember(x) || x; return y.type + y.ref; };
-  const mk = Object.keys(all).find(k => all[k].kind === 'create' && all[k].type === 'relation' && all[k].note === 'master:' + r.id);
+  const mk = Object.keys(all).find(k => all[k].kind === 'create' && all[k].type === 'relation' && all[k].note === key);
   if (mk) {
     // made already (for the other direction): what's missing from it goes in
     const m = all[mk], have = new Set((m.members || []).map(sig)), add = members.filter(x => !have.has(sig(x)));
     if (!add.length) return;
     if (Edits.ops[mk]) { Edits.ops[mk].members = [...m.members, ...add]; Edits.save(); }
-    else Edits.modify('relation', m.newId, {version: m.newVersion, tags: m.tags, members: m.members}, {members: [...m.members, ...add]}, 'master:' + r.id);
+    else Edits.modify('relation', m.newId, {version: m.newVersion, tags: m.tags, members: m.members}, {members: [...m.members, ...add]}, key);
     toast('route_master: added to it in changes'); render();
     return;
   }
-  Edits.createRelation(r.proposed_master_tags, members, 'master:' + r.id);
+  Edits.createRelation(r.proposed_master_tags, members, key);
   toast('route_master added to changes'); render();
 }
 
@@ -1247,11 +1292,12 @@ function osmStopBox(s, o, c, pickable) {
 }
 /** Drop a new node at the agency's position, draggable until the reviewer is happy. */
 function placeNewStop(s) {
-  const key = Edits.createNode(s.lat, s.lon, s.proposed_tags, `${s.ref} ${s.name}: new stop`);
-  const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat([s.lon, s.lat]).addTo(map);
+  const {at, kerb} = newStopSpot(s, S.pattern && patternById(S.pattern));
+  const key = Edits.createNode(at[1], at[0], s.proposed_tags, `${s.ref} ${s.name}: new stop`);
+  const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat(at).addTo(map);
   mk.on('dragend', () => { const ll = mk.getLngLat(); const op = Edits.get(key); if (op) { op.lat = ll.lat; op.lon = ll.lng; Edits.save(); } });
   S.placing = mk;
-  toast('Node added at the agency\'s position. Drag the marker onto the sign (imagery), then it\'s in Changes.', 6000);
+  toast(`Node added ${kerb ? "at the kerb by the agency's point (theirs is in the road)" : "at the agency's position"}. Drag the marker onto the sign (imagery), then it's in Changes.`, 6000);
   render(); draw();
 }
 

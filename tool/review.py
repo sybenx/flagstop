@@ -34,10 +34,14 @@ def days_of(c):
     return ','.join(out)
 
 
-def side(p, geom, kerb=3):
-    """Which side of a bus path a point is on: 'right' (the kerb buses pull into; traffic drives on the right),
-    'left' (across the street), or None (within kerb metres of the line, or beyond either end of it, where a side
-    means nothing)."""
+KERB = 'right'   # the side of the road buses pull in at, as you face the way they go: set per feed (kerb_side)
+
+
+def side(p, geom, kerb=3, geometric=False):
+    """Which side of a bus path a point is on: 'right' (the kerb buses pull into), 'left' (across the street), or
+    None (within kerb metres of the line, or beyond either end of it, where a side means nothing). Where traffic
+    drives on the left (KERB 'left'), the kerb is on the left: 'right' still means the kerb's side. geometric: the
+    side as it is, whichever the traffic keeps to."""
     best = None
     for i in range(len(geom) - 1):
         a, b = geom[i], geom[i + 1]
@@ -53,7 +57,27 @@ def side(p, geom, kerb=3):
             best = (d, vx * wy - vy * wx, (i == 0 and u == 0.0) or (i == len(geom) - 2 and u == 1.0))
     if not best or best[0] < kerb or best[2]:
         return None
-    return 'left' if best[1] > 0 else 'right'
+    g = 'left' if best[1] > 0 else 'right'
+    return g if geometric or KERB == 'right' else {'left': 'right', 'right': 'left'}[g]
+
+
+def kerb_side(feed, paths, osm_stops, near=60):
+    """Which side buses pull in at here: where OSM's stops carrying the agency's codes are, beside the buses' paths
+    (on the right where traffic keeps right; most of the world, not all). 'right' unless clearly 'left'."""
+    by_ref = {}
+    for o in osm_stops.values():
+        if o['tags'].get('ref') and stopmatch.is_platform(o):
+            by_ref.setdefault(o['tags']['ref'], []).append(o)
+    n = {'left': 0, 'right': 0}
+    for sid, gs in paths.items():
+        s = feed.stops.get(sid)
+        for o in (by_ref.get(s.code, []) if s and s.code else []):
+            if stopmatch.dist(s.lat, s.lon, o['lat'], o['lon']) <= near:
+                for g in gs:
+                    x = side((o['lon'], o['lat']), g, kerb=5, geometric=True)
+                    if x:
+                        n[x] += 1
+    return 'left' if n['left'] >= 10 and n['left'] > 2 * n['right'] else 'right'
 
 
 def stop_paths(feed, traced):
@@ -195,6 +219,7 @@ def main():
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
     ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
     ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
+    ap.add_argument('--roads-per-route', action='store_true', help="write each itinerary's roads to <out>/roads/: a published copy (no server) reads them instead of asking Overpass")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True); os.makedirs(a.cache, exist_ok=True)
@@ -225,6 +250,10 @@ def main():
     # who else stops at each OSM stop, by their own feeds: a shared stop is known, not guessed from its tags
     for o in osm_stops.values():
         o['served_by'] = sorted({x['agency'] for x in other_stops if stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon']) <= 20})
+    global KERB
+    KERB = kerb_side(feed, paths, osm_stops)
+    if KERB == 'left':
+        print('positions: buses pull in on the left here (traffic keeps left)', file=sys.stderr)
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
     typical, far = stopmatch.calibrate(match)
     print(f'positions: usually {typical} m apart; the same spot within {far} m', file=sys.stderr)
@@ -322,8 +351,11 @@ def main():
         # the route's masters: those holding a relation paired with one of its itineraries (route 16's "16 AM" and
         # "16 PM" share one master, ref 16), else one with its ref; a new master is proposed only when there is neither
         held = sorted({mid for pid in pids for rid in best.get(pid, []) if pid in chosen.get(rid, []) for mid in masters_of_rel.get(rid, [])})
+        # a time-of-day line's routes ('16 AM', '16 PM'): one line, one master, its itineraries all in it
+        line = compare.line_routes(feed, r.id)
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
-                           'patterns': pids, 'masters': held or (masters_by_ref.get(r.short, []) if r.short else []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
+                           'line': r.ref, 'line_patterns': [p.id for p in feed.patterns if p.route_id in {x.id for x in line}],
+                           'patterns': pids, 'masters': held or (masters_by_ref.get(r.ref, []) if r.ref else []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
     # open OSM notes by a stop (its agency point or its OSM node): someone saw something there
     notes = [{'id': f['properties']['id'], 'lon': f['geometry']['coordinates'][0], 'lat': f['geometry']['coordinates'][1],
@@ -353,7 +385,7 @@ def main():
         'generated': datetime.datetime.now().isoformat(timespec='minutes'),
         'agency': feed.agency, 'feed': {**feed.info, 'file': os.path.basename(a.feed), 'bbox': box}, 'osm_fetched': osm_fetched,
         # how current the data is: Overpass runs behind OSM, so this, not when it was fetched
-        'positions': {'typical': stopmatch.TYPICAL, 'far': stopmatch.FAR},
+        'positions': {'typical': stopmatch.TYPICAL, 'far': stopmatch.FAR, 'kerb': KERB},
         'osm_base': min(filter(None, [(r.get('osm3s') or {}).get('timestamp_osm_base') for r in (pt_raw, roads_raw) if r]), default=None),
         'routes': routes_out, 'patterns': patterns_out, 'stops': stops_out,
         'osm_stops': {k: {'id': v['id'], 'lat': v['lat'], 'lon': v['lon'], 'tags': v['tags'], 'version': v['version'], 'timestamp': v['timestamp'], 'user': v['user'],
@@ -377,6 +409,8 @@ def main():
         if (f.startswith('rel-') and f.endswith('.osm') or f.startswith('shape-') and f.endswith('.gpx')) and f not in keep:
             os.remove(os.path.join(a.out, f))
     json.dump(out, open(os.path.join(a.out, 'review.json'), 'w'), separators=(',', ':'))
+    if a.roads_per_route:
+        write_roads(feed, a.out, a.cache)
     s = out['summary']
     print(f"stops: {s['stops']}  patterns: {s['patterns']}  → {os.path.join(a.out, 'review.json')}", file=sys.stderr)
 
@@ -392,6 +426,44 @@ def write_gpx(path, feed, p):
 
 def round_pts(pts):
     return [[round(x, 6), round(y, 6)] for x, y in pts]
+
+
+def write_roads(feed, out, cache, budget=20 * 60):
+    """Each itinerary's roads, as the page asks tool/serve.py for them (/api/roads), in <out>/roads/<it>.json: a
+    copy published without a server (GitHub Pages) reads these, of the same day as its review, instead of public
+    Overpass, often busy. The day-old copies in <cache>/roads/ (serve.py's) are used; a route whose roads can't be
+    had is left out, and the page asks Overpass for it. Overpass is asked for `budget` seconds at most in all (on a
+    bad day every server is busy for hours): after that, what's cached or nothing."""
+    d = os.path.join(out, 'roads')
+    until = time.time() + budget
+    os.makedirs(d, exist_ok=True)
+    keep, got = set(), 0
+    for p in feed.patterns:
+        if p.temporary:
+            continue
+        name = safe(p.id) + '.json'
+        keep.add(name)
+        path = os.path.join(cache, 'roads', name)
+        if not (os.path.exists(path) and time.time() - os.path.getmtime(path) < 86400) and time.time() < until:
+            try:
+                one = type('F', (), {'patterns': [p], 'shapes': feed.shapes, 'stops': feed.stops})
+                raw = osm.fetch_roads_near(osm.corridors(one, step=100))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path + '.tmp', 'w') as f:
+                    json.dump(raw, f)
+                os.replace(path + '.tmp', path)
+            except Exception as e:
+                print(f'roads for {p.id}: {e}', file=sys.stderr)
+        if not os.path.exists(path):
+            print(f'roads for {p.id}: none to hand: left to the page', file=sys.stderr)
+            continue
+        with open(path) as f, open(os.path.join(d, name), 'w') as g:
+            json.dump(json.load(f), g, separators=(',', ':'))
+        got += 1
+    for f in os.listdir(d):
+        if f not in keep:
+            os.remove(os.path.join(d, f))
+    print(f'roads: {got} itineraries\' roads in {d}', file=sys.stderr)
 
 
 def safe(x):

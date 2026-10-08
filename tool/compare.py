@@ -283,7 +283,8 @@ def proposed_relation_tags(feed, p, stop_match, conv=None):
     if p.loop or p.stops[0] == p.stops[-1]:
         t['roundtrip'] = 'yes'   # one bus round and back to where it started (a loop the feed splits in two included)
     if route.short:
-        t['ref'] = route.short   # (a route with no short name has no ref: not an empty one)
+        # (a route with no short name has no ref: not an empty one; a time-of-day route's is its line's: '16')
+        t['ref'] = getattr(route, 'ref', route.short)
     for k in ('network', 'network:wikidata', 'operator:wikidata'):
         if conv.get(k):
             t[k] = conv[k]
@@ -308,18 +309,35 @@ def proposed_relation_tags(feed, p, stop_match, conv=None):
     return t
 
 
+def line_routes(feed, route_id):
+    """The routes of the line this one is on: itself, or all of a time-of-day line ('16 AM', '16 PM')."""
+    route = feed.routes[route_id]
+    line = getattr(route, 'line', '') or route.short
+    return [r for r in feed.routes.values() if (getattr(r, 'line', '') or r.short) == line] if line and line != route.short else [route]
+
+
 def proposed_master_tags(feed, route_id, conv=None):
+    """One route_master for the line: a time-of-day line's routes ('16 AM', '16 PM') share it."""
     conv = conv or {}
     route = feed.routes[route_id]
+    rs = line_routes(feed, route_id)
     kind = 'trolleybus' if route.type in ('11', '800') else 'bus'
-    label = f'{kind.title()} {route.short}' + (f': {route.long}' if route.long else '') if route.short else f'{kind.title()} {route.long or route.id}'
+    ref = getattr(route, 'ref', route.short)
+    if len(rs) > 1:
+        # what the line's routes have in common: the places, if the agency says them the same way for both
+        descs = {r.desc for r in rs}
+        label = f'{kind.title()} {ref}' + (f': {descs.pop()}' if len(descs) == 1 and next(iter(descs)) else '')
+    else:
+        label = f'{kind.title()} {route.short}' + (f': {route.long}' if route.long else '') if route.short else f'{kind.title()} {route.long or route.id}'
     t = {'type': 'route_master', 'route_master': kind, 'name': label,
-         'operator': conv.get('operator') or (feed.agency_name(route_id) if hasattr(feed, 'agency_name') else feed.agency.get('agency_name', '')), 'gtfs:route_id': route_id}
-    if route.short:
-        t['ref'] = route.short
+         'operator': conv.get('operator') or (feed.agency_name(route_id) if hasattr(feed, 'agency_name') else feed.agency.get('agency_name', '')),
+         'gtfs:route_id': ';'.join(sorted(r.id for r in rs))}
+    if ref:
+        t['ref'] = ref
     for k in ('network', 'network:wikidata'):
         if conv.get(k):
             t[k] = conv[k]
-    if route.color:
-        t['colour'] = '#' + route.color.upper()
+    colours = {r.color for r in rs if r.color}
+    if len(colours) == 1:   # (the line's routes in different colours: no one colour for the line)
+        t['colour'] = '#' + colours.pop().upper()
     return t

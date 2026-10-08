@@ -7,7 +7,7 @@ trip patterns (an ordered stop sequence with the shape drawn for it).
     feed.patterns                  -> [Pattern], one per (route, direction, shape, stop sequence)
     feed.shapes[shape_id]          -> [(lon, lat), ...]
 """
-import csv, datetime, io, zipfile
+import csv, datetime, io, re, zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -47,6 +47,29 @@ class Route:
     text_color: str
     url: str
     agency: str
+    line: str = ''              # the line it's part of, as on the bus: '16' for the agency's '16 AM' and '16 PM'
+
+    @property
+    def ref(self):
+        """What OSM's ref and route_ref say: the line's number (a time-of-day route is its line's variant)."""
+        return self.line or self.short
+
+
+# A route number with a word for when it runs ('16 AM', '16 PM', '9 Night', '4 Saturday'), beside another of the
+# same number: one line, run differently at different times. In OSM that's one route_master, its ref the number,
+# with a route relation for each way it's run. ('16 Express' is often a line of its own: not folded.)
+WHEN = re.compile(r'^(?P<base>\S+)\s+(?:a\.?m\.?|p\.?m\.?|peak|off[- ]?peak|night|owl|mornings?|evenings?|weekdays?|weekends?|saturdays?|sundays?)$', re.I)
+
+
+def lines(routes):
+    """Give each route its line: the number without its time-of-day word, where the feed has another route of that
+    number; else its short name."""
+    base = {r.id: (m.group('base') if (m := WHEN.match(r.short or '')) else None) for r in routes.values()}
+    count = defaultdict(int)
+    for r in routes.values():
+        count[base[r.id] or r.short] += 1
+    for r in routes.values():
+        r.line = base[r.id] if base[r.id] and count[base[r.id]] > 1 else r.short
 
 
 @dataclass
@@ -131,6 +154,8 @@ def load(path):
             id=r['route_id'], short=r.get('route_short_name', ''), long=r.get('route_long_name', ''),
             desc=r.get('route_desc', ''), type=r.get('route_type', '3'), color=r.get('route_color', ''),
             text_color=r.get('route_text_color', ''), url=r.get('route_url', ''), agency=r.get('agency_id', ''))
+
+    lines(routes)
 
     shapes = defaultdict(list)
     for r in _rows(z, 'shapes.txt'):

@@ -108,7 +108,7 @@ const Merge = {
       if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
         el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
       if (q.kind === 'missing') row.append(look(), el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
-          " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn("Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
+          " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn(newStopSpot(q.s, patternById(S.merge.pid)).kerb ? "Add it, at the kerb by the agency's point" : "Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
       box.append(row);
     }
     return box;
@@ -232,7 +232,7 @@ const Merge = {
           if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }
         if (q.kind === 'which') { Edits.decisions[q.s.id] = (S.merge.answers[q.s.id] || {}).pick; }
-        if (q.kind === 'missing' && q.answer === 'add') added[q.s.id] = Edits.createNode(q.s.lat, q.s.lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`);
+        if (q.kind === 'missing' && q.answer === 'add') { const [lon, lat] = newStopSpot(q.s, p).at; added[q.s.id] = Edits.createNode(lat, lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`); }
       }
       const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};
       const sp = p.stop_positions || {};   // PTv2: a stop's stop position on the road, then its platform

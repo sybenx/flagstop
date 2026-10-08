@@ -299,7 +299,7 @@ def network_diff(feed, o, conv, aliases=()):
     that is one of this agency's own route numbers is a route name in the wrong tag, and is replaced."""
     t, out = o['tags'], {}
     agency = feed.agency.get('agency_name', '').lower()
-    shorts = {(r.short or '').lower() for r in getattr(feed, 'routes', {}).values()} - {''}
+    shorts = {x.lower() for r in getattr(feed, 'routes', {}).values() for x in (r.short or '', getattr(r, 'line', '') or '')} - {''}
     for k in ('network', 'operator'):
         cur = conv.get(k)
         if not cur:
@@ -326,7 +326,7 @@ def keep_foreign_routes(feed, o, diff):
     rr = diff.get('route_ref')
     if not rr or not any(diff.get(k, {}).get('other') for k in ('network', 'operator')):
         return diff
-    shorts = {(r.short or '').lower() for r in getattr(feed, 'routes', {}).values()}
+    shorts = {x.lower() for r in getattr(feed, 'routes', {}).values() for x in (r.short or '', getattr(r, 'line', '') or '')}
     theirs = [x.strip() for x in (o['tags'].get('route_ref') or '').split(';') if x.strip() and x.strip().lower() not in shorts]
     ours = [x for x in rr['gtfs'].split(';') if x]
     want = ';'.join(sorted(dict.fromkeys(theirs + ours), key=lambda x: (len(x), x)))
@@ -370,7 +370,7 @@ def proposed_tags(feed, s, conv=None):
     agency = names.pop() if len(names) == 1 else agency
     if 'operator' not in t and agency:
         t['operator'] = agency
-    routes = sorted({feed.routes[r].short for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x))
+    routes = sorted({feed.routes[r].ref for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x))
     if routes:
         t['route_ref'] = ';'.join(routes)
     # An agency's 'not accessible' (2) isn't trusted: it's too often wrong (a default, an old survey). Only
@@ -394,7 +394,7 @@ def diff(feed, s, o):
         out['ref'] = {'gtfs': s.ref, 'osm': t.get('ref', '')}
     if not t.get('gtfs:stop_id'):
         out['gtfs:stop_id'] = {'gtfs': s.id, 'osm': ''}
-    want = ';'.join(sorted({feed.routes[r].short for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x)))
+    want = ';'.join(sorted({feed.routes[r].ref for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x)))
     have = ';'.join(sorted((t.get('route_ref') or '').split(';'), key=lambda x: (len(x), x))) if t.get('route_ref') else ''
     if want != have:
         out['route_ref'] = {'gtfs': want, 'osm': t.get('route_ref', '')}

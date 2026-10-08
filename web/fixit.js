@@ -192,7 +192,7 @@ const FixIt = {
       for (const y of x.stops) {
         const s = y.st.s;
         if (y.pick) Edits.decisions[s.id] = y.pick;
-        if (y.add) { const k = Edits.createNode(s.lat, s.lon, s.proposed_tags, `${s.ref} ${s.name}`); Edits.ops[k].suggested = true; Edits.ops[k].route = r.short; continue; }
+        if (y.add) { const [lon, lat] = newStopSpot(s, p).at; const k = Edits.createNode(lat, lon, s.proposed_tags, `${s.ref} ${s.name}`); Edits.ops[k].suggested = true; Edits.ops[k].route = r.short; continue; }
         if (y.change) {
           const o = y.st.o, c = y.change;
           const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
