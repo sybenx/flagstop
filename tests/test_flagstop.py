@@ -631,5 +631,71 @@ class Detours(unittest.TestCase):
         self.assertIsNone(review.detour_of(p, [], match), 'no relation')
 
 
+class Extract(unittest.TestCase):
+    """OSM from a regional extract (tool/extract.py), in the shapes Overpass gives: what the published build reads."""
+
+    def test_regions_cover_where_the_routes_go(self):
+        import extract
+        sq = lambda x0, y0, x1, y1: [[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]]
+        idx = {'features': [
+            {'properties': {'id': 'us-west', 'urls': {'pbf': 'w'}}, 'geometry': {'type': 'Polygon', 'coordinates': sq(-125, 30, -100, 50)}},
+            {'properties': {'id': 'us/utah', 'urls': {'pbf': 'u'}}, 'geometry': {'type': 'Polygon', 'coordinates': sq(-114, 37, -109, 42)}},
+            {'properties': {'id': 'us/idaho', 'urls': {'pbf': 'i'}}, 'geometry': {'type': 'Polygon', 'coordinates': sq(-117, 42, -111, 49)}}]}
+        self.assertEqual([r['id'] for r in extract.regions([(-111.8, 41.7)], '.', idx)], ['us/utah'])
+        self.assertEqual([r['id'] for r in extract.regions([(-111.8, 41.7), (-111.88, 42.1)], '.', idx)], ['us/idaho', 'us/utah'], 'across a state line: both, not the West')
+
+    def test_roads_near_cuts_a_route_s_roads(self):
+        raw = {'osm3s': {}, 'elements': [
+            {'type': 'way', 'id': 1, 'nodes': [10, 11], 'tags': {'highway': 'residential'}},
+            {'type': 'way', 'id': 2, 'nodes': [20, 21], 'tags': {'highway': 'residential'}},
+            {'type': 'relation', 'id': 5, 'members': [{'type': 'way', 'ref': 1, 'role': 'from'}], 'tags': {'type': 'restriction'}},
+            {'type': 'node', 'id': 10, 'lat': 41.7401, 'lon': -111.8301}, {'type': 'node', 'id': 11, 'lat': 41.7402, 'lon': -111.8290},
+            {'type': 'node', 'id': 20, 'lat': 41.90, 'lon': -111.50}, {'type': 'node', 'id': 21, 'lat': 41.91, 'lon': -111.50}]}
+        import osm
+        got = osm.roads_near(raw, [[(-111.83, 41.74), (-111.829, 41.7401)]])
+        self.assertEqual(sorted((e['type'], e['id']) for e in got['elements']), [('node', 10), ('node', 11), ('relation', 5), ('way', 1)])
+
+    def test_read_gives_what_the_queries_would(self):
+        try:
+            import osmium   # noqa: F401
+        except ImportError:
+            self.skipTest('no pyosmium (pip install osmium): the published build has it')
+        import tempfile, extract
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, 'x.osm')
+            t = lambda **kv: ''.join(f'<tag k="{k.replace("_", ":")}" v="{v}"/>' for k, v in kv.items())
+            nd = lambda i, lat, lon, tags='': f'<node id="{i}" version="2" timestamp="2026-01-01T00:00:00Z" lat="{lat}" lon="{lon}">{tags}</node>'
+            open(path, 'w').write('<?xml version="1.0"?><osm version="0.6">' +
+                nd(1, 41.740, -111.830) + nd(2, 41.740, -111.820) + nd(3, 41.7401, -111.825, t(highway='bus_stop', name='Stop')) +
+                nd(4, 45.0, -100.0, t(highway='bus_stop', name='Far away')) + nd(5, 41.76, -111.83) +
+                '<way id="10" version="1" timestamp="2026-01-01T00:00:00Z"><nd ref="1"/><nd ref="2"/>' + t(highway='residential', name='Main') + '</way>' +
+                '<way id="11" version="1" timestamp="2026-01-01T00:00:00Z"><nd ref="2"/><nd ref="5"/>' + t(highway='footway') + '</way>' +
+                '<relation id="100" version="3" timestamp="2026-01-01T00:00:00Z"><member type="node" ref="3" role="platform"/><member type="way" ref="10" role=""/>' + t(type='route', route='bus', ref='1') + '</relation>' +
+                '<relation id="101" version="1" timestamp="2026-01-01T00:00:00Z"><member type="relation" ref="100" role=""/>' + t(type='route_master', route_master='bus') + '</relation>' +
+                '<relation id="102" version="1" timestamp="2026-01-01T00:00:00Z"><member type="way" ref="10" role="from"/>' + t(type='restriction', restriction='no_u_turn') + '</relation>' +
+                '</osm>')
+            pt, roads = extract.read(path, (41.7, -111.9, 41.8, -111.8))
+            keys = lambda r: sorted((e['type'], e['id']) for e in r['elements'])
+            self.assertEqual(keys(pt), [('node', 1), ('node', 2), ('node', 3), ('relation', 100), ('relation', 101), ('way', 10)])
+            self.assertEqual(keys(roads), [('node', 1), ('node', 2), ('relation', 102), ('way', 10)])
+            stop = next(e for e in pt['elements'] if e['id'] == 3 and e['type'] == 'node')
+            self.assertEqual((stop['tags']['name'], stop['version']), ('Stop', 2))
+            import osm
+            stops, rels, masters, *_ = osm.parse_pt(pt)   # and the review reads it
+            self.assertIn('n3', stops)
+            self.assertIn(100, rels)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_merge_keeps_the_newer_copy(self):
+        import extract
+        a = {'osm3s': {'timestamp_osm_base': '2026-10-06T20:00:00Z'}, 'elements': [{'type': 'node', 'id': 1, 'version': 2, 'lat': 0, 'lon': 0}]}
+        b = {'osm3s': {'timestamp_osm_base': '2026-10-05T20:00:00Z'}, 'elements': [{'type': 'node', 'id': 1, 'version': 3, 'lat': 0, 'lon': 0}, {'type': 'way', 'id': 9, 'nodes': [1]}]}
+        m = extract.merge([a, b])
+        self.assertEqual([(e['type'], e['id'], e.get('version')) for e in m['elements']], [('way', 9, None), ('node', 1, 3)])
+        self.assertEqual(m['osm3s']['timestamp_osm_base'], '2026-10-05T20:00:00Z', 'as old as the oldest')
+
+
 if __name__ == '__main__':
     unittest.main()

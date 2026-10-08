@@ -24,6 +24,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # pyosmium reads the regional extract (tool/extract.py), and its test needs it
+      - name: pyosmium
+        run: pip install osmium
       # the rules and the upload path first: a failing test stops the publish before anything is built
       - name: tests (rules; the edit basket, osmChange, split and repair)
         run: |
@@ -42,11 +45,17 @@ jobs:
         run: python3 tool/catalog.py "$FEED_QUERY" --get
       # FEED_ALSO (a variable, optional): another agency sharing stops, as review.py --also takes it
       # (a GTFS URL, or passio:<system id>:<agency name> for a campus shuttle on Passio GO)
-      # with each route's roads: the page reads them instead of public Overpass, which is often busy
+      # OSM from Geofabrik's regional extract, not public Overpass (busy, and slower every year): kept in the cache,
+      # brought up to date with its daily changes. If that fails, yesterday's OSM data (in the cache) is used:
+      # the review below never asks Overpass, and with no OSM data at all it fails, so the site stays as it was.
+      - name: OSM (Geofabrik's regional extract)
+        continue-on-error: true
+        run: python3 tool/extract.py "$(ls -t cache/*.zip | head -1)" --cache cache
+      # with each route's roads: the page reads them instead of asking Overpass itself
       - name: the review (stops and routes, and each route's roads)
         env:
           ALSO: ${{ vars.FEED_ALSO }}
-        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --roads-per-route ${ALSO:+--also "$ALSO"}
+        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --no-overpass --roads-per-route ${ALSO:+--also "$ALSO"}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

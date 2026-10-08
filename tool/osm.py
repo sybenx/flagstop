@@ -129,15 +129,14 @@ def fetch_roads(bbox, feed=None):
     return fetch_roads_near(corridors(feed, step=100))
 
 
-def fetch_roads_near(lines, tries=3):
-    """The roads a bus could drive within a tile or so of these lines ([(lon, lat), ...] each), with the turn
-    restrictions on them: what one route needs, in one small query."""
+def road_boxes(lines):
+    """The boxes a route's roads are looked for in: the tiles its lines ([(lon, lat), ...] each) pass through and
+    their neighbours, neighbouring tiles in a row as one box. [(south, west, north, east)]"""
     cells = set()
     for line in lines:
         for lon, lat in line:
             i, j = int(lat // TILE), int(lon // TILE)
             cells |= {(i + di, j + dj) for di in (-1, 0, 1) for dj in (-1, 0, 1)}
-    # neighbouring tiles in a row as one box: fewer, longer boxes are quicker for Overpass
     rows = {}
     for i, j in cells:
         rows.setdefault(i, []).append(j)
@@ -150,7 +149,13 @@ def fetch_roads_near(lines, tries=3):
             boxes.append((i * TILE, start * TILE, (i + 1) * TILE, (prev + 1) * TILE))
             if j is not None:
                 start = prev = j
-    parts = ''.join(f'  way["highway"~"^({ROAD_CLASSES})$"]({s:.5f},{w:.5f},{n:.5f},{e:.5f});\n' for s, w, n, e in boxes)
+    return boxes
+
+
+def fetch_roads_near(lines, tries=3):
+    """The roads a bus could drive within a tile or so of these lines ([(lon, lat), ...] each), with the turn
+    restrictions on them: what one route needs, in one small query."""
+    parts = ''.join(f'  way["highway"~"^({ROAD_CLASSES})$"]({s:.5f},{w:.5f},{n:.5f},{e:.5f});\n' for s, w, n, e in road_boxes(lines))
     return fetch(tries=tries, query=f"""[out:json][timeout:300];
 (
 {parts})->.roads;
@@ -160,6 +165,25 @@ out body;
 .roads >;
 out skel qt;
 """)
+
+
+def roads_near(raw, lines):
+    """What fetch_roads_near(lines) gives, cut from roads already had (a regional extract's, tool/extract.py): the
+    road ways with a node in one of the route's boxes, their nodes, and the restrictions on them."""
+    boxes = road_boxes(lines)
+    at = {e['id']: (e['lat'], e['lon']) for e in raw['elements'] if e['type'] == 'node'}
+    def touches(w):   # its extent meets a box (as Overpass's bbox does, a long straight piece crossing one counts)
+        pts = [at[n] for n in w['nodes'] if n in at]
+        if not pts:
+            return False
+        la0, la1, lo0, lo1 = min(p[0] for p in pts), max(p[0] for p in pts), min(p[1] for p in pts), max(p[1] for p in pts)
+        return any(la0 <= nn and la1 >= s and lo0 <= ee and lo1 >= w_ for s, w_, nn, ee in boxes)
+    ways = [e for e in raw['elements'] if e['type'] == 'way' and touches(e)]
+    ids = {w['id'] for w in ways}
+    nodes = {n for w in ways for n in w['nodes']}
+    rels = [e for e in raw['elements'] if e['type'] == 'relation' and any(m['type'] == 'way' and m['ref'] in ids for m in e.get('members', []))]
+    return {'version': 0.6, 'generator': raw.get('generator'), 'osm3s': raw.get('osm3s', {}),
+            'elements': ways + rels + [{'type': 'node', 'id': n, 'lat': at[n][0], 'lon': at[n][1]} for n in nodes if n in at]}
 
 
 def load(path):

@@ -228,6 +228,7 @@ def main():
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
     ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
     ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
+    ap.add_argument('--no-overpass', action='store_true', help="OSM from the cache only, however old (what tool/extract.py wrote, or yesterday's): never Overpass")
     ap.add_argument('--roads-per-route', action='store_true', help="write each itinerary's roads to <out>/roads/: a published copy (no server) reads them instead of asking Overpass")
     a = ap.parse_args()
 
@@ -237,13 +238,17 @@ def main():
         names = {'0': 'tram', '1': 'subway', '2': 'rail', '4': 'ferry', '5': 'cable tram', '6': 'aerial lift', '7': 'funicular', '12': 'monorail'}
         print('not reviewed (flagstop maps buses): ' + ', '.join(f"{n} {names.get(t, 'route_type ' + t)} route{'s' if n > 1 else ''}" for t, n in sorted(feed.left_out.items())), file=sys.stderr)
     box = gtfs.bbox(feed)
-    slug = ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
-    pt_raw = osm.load(a.osm_pt) if a.osm_pt else osm.cached(os.path.join(a.cache, f'{slug}-osm-pt.json'), osm.fetch_pt, box, a.refresh)
+    slug = slug_of(feed)
+    if a.no_overpass and not a.osm_pt and not os.path.exists(os.path.join(a.cache, f'{slug}-osm-pt.json')):
+        raise SystemExit(f'--no-overpass: no OSM data in {a.cache} (tool/extract.py writes it)')
+    pt_raw = osm.load(a.osm_pt) if a.osm_pt else osm.load(os.path.join(a.cache, f'{slug}-osm-pt.json')) if a.no_overpass else \
+        osm.cached(os.path.join(a.cache, f'{slug}-osm-pt.json'), osm.fetch_pt, box, a.refresh)
     # roads: the biggest fetch and the slowest (Overpass often busy); they change less than stops and routes, and
     # an upload's own road edits come in by tool/patch.py. Again when asked, or when a day old.
     rp = os.path.join(a.cache, f'{slug}-osm-roads.json')
     stale = not os.path.exists(rp) or time.time() - os.path.getmtime(rp) > 86400
-    roads_raw = (osm.load(a.osm_roads) if a.osm_roads else osm.cached(rp, osm.fetch_roads, box, a.refresh_roads or (a.refresh and stale))) if a.route_all else None
+    roads_raw = (osm.load(a.osm_roads) if a.osm_roads else osm.load(rp) if a.no_overpass and os.path.exists(rp) else
+                 osm.cached(rp, osm.fetch_roads, box, a.refresh_roads or (a.refresh and stale))) if a.route_all else None
     notes_raw = osm.cached(os.path.join(a.cache, f'{slug}-notes.json'), osm.fetch_notes, box, a.refresh)
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
@@ -449,7 +454,7 @@ def main():
             os.remove(os.path.join(a.out, f))
     json.dump(out, open(os.path.join(a.out, 'review.json'), 'w'), separators=(',', ':'))
     if a.roads_per_route:
-        write_roads(feed, a.out, a.cache)
+        write_roads(feed, a.out, a.cache, budget=0 if a.no_overpass else 20 * 60)
     s = out['summary']
     print(f"stops: {s['stops']}  patterns: {s['patterns']}  → {os.path.join(a.out, 'review.json')}", file=sys.stderr)
 
@@ -521,6 +526,11 @@ def write_roads(feed, out, cache, budget=20 * 60):
         if f not in keep:
             os.remove(os.path.join(d, f))
     print(f'roads: {got} itineraries\' roads in {d}', file=sys.stderr)
+
+
+def slug_of(feed):
+    """The agency's name as the cache's files are named by it."""
+    return ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
 
 
 def safe(x):
