@@ -20,6 +20,11 @@ const Merge = {
     // the name: the route master's (the local style, no service day), else the kept one's with the day taken out
     const name = (master && master.tags.name) || keep.tags.name.replace(SERVICE_DAY, '').replace(/\s*-\s*$/, '').trim();
     const tags = {...keep.tags, name};
+    // what only the relations going have (a description, a website someone added): carried over, not deleted with them;
+    // a service day's own (its timetable, its name) isn't the route's
+    const carried = {};
+    for (const a of drop) for (const [k, v] of Object.entries(a.tags || {})) if (!(k in tags) && !(k in carried) && !/^(opening_hours|interval|name|gtfs:shape_id)/.test(k)) carried[k] = v;
+    Object.assign(tags, carried);
     for (const k of ['gtfs:route_id', 'gtfs:shape_id', 'public_transport:version', 'roundtrip']) if (p.proposed_tags[k]) tags[k] = p.proposed_tags[k];
     // stops: the feed's, in order. Each has to be settled before the route can be: which OSM stop it is,
     // and whether it's where buses stop. What isn't settled is a decision in the card, not a guess.
@@ -68,13 +73,13 @@ const Merge = {
     if (detoured(p)) {
       if (keep.tags['gtfs:shape_id']) tags['gtfs:shape_id'] = keep.tags['gtfs:shape_id']; else delete tags['gtfs:shape_id'];   // the detour's shape isn't the route's
       const asked = decide.filter(q => !(q.kind === 'missing' && q.s.match && q.s.match.temporary));
-      return {p, r, rels, keep, drop, master, name, tags, stops, decide: asked, open: asked.filter(q => !q.answer).length, questions, stale: [], splits: [], timetable, clash, uneven, gone: [], detour: true};
+      return {p, r, rels, keep, drop, master, name, tags, carried, stops, decide: asked, open: asked.filter(q => !q.answer).length, questions, stale: [], splits: [], timetable, clash, uneven, gone: [], detour: true};
     }
     if (mapsDetour(p)) tags.note = DIVERSION;   // mapping the detour: say so on the relation
     const removeTags = tags.note === DIVERSION && !mapsDetour(p) ? (delete tags.note, ['note']) : [];   // the detour's over: the note goes
     // stops a detour goes round are coming back: not offered for removal
     const kept = gone.filter(o => !(D.detoured || {})[o.id]);
-    return {p, r, rels, keep, drop, master, name, tags, removeTags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone: kept};
+    return {p, r, rels, keep, drop, master, name, tags, carried, removeTags, stops, decide, open, questions, stale, splits, timetable, clash, uneven, gone: kept};
   },
   /** Stops the merge leaves out that nothing in the agency's data uses: remove from OSM, or leave (the default). */
   goneStops(x) {
@@ -186,7 +191,7 @@ const Merge = {
         el('div', {}, `Probably one per timetable: ${days}. In OSM a route is one relation (one per direction, or one for a loop), and its timetable goes on it as tags, not as a relation per day. Both days use the same ${p.stops.length} stops and streets here, so it should be one relation.`)),
       el('div', {class: 'fixstep want'}, el('div', {class: 'k'}, 'flagstop would'),
         el('ul', {class: 'mergelist'},
-          el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"`),
+          el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"` + (Object.keys(x.carried || {}).length ? `, with what only the other has: ${Object.entries(x.carried).map(([k, v]) => `${k}=${v}`).join(', ')}` : '')),
           x.detour ? el('li', {}, "keep its stops and roads as OSM has them: the route is on a detour, and OSM maps the regular route (see the route's page to map the detour instead)") : null,
           x.detour ? null : el('li', {}, (x.stops.length < p.stops.length
             // (a stop OSM hasn't got counts once it's added, below)

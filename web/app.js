@@ -432,7 +432,8 @@ function popupOsm(id, ll) {
   const o = D.osm_stops[id], t = o.tags;
   const pop = new maplibregl.Popup({closeButton: false, maxWidth: '320px'}).setLngLat(ll).setDOMContent(el('div', {},
     el('b', {}, t.name || '(no name)'), el('div', {class: 'muted'}, `${id} · ${Object.entries(t).filter(([k]) => ['ref', 'route_ref', 'highway', 'public_transport', 'operator', 'network'].includes(k)).map(([k, v]) => k + '=' + v).join(' · ')}`),
-    el('div', {}, el('a', {href: osmLink(id), target: '_blank'}, 'osm.org'), ' · ', editorButtons({lon: o.lon, lat: o.lat, select: [id]}, {small: true})))).addTo(map);
+    el('div', {}, el('a', {href: osmLink(id), target: '_blank'}, 'osm.org'), ' · ', editorButtons({lon: o.lon, lat: o.lat, select: [id]}, {small: true})),
+    Station.ofOsm(id) ? el('div', {style: 'margin-top:6px'}, el('button', {class: 'b tiny primary', onclick: () => { pop.remove(); Station.open(Station.ofOsm(id).id); }}, `${Station.ofOsm(id).stations[0].tags.name || 'The station'}: how it's mapped`)) : null)).addTo(map);
 }
 // What a divergence means, in words: the map stopping the bus, not the bus going somewhere else.
 const divTitle = d => d.kind === 'no-path' ? 'no way through on the map' : d.kind === 'uncovered' ? 'line not followed' : "bus can't follow the line";
@@ -610,9 +611,16 @@ function renderRoutes(P) {
   P.append(el('div', {class: 'tiles'},
     tile(D.patterns.filter(p => !p.temporary).length, 'itineraries', '', rf ? only(null) : null), tile(s.patterns['no relation'] || 0, 'no OSM relation', s.patterns['no relation'] ? 'bad' : '', only('norel'), rf === 'norel'), tile((s.patterns['duplicate relations'] || 0), 'mapped twice', s.patterns['duplicate relations'] ? 'warn' : '', only('twice'), rf === 'twice'),
     tile(s.stops.matched || 0, 'stops matched', '', () => stopsWith('matched')), tile((s.stops.ambiguous || 0) + (s.stops.moved || 0), 'to decide', 'warn', () => stopsWith('decide')), tile(s.stops.missing || 0, 'not in OSM', s.stops.missing ? 'bad' : '', () => stopsWith('missing'))));
+  // a station with something to sort out (two station points, no stop area, …): its card, from here too
+  for (const pl of rf ? [] : Station.places()) {
+    const is = Station.issues(pl);
+    if (is.length) P.append(el('div', {class: 'row', onclick: () => Station.open(pl.id)},
+      el('span', {class: 'dotc ambiguous'}), el('div', {class: 'grow'}, el('div', {class: 't'}, `${pl.stations[0].tags.name || 'A station'}: ${pl.bays.length} bays`), el('div', {class: 's', style: 'white-space:normal'}, is.join(' · '))),
+      el('span', {class: 'chip warn'}, 'station')));
+  }
   const fc = feedChanges();
   if (fc) P.append(fc);
-  P.append(el('h2', {}, rf ? `Itineraries: ${ROUTE_FILTERS[rf][0]}` : 'Itineraries, worst first'), rf ? el('div', {class: 'hint'}, el('a', {href: '#', onclick: e => { e.preventDefault(); S.routeFilter = null; render(); }}, 'show all')) : null,
+  P.append(el('h2', {}, rf ? `Itineraries: ${ROUTE_FILTERS[rf][0]}` : 'Itineraries, worst first'), ...(rf ? [el('div', {class: 'hint'}, el('a', {href: '#', onclick: e => { e.preventDefault(); S.routeFilter = null; render(); }}, 'show all'))] : []),
     el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
   const rows = D.patterns.filter(p => !rf || ROUTE_FILTERS[rf][1](p)).map(p => ({p, g: patternGrade(p), sc: p.routed ? (p.routed.score ? p.routed.score.shape_covered : 0) : 1}));
   rows.sort((a, b) => a.g.order - b.g.order || a.sc - b.sc || b.p.trips - a.p.trips);
@@ -954,6 +962,11 @@ function renderPattern(P, p) {
     const live = p.relations.filter(a => (Edits.get('r' + a.id) || {}).kind !== 'delete');
     if (live.length > 1) d.append(el('div', {class: 'note'}, el('b', {}, `${live.length} OSM relations for this one route. `),
       'Probably one per timetable; GTFS says it\'s the same route every day. ', el('button', {class: 'b primary tiny', onclick: () => Merge.open(p)}, 'See the proposed merge')));
+  }
+  for (const pl of [...new Set(p.stops.map(sid => Station.ofStop(D.stops[sid])).filter(Boolean))]) {
+    const is = Station.issues(pl);
+    d.append(el('div', {class: 'note'}, `Stops at ${pl.stations[0].tags.name || 'a station'}, a station with ${pl.bays.length} bays${is.length ? `: ${is.join(', ')}` : ''}. `,
+      el('button', {class: 'b tiny', onclick: () => Station.open(pl.id)}, "The station: how it's mapped")));
   }
   if (p.loop && p.loop.length) d.append(el('div', {class: 'note'}, `One loop, run by one bus: the feed splits each trip in two at ${D.stops[p.split_at] ? D.stops[p.split_at].name : 'a stop'}, but the bus carries straight on and passengers ride through. In OSM it's one round-trip relation.`));
   if (p.detour) {
@@ -1354,7 +1367,7 @@ function renderStop(P, s) {
   if (s.match && s.match.notes && s.match.notes.length) d.append(el('div', {class: 'note warn'}, ...s.match.notes.map(n => el('div', {}, n))));
   { const nl = noteLines([...(s.osm_notes || [])]); if (nl) d.append(nl); }
   const place = Station.ofStop(s);
-  if (place) d.append(el('div', {class: 'note'}, `A bay at ${place.stations[0].tags.name || 'a station'}. `, el('button', {class: 'b tiny', onclick: () => Station.open(place.id)}, 'The station: how it\'s mapped')));
+  if (place) d.append(el('div', {class: 'note'}, `${matchedOsm(s) ? 'A bay' : 'Probably a bay'} at ${place.stations[0].tags.name || 'a station'}. `, el('button', {class: 'b tiny', onclick: () => Station.open(place.id)}, 'The station: how it\'s mapped')));
   const existing = Object.keys(Edits.all()).find(k => Edits.all()[k].kind === 'create' && Edits.all()[k].tags['gtfs:stop_id'] === s.id);
 
   if (st === 'missing') {
