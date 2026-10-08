@@ -261,6 +261,26 @@ class Constraints(unittest.TestCase):
 
 
 class FeedChanges(unittest.TestCase):
+    def test_versions_told_apart_by_what_they_hold(self):
+        import tempfile, feeddiff
+        d = tempfile.mkdtemp()
+        try:
+            def feed(lat, version=''):
+                f = Feed()
+                s = Stop('100 Main St', lat=lat); s.location_type = '0'
+                f.stops, f.info = {'1': s}, {'feed_version': version}
+                return f
+            self.assertIsNone(feeddiff.track(feed(41.74), d, 'x'))             # no feed_info: 'unversioned'
+            ch = feeddiff.track(feed(41.7404), d, 'x')                          # moved, still no label: a new version
+            self.assertEqual([m['id'] for m in ch['stops_moved']], ['1'])
+            feeddiff.track(feed(41.7404, 'daily-2'), d, 'x')                    # a new label, nothing changed: not kept twice
+            index = json.load(open(os.path.join(d, 'x-feeds.json')))
+            self.assertEqual(len(index), 2)
+            import positions
+            self.assertIn('1', positions.jumps(positions.versions(d, 'x')))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_diff(self):
         import feeddiff
         stop = lambda name, lat=41.74, routes=('9',): {'name': name, 'code': '1', 'lat': lat, 'lon': -111.83, 'routes': list(routes)}
@@ -372,6 +392,28 @@ class StopMoves(unittest.TestCase):
         self.assertIsNone(P.plan(None, new, j, 'hand', far=15))                     # OSM already has it at the new spot
         self.assertIsNone(P.plan(None, old, None, 'hand', far=15))                  # no move in the feed's history
 
+    def test_a_move_across_a_version_without_the_stop_still_counts(self):
+        gap = {'version': 'detour', 'stops': {'b': self.v1['stops']['b']}}   # 'a' dropped for a detour
+        j = self.P.jumps([self.v1, gap, self.v2])
+        self.assertEqual((j['a']['m'], j['a']['version']), (44, 'v2'))
+
+    def test_an_id_given_to_a_stop_far_away_is_not_a_move(self):
+        far = {'version': 'v3', 'stops': {'a': {'lat': 41.7600, 'lon': -111.8300}}}   # 2 km on
+        self.assertNotIn('a', self.P.jumps([self.v1, self.v2, far]))
+
+    def test_history_read_again_when_osm_is_newer_and_none_when_it_cant_be(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, 'history'))
+            json.dump([{'version': 1, 'lat': 41.74, 'lon': -111.83}], open(os.path.join(d, 'history', 'node-5.json'), 'w'))
+            nowhere = 'http://127.0.0.1:9'   # nothing listens: a fetch fails
+            self.assertEqual(len(self.P.history(nowhere, 5, d, version=1)), 1, 'the copy kept is current')
+            self.assertIsNone(self.P.history(nowhere, 5, d, version=2), 'OSM has a newer version: the old copy is not used')
+            self.assertIsNone(self.P.provenance(None, [(41.74, -111.83)]), "no history: no guess")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 class Web(unittest.TestCase):
     def test_scripts_parse(self):
@@ -383,9 +425,6 @@ class Web(unittest.TestCase):
                 r = subprocess.run([node, '--check', os.path.join(ROOT, 'web', f)], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, f'{f}: {r.stderr}')
 
-
-if __name__ == '__main__':
-    unittest.main()
 
 
 class Search(unittest.TestCase):
@@ -492,3 +531,6 @@ class OtherFeeds(unittest.TestCase):
         self.assertIn('not reviewed (flagstop maps buses): 1 tram route', r.stderr)
         d = json.load(open(os.path.join(out, 'review.json')))
         self.assertEqual(len(d['patterns']), 3)
+
+if __name__ == '__main__':
+    unittest.main()

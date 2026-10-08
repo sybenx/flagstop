@@ -276,7 +276,9 @@ def main():
         o = osm_stops[m['osm'][0]['id']]
         if o['id'][0] != 'n':
             continue
-        prov = positions.provenance(positions.history(api, o['osm_id'], a.cache, a.refresh), positions.agency_points(vs, sid))
+        prov = positions.provenance(positions.history(api, o['osm_id'], a.cache, a.refresh, o.get('version')), positions.agency_points(vs, sid))
+        if prov is None:
+            continue   # its history couldn't be read: the position question stays as it was, no suggestion
         pl = positions.plan(feed.stops[sid], o, j, prov, stopmatch.FAR)
         if pl:
             m['decide']['position'] = {'pick': 'ask', 'why': pl['why']}

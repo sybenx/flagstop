@@ -19,6 +19,7 @@ import json, math, os, sys, urllib.request
 JUMP = 10      # m: the agency's point moving at least this much between feed versions is the stop moving
 SAME = 2.5     # m: a node within this of an agency point was put there from the agency's data
 HELD = 1.0     # m: a node version this far from the one before it was moved by someone
+REUSED = 400   # m: past this it isn't the stop moving along its street; the id is another stop's now
 
 
 def dist(lat1, lon1, lat2, lon2):
@@ -36,17 +37,21 @@ def versions(cache_dir, slug):
     return out
 
 
-def jumps(vs, jump=JUMP):
-    """{stop id: {'m', 'from': [lon, lat], 'to': [lon, lat], 'version', 'start'}}: for each stop, the latest pair of
-    consecutive feed versions between which its point moved at least `jump` metres. vs: versions(), oldest first."""
-    out = {}
-    for a, b in zip(vs, vs[1:]):
+def jumps(vs, jump=JUMP, reused=REUSED):
+    """{stop id: {'m', 'from': [lon, lat], 'to': [lon, lat], 'version', 'start'}}: for each stop, its latest move of at
+    least `jump` metres, from where the feed last had it (a version without it, a detour's, in between, doesn't
+    hide the move). A move past `reused` isn't one: the id names another stop now. vs: versions(), oldest first."""
+    out, last = {}, {}
+    for b in vs:
         for sid, nb in b['stops'].items():
-            na = a['stops'].get(sid)
+            na = last.get(sid)
+            last[sid] = nb
             if not na:
                 continue
             d = dist(na['lat'], na['lon'], nb['lat'], nb['lon'])
-            if d >= jump:
+            if d > reused:
+                out.pop(sid, None)   # what came before was another stop's history
+            elif d >= jump:
                 out[sid] = {'m': round(d), 'from': [na['lon'], na['lat']], 'to': [nb['lon'], nb['lat']], 'version': b.get('version'), 'start': b.get('start')}
     return out
 
@@ -60,7 +65,10 @@ def provenance(history, points):
     """How an OSM node got where it is, from its history ([{version, lat, lon, user, timestamp}], oldest first):
     'hand'    a version after the first moved it (someone placed it with care, or corrected it);
     'feed'    never moved, and made at one of the agency's points (copied from the agency's data);
-    'unknown' never moved, made elsewhere: perhaps by hand from imagery, perhaps from a feed version not kept."""
+    'unknown' never moved, made elsewhere: perhaps by hand from imagery, perhaps from a feed version not kept.
+    None when the history couldn't be had: nothing is suggested then (a guess would lean to the agency's point)."""
+    if history is None:
+        return None
     hs = [h for h in history if h.get('lat') is not None]
     if not hs:
         return 'unknown'
@@ -73,18 +81,21 @@ def provenance(history, points):
     return 'unknown'
 
 
-def history(api, node_id, cache_dir, refresh=False):
-    """A node's versions from the OSM API (api: its base URL), kept in cache_dir/history/. [] if unreachable."""
+def history(api, node_id, cache_dir, refresh=False, version=None):
+    """A node's versions from the OSM API (api: its base URL), kept in cache_dir/history/: read again when OSM's node
+    (version: its current one) is newer than the copy kept. None if it can't be had."""
     path = os.path.join(cache_dir, 'history', f'node-{node_id}.json')
     if not refresh and os.path.exists(path):
-        return json.load(open(path))
+        hs = json.load(open(path))
+        if not version or (hs and (hs[-1].get('version') or 0) >= version):
+            return hs
     try:
         req = urllib.request.Request(f'{api}/api/0.6/node/{node_id}/history.json', headers={'User-Agent': 'flagstop (GTFS/OSM route review)'})
         with urllib.request.urlopen(req, timeout=60) as r:
             hs = [{k: e.get(k) for k in ('version', 'lat', 'lon', 'user', 'timestamp')} for e in json.load(r)['elements']]
     except Exception as e:
         print(f'history of n{node_id}: {e}', file=sys.stderr)
-        return []
+        return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump(hs, open(path, 'w'))
     return hs

@@ -5,7 +5,7 @@ everything again.
 Each build keeps a short summary of the feed it reviewed (cache/<agency>-feed-<version>.json); a build with a
 new version compares against the last different one it kept.
 """
-import json, math, os, re
+import hashlib, json, math, os, re
 
 
 def summary(feed):
@@ -57,18 +57,35 @@ def diff(old, new, moved=15):
     return out
 
 
+KEEP = 30   # feed versions kept: the history of a stop's moves (positions.py) and "since the last feed"
+
+
 def track(feed, cache_dir, slug):
-    """Keep this version's summary; -> the diff from the last different version kept, or None (the first one)."""
+    """Keep this version's summary; -> the diff from the last different version kept, or None (the first one).
+    A version is told apart by what it holds as well as by its label: one republished under the same label (or a
+    feed with no feed_info.txt, so no label) that changed stops is a new one; one that changed nothing isn't, so
+    a label that changes daily doesn't pile up copies."""
     os.makedirs(cache_dir, exist_ok=True)
     cur = summary(feed)
-    tag = re.sub(r'[^\w.-]+', '-', cur['version'] or cur['start'] or 'unversioned')[:80]
+    path = lambda t: os.path.join(cache_dir, f'{slug}-feed-{t}.json')
     index_path = os.path.join(cache_dir, f'{slug}-feeds.json')
-    index = json.load(open(index_path)) if os.path.exists(index_path) else []
-    json.dump(cur, open(os.path.join(cache_dir, f'{slug}-feed-{tag}.json'), 'w'))
+    index = [t for t in (json.load(open(index_path)) if os.path.exists(index_path) else []) if os.path.exists(path(t))]
+    same = lambda a, b: a['stops'] == b['stops'] and a['routes'] == b['routes']
+    last = json.load(open(path(index[-1]))) if index else None
+    if last and same(last, cur):
+        tag = index[-1]   # nothing changed but perhaps the label: the same version
+    else:
+        tag = re.sub(r'[^\w.-]+', '-', cur['version'] or cur['start'] or 'unversioned')[:80]
+        if tag in index:   # the label again, with other contents
+            tag = f"{tag[:70]}-{hashlib.sha1(json.dumps([cur['stops'], cur['routes']], sort_keys=True).encode()).hexdigest()[:8]}"
+    json.dump(cur, open(path(tag), 'w'))
     if not index or index[-1] != tag:
         index = [t for t in index if t != tag] + [tag]
-        json.dump(index, open(index_path, 'w'))
-    prev = next((t for t in reversed(index[:-1]) if os.path.exists(os.path.join(cache_dir, f'{slug}-feed-{t}.json'))), None)
+    for t in index[:-KEEP]:
+        os.remove(path(t))
+    index = index[-KEEP:]
+    json.dump(index, open(index_path, 'w'))
+    prev = index[-2] if len(index) > 1 else None
     if not prev:
         return None
-    return diff(json.load(open(os.path.join(cache_dir, f'{slug}-feed-{prev}.json'))), cur)
+    return diff(json.load(open(path(prev))), cur)
