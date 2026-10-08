@@ -158,6 +158,8 @@ def match(feed, osm_stops, across=None):
     for s in feed.stops.values():
         if s.location_type not in ('0', ''):
             continue  # stations, entrances: not a platform to match
+        if getattr(s, 'other_modes', False) and not s.routes:
+            continue  # a tram's or a train's platform: not a bus stop
         cands, notes = [], []
         # OSM's ref is the stop code; a stop_id in it counts too (some mappers put that there), unless the id is
         # also another stop's code, when the ref is that stop's
@@ -165,12 +167,12 @@ def match(feed, osm_stops, across=None):
         for o in filter(platform, ids):
             d = dist(s.lat, s.lon, o['lat'], o['lon'])
             if across(s.id, o):
-                notes.append(f"OSM {o['id']} carries code {s.ref} but is across the street, where the other direction's buses stop: its code may be wrong")
+                notes.append(f"OSM {o['id']} carries code {s.ref or s.id} but is across the street, where the other direction's buses stop: its code may be wrong")
                 continue
             if d <= REF_FAR:
                 cands.append({'id': o['id'], 'dist': round(d), 'score': 1.0, 'how': 'ref'})
             else:  # the same ref far away: OSM's code is stale, or another agency's numbering
-                notes.append(f"OSM {o['id']} carries ref {s.ref} but is {round(d)} m away")
+                notes.append(f"OSM {o['id']} carries ref {s.ref or s.id} but is {round(d)} m away")
         if not any(c['how'] == 'ref' for c in cands):
             for d, o in near(s.lat, s.lon, NEAR):
                 sim = alike(_gtfs_text(s), _osm_text(o))
@@ -208,7 +210,7 @@ def match(feed, osm_stops, across=None):
             if o['id'] in claimed or o['type'] != 'node' or not platform(o) or across(s.id, o):
                 continue
             t = o['tags']
-            byref = bool(s.ref) and (t.get('ref') == s.ref or s.id in [v.strip() for v in (t.get('gtfs:stop_id') or '').split(';')])
+            byref = (bool(s.ref) and t.get('ref') == s.ref) or s.id in [v.strip() for v in (t.get('gtfs:stop_id') or '').split(';')]
             sim = alike(_gtfs_text(s), _osm_text(o))
             same_street = street(s.name) and street(s.name) == street(t.get('name', ''))
             if byref or sim >= 0.5 or same_street:
@@ -355,15 +357,20 @@ def proposed_tags(feed, s, conv=None):
     conv = conv or {}
     agency = feed.agency.get('agency_name', '')
     t = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes',
-         'name': spelled(s.name, lang_of(feed)), 'ref': s.ref, 'gtfs:stop_id': s.id}
+         'name': spelled(s.name, lang_of(feed)), 'gtfs:stop_id': s.id}
+    if s.ref:
+        t['ref'] = s.ref   # the code on the sign; a feed without codes has none to give (its stop_id is a key)
     if s.code:
         t['gtfs:stop_code'] = s.code
     for k in ('operator', 'network', 'network:wikidata', 'operator:wikidata'):
         if conv.get(k):
             t[k] = conv[k]
+    # in a feed of several agencies, the one whose buses call here (if it's one)
+    names = {feed.agency_name(r) for r in s.routes} if hasattr(feed, 'agency_name') and s.routes else set()
+    agency = names.pop() if len(names) == 1 else agency
     if 'operator' not in t and agency:
         t['operator'] = agency
-    routes = sorted({feed.routes[r].short for r in s.routes if r in feed.routes}, key=lambda x: (len(x), x))
+    routes = sorted({feed.routes[r].short for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x))
     if routes:
         t['route_ref'] = ';'.join(routes)
     # An agency's 'not accessible' (2) isn't trusted: it's too often wrong (a default, an old survey). Only
@@ -383,11 +390,11 @@ def diff(feed, s, o):
     # (a feed in capitals says nothing about case: OSM's name that differs from it only there is no difference)
     if (t.get('name') or '') != name and not (shouting(s.name) and (t.get('name') or '').lower() == name.lower()):
         out['name'] = {'gtfs': name, 'osm': t.get('name', '')}
-    if t.get('ref', '') != s.ref:
+    if s.ref and t.get('ref', '') != s.ref:   # no code in the feed: OSM's ref is left as it is
         out['ref'] = {'gtfs': s.ref, 'osm': t.get('ref', '')}
     if not t.get('gtfs:stop_id'):
         out['gtfs:stop_id'] = {'gtfs': s.id, 'osm': ''}
-    want = ';'.join(sorted({feed.routes[r].short for r in s.routes if r in feed.routes}, key=lambda x: (len(x), x)))
+    want = ';'.join(sorted({feed.routes[r].short for r in s.routes if r in feed.routes} - {''}, key=lambda x: (len(x), x)))
     have = ';'.join(sorted((t.get('route_ref') or '').split(';'), key=lambda x: (len(x), x))) if t.get('route_ref') else ''
     if want != have:
         out['route_ref'] = {'gtfs': want, 'osm': t.get('route_ref', '')}

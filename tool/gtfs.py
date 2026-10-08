@@ -28,10 +28,12 @@ class Stop:
     location_type: str = '0'
     routes: set = field(default_factory=set)   # route ids that call here
     trips: int = 0                              # trips a week-ish that call here (a rough weight)
+    other_modes: bool = False                   # called at by a tram, train or ferry (not reviewed here)
 
     @property
     def ref(self):
-        return self.code or self.id
+        """What's on the sign: the stop code. Not the stop_id, an internal key (it goes in gtfs:stop_id)."""
+        return self.code
 
 
 @dataclass
@@ -70,13 +72,28 @@ class Pattern:
 
 @dataclass
 class Feed:
-    agency: dict
+    agency: dict                # the first agency (most feeds have one)
     info: dict
     stops: dict
     routes: dict
     patterns: list
     shapes: dict
     calendar: dict              # service_id -> row
+    agencies: dict = field(default_factory=dict)   # agency_id -> row: every agency, for a feed of several
+    left_out: dict = field(default_factory=dict)   # route_type -> routes not reviewed (not a bus)
+
+    def agency_name(self, route_id=None):
+        """The name of the agency running this route (in a feed of several, its own), else the feed's."""
+        r = self.routes.get(route_id)
+        a = self.agencies.get(r.agency) if r and r.agency else None
+        return (a or self.agency).get('agency_name', '')
+
+
+# What flagstop reviews: buses (route=bus, trolleybus; stops are highway=bus_stop). GTFS route_type 3, 11; the
+# extended types for coaches (200-299), buses (700-799) and trolleybuses (800).
+def is_bus(route_type):
+    t = str(route_type or '3').strip()
+    return t in ('3', '11', '800') or (t.isdigit() and (200 <= int(t) <= 299 or 700 <= int(t) <= 799))
 
 
 def _rows(z, name):
@@ -89,7 +106,9 @@ def _rows(z, name):
 
 def load(path):
     z = zipfile.ZipFile(path)
-    agency = (_rows(z, 'agency.txt') or [{}])[0]
+    agency_rows = _rows(z, 'agency.txt') or [{}]
+    agency = agency_rows[0]
+    agencies = {r.get('agency_id', ''): r for r in agency_rows}
     info = (_rows(z, 'feed_info.txt') or [{}])[0]
     calendar = {r['service_id']: r for r in _rows(z, 'calendar.txt')}
     directions = {(r['route_id'], r['direction_id']): r.get('direction', '') for r in _rows(z, 'directions.txt')}
@@ -121,9 +140,18 @@ def load(path):
             continue
     shapes = {k: [(lon, lat) for _, lon, lat in sorted(v)] for k, v in shapes.items()}
 
+    # trips of the buses only: a tram's or a ferry's stops would be proposed as bus stops otherwise
+    left_out = defaultdict(int)
+    for r in routes.values():
+        if not is_bus(r.type):
+            left_out[r.type] += 1
     trips = {r['trip_id']: r for r in _rows(z, 'trips.txt')}
+    other = {tid for tid, t in trips.items() if t.get('route_id') in routes and not is_bus(routes[t['route_id']].type)}
+    trips = {tid: t for tid, t in trips.items() if tid not in other}
     seq, times = defaultdict(list), defaultdict(list)
     for r in _rows(z, 'stop_times.txt'):
+        if r['trip_id'] in other and r['stop_id'] in stops:
+            stops[r['stop_id']].other_modes = True
         if r['trip_id'] in trips and r['stop_id'] in stops:
             try:
                 n = int(r['stop_sequence'])
@@ -182,9 +210,15 @@ def load(path):
     for p in patterns:
         parent = None
         for q in kept:
+            # the same way round only: the two directions of a street can share every stop (a centre-island
+            # busway, one-sided rural stops), in the opposite order. (Not by direction_id: a feed may give a
+            # loop's Saturday runs the other one, and start them at another stop of the loop.)
             if q.route_id != p.route_id:
                 continue
-            common = len(set(p.stops) & set(q.stops))
+            both = set(p.stops) & set(q.stops)
+            if not _same_way([x for x in p.stops if x in both], [x for x in q.stops if x in both]):
+                continue
+            common = len(both)
             if common >= max(len(p.stops), len(q.stops)) - 2 and _mutual_cover(shapes.get(p.shape_id), shapes.get(q.shape_id)) >= 0.9:
                 parent = q; break
         if parent:
@@ -221,19 +255,44 @@ def load(path):
             h.append(bool(gaps) and sum(abs(g - h[3]) <= max(60, h[3] / 20) for g in gaps) >= 0.8 * len(gaps))
     patterns = _join_loops(kept, trips, times, of_trip, shapes)
     # A pattern run only by a service that lasts a few weeks is a detour, or a special; not the regular route.
+    # Short against the feed's own calendar: a feed published a month at a time has nothing longer than a month,
+    # and none of it is a detour. A service given only by calendar_dates.txt spans its first to last date.
+    date = lambda x: datetime.date(int(x[:4]), int(x[4:6]), int(x[6:8]))
+    added = defaultdict(list)
+    for r in _rows(z, 'calendar_dates.txt'):
+        if r.get('exception_type') == '1':
+            try:
+                added[r['service_id']].append(date(r['date']))
+            except (KeyError, ValueError):
+                pass
     def days(sid):
-        c = calendar.get(sid)
-        if not c:
-            return 9999
+        c, ds = calendar.get(sid), list(added.get(sid, []))
         try:
-            a, b = (datetime.date(int(x[:4]), int(x[4:6]), int(x[6:8])) for x in (c['start_date'], c['end_date']))
-            return (b - a).days
+            if c:
+                ds += [date(c['start_date']), date(c['end_date'])]
         except (KeyError, ValueError):
-            return 9999
+            pass
+        return (max(ds) - min(ds)).days if ds else None
+    spans = [d for d in (days(sid) for sid in set(calendar) | set(added)) if d is not None]
+    short = min(45, max(spans, default=0) / 2)
     for p in patterns:
-        p.temporary = all(days(sid) < 45 for sid in p.service_ids) if p.service_ids else False
+        ds = [days(sid) for sid in p.service_ids]
+        p.temporary = bool(ds) and all(d is not None and d < short for d in ds)
 
-    return Feed(agency=agency, info=info, stops=stops, routes=routes, patterns=patterns, shapes=dict(shapes), calendar=calendar)
+    return Feed(agency=agency, info=info, stops=stops, routes=routes, patterns=patterns, shapes=dict(shapes), calendar=calendar,
+                agencies=agencies, left_out=dict(left_out))
+
+
+def _same_way(a, b):
+    """Two runs' stops in common, each in its run's order: the same way round? The same order, or for a loop the
+    same order starting at another stop of it. The reverse is the other direction."""
+    def tidy(xs):
+        xs = [x for i, x in enumerate(xs) if not i or x != xs[i - 1]]
+        return xs[:-1] if len(xs) > 1 and xs[0] == xs[-1] else xs   # a loop's return to its first stop
+    a, b = tidy(a), tidy(b)
+    if a == b or len(set(a)) < 3:
+        return True
+    return len(a) == len(b) and any(b[i:] + b[:i] == a for i, x in enumerate(b) if x == a[0])
 
 
 def _secs(t):

@@ -59,6 +59,12 @@ def _ref_of(tags):
 def pair(feed, patterns_traced, rels, ways, coords, stop_match):
     """-> {pattern_id: [relation ids best-first]}, {relation id: pattern_id or None}, scores"""
     shapes = {p.id: Polyline(feed.shapes[p.shape_id]) for p in feed.patterns if p.shape_id in feed.shapes and len(feed.shapes[p.shape_id]) > 1}
+    # a feed without shapes.txt (it's optional): paired along its stops instead, stop to stop. Rougher (a straight
+    # line cuts each corner), but with no pairing at all every route reads 'no relation', and fixing one would
+    # put a second relation beside the one OSM has.
+    for p in feed.patterns:
+        if p.id not in shapes and len(p.stops) > 1:
+            shapes[p.id] = Polyline([(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops if s in feed.stops])
     geoms = {rid: relation_geometry(r, ways, coords) for rid, r in rels.items()}
     scores = {}
     for rid, r in rels.items():
@@ -268,18 +274,20 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
 def proposed_relation_tags(feed, p, stop_match, conv=None):
     conv = conv or {}
     route = feed.routes[p.route_id]
-    agency = feed.agency.get('agency_name', '')
+    agency = feed.agency_name(p.route_id) if hasattr(feed, 'agency_name') else feed.agency.get('agency_name', '')
     first, last = feed.stops[p.stops[0]], feed.stops[p.stops[-1]]
-    t = {'type': 'route', 'route': {'0': 'tram', '1': 'subway', '2': 'train', '3': 'bus', '11': 'trolleybus'}.get(route.type, 'bus'),
-         'public_transport:version': '2', 'ref': route.short, 'operator': conv.get('operator') or agency,
+    t = {'type': 'route', 'route': 'trolleybus' if route.type in ('11', '800') else 'bus',
+         'public_transport:version': '2', 'operator': conv.get('operator') or agency,
          'from': first.desc or first.name, 'to': last.desc or last.name,
          'gtfs:route_id': p.route_id, 'gtfs:shape_id': p.shape_id.replace('+', ';')}
     if p.loop or p.stops[0] == p.stops[-1]:
         t['roundtrip'] = 'yes'   # one bus round and back to where it started (a loop the feed splits in two included)
+    if route.short:
+        t['ref'] = route.short   # (a route with no short name has no ref: not an empty one)
     for k in ('network', 'network:wikidata', 'operator:wikidata'):
         if conv.get(k):
             t[k] = conv[k]
-    name = f"{'Bus' if t['route'] == 'bus' else t['route'].title()} {route.short}"
+    name = f"{'Bus' if t['route'] == 'bus' else t['route'].title()} {route.short or route.long or route.id}"
     directional = re.compile(r'^(north|south|east|west)bound$|\b(in|out)bound\b|^route \d+$', re.I)
     if p.loop:
         # a loop has no direction to name it by: the places it serves ('Hyrum, Millville, Providence')
@@ -288,7 +296,7 @@ def proposed_relation_tags(feed, p, stop_match, conv=None):
         name += f': {p.headsign}'
     elif p.direction_name:
         name += f': {p.direction_name}'
-    elif route.long:
+    elif route.long and route.short:   # (with no short name, the long one is the name already)
         name += f': {route.long}'
     t['name'] = name
     if route.color:
@@ -303,8 +311,12 @@ def proposed_relation_tags(feed, p, stop_match, conv=None):
 def proposed_master_tags(feed, route_id, conv=None):
     conv = conv or {}
     route = feed.routes[route_id]
-    t = {'type': 'route_master', 'route_master': 'bus', 'ref': route.short, 'name': f'Bus {route.short}' + (f': {route.long}' if route.long else ''),
-         'operator': conv.get('operator') or feed.agency.get('agency_name', ''), 'gtfs:route_id': route_id}
+    kind = 'trolleybus' if route.type in ('11', '800') else 'bus'
+    label = f'{kind.title()} {route.short}' + (f': {route.long}' if route.long else '') if route.short else f'{kind.title()} {route.long or route.id}'
+    t = {'type': 'route_master', 'route_master': kind, 'name': label,
+         'operator': conv.get('operator') or (feed.agency_name(route_id) if hasattr(feed, 'agency_name') else feed.agency.get('agency_name', '')), 'gtfs:route_id': route_id}
+    if route.short:
+        t['ref'] = route.short
     for k in ('network', 'network:wikidata'):
         if conv.get(k):
             t[k] = conv[k]

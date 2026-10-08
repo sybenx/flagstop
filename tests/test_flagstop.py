@@ -413,3 +413,82 @@ class Search(unittest.TestCase):
         o = osm('Elsewhere Road', lat=41.74 + 150 / 110540, **{'gtfs:stop_id': '1234'})
         res, _ = stops.match(self.feed_with(s), {'n1': {**o, 'type': 'node'}})
         self.assertEqual(res['12']['status'], 'missing')
+
+
+def synthetic_feed(path):
+    """A feed with what CVTD's hasn't: two agencies, no stop codes, a route with no short name, a tram, a calendar a
+    month long, no shapes.txt, and a route whose two directions call at the same stops the other way round."""
+    import zipfile
+    files = {
+        'agency.txt': 'agency_id,agency_name,agency_url,agency_timezone\nA,Alpha Bus,http://a,America/Denver\nB,Beta Lines,http://b,America/Denver\n',
+        'stops.txt': 'stop_id,stop_name,stop_lat,stop_lon\n' + ''.join(f's{i},{100 * i} MAIN ST,{41.70 + i * 0.003:.4f},-111.83\n' for i in range(1, 6)) +
+                     't1,TRAM PLATFORM,41.75,-111.80\nt2,TRAM END,41.76,-111.80\n',
+        'routes.txt': 'route_id,agency_id,route_short_name,route_long_name,route_type\nr1,A,1,Main Street,3\nr2,B,,Crosstown,3\nr3,A,T,Tramway,0\n',
+        'trips.txt': 'route_id,service_id,trip_id,direction_id\nr1,m,a1,0\nr1,m,a2,1\nr2,m,b1,0\nr3,m,c1,0\n',
+        'stop_times.txt': 'trip_id,arrival_time,departure_time,stop_id,stop_sequence\n' +
+            ''.join(f'a1,08:0{i}:00,08:0{i}:00,s{i},{i}\n' for i in range(1, 6)) +
+            ''.join(f'a2,09:0{i}:00,09:0{i}:00,s{6 - i},{i}\n' for i in range(1, 6)) +
+            'b1,10:00:00,10:00:00,s1,1\nb1,10:05:00,10:05:00,s3,2\nc1,11:00:00,11:00:00,t1,1\nc1,11:05:00,11:05:00,t2,2\n',
+        'calendar.txt': 'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nm,1,1,1,1,1,0,0,20261001,20261031\n',
+    }
+    with zipfile.ZipFile(path, 'w') as z:
+        for k, v in files.items():
+            z.writestr(k, v)
+
+
+class OtherFeeds(unittest.TestCase):
+    """What another agency's feed may be that CVTD's isn't (tests/test_flagstop.py synthetic_feed)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile, gtfs, compare
+        cls.dir = tempfile.mkdtemp()
+        cls.zip = os.path.join(cls.dir, 'feed.zip')
+        synthetic_feed(cls.zip)
+        cls.feed = gtfs.load(cls.zip)
+        cls.compare = compare
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def test_buses_only_and_the_two_directions_apart(self):
+        f = self.feed
+        self.assertEqual(sorted((p.route_id, p.direction) for p in f.patterns), [('r1', '0'), ('r1', '1'), ('r2', '0')])
+        self.assertEqual(f.left_out, {'0': 1})
+        res, _ = stops.match(f, {})
+        self.assertNotIn('t1', res, "a tram's platform isn't a bus stop to add")
+
+    def test_a_month_long_calendar_is_not_a_detour(self):
+        self.assertFalse(any(p.temporary for p in self.feed.patterns))
+
+    def test_tags_each_agency_its_own_no_empty_refs(self):
+        f = self.feed
+        r2 = next(p for p in f.patterns if p.route_id == 'r2')
+        t = self.compare.proposed_relation_tags(f, r2, {})
+        self.assertEqual(t['operator'], 'Beta Lines')
+        self.assertNotIn('ref', t)
+        self.assertEqual(t['name'], 'Bus Crosstown')
+        m = self.compare.proposed_master_tags(f, 'r2', {})
+        self.assertNotIn('ref', m)
+        st = stops.proposed_tags(f, f.stops['s1'])
+        self.assertNotIn('ref', st, 'no stop code: no ref (the stop_id is an internal key)')
+        self.assertEqual(st['route_ref'], '1', 'no empty route number in route_ref')
+        self.assertEqual(st['gtfs:stop_id'], 's1')
+        self.assertEqual(st['name'], '100 Main Street')
+        self.assertEqual(stops.proposed_tags(f, f.stops['s2'])['operator'], 'Alpha Bus')
+
+    def test_a_feed_without_codes_leaves_osm_ref_alone(self):
+        d = stops.diff(self.feed, self.feed.stops['s1'], osm('100 Main Street', lat=41.703, ref='5501'))
+        self.assertNotIn('ref', d)
+
+    def test_it_builds(self):
+        pt = os.path.join(self.dir, 'pt.json')
+        json.dump({'elements': []}, open(pt, 'w'))
+        out = os.path.join(self.dir, 'out')
+        r = subprocess.run([sys.executable, os.path.join(ROOT, 'tool', 'review.py'), self.zip, '--osm-pt', pt, '--out', out, '--cache', os.path.join(self.dir, 'cache'), '--no-others'],
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertIn('not reviewed (flagstop maps buses): 1 tram route', r.stderr)
+        d = json.load(open(os.path.join(out, 'review.json')))
+        self.assertEqual(len(d['patterns']), 3)

@@ -199,6 +199,9 @@ def main():
 
     os.makedirs(a.out, exist_ok=True); os.makedirs(a.cache, exist_ok=True)
     feed = gtfs.load(a.feed)
+    if feed.left_out:
+        names = {'0': 'tram', '1': 'subway', '2': 'rail', '4': 'ferry', '5': 'cable tram', '6': 'aerial lift', '7': 'funicular', '12': 'monorail'}
+        print('not reviewed (flagstop maps buses): ' + ', '.join(f"{n} {names.get(t, 'route_type ' + t)} route{'s' if n > 1 else ''}" for t, n in sorted(feed.left_out.items())), file=sys.stderr)
     box = gtfs.bbox(feed)
     slug = ''.join(c if c.isalnum() else '-' for c in feed.agency.get('agency_name', 'feed').lower()).strip('-')[:40]
     pt_raw = osm.load(a.osm_pt) if a.osm_pt else osm.cached(os.path.join(a.cache, f'{slug}-osm-pt.json'), osm.fetch_pt, box, a.refresh)
@@ -318,7 +321,7 @@ def main():
         # "16 PM" share one master, ref 16), else one with its ref; a new master is proposed only when there is neither
         held = sorted({mid for pid in pids for rid in best.get(pid, []) if pid in chosen.get(rid, []) for mid in masters_of_rel.get(rid, [])})
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
-                           'patterns': pids, 'masters': held or masters_by_ref.get(r.short, []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
+                           'patterns': pids, 'masters': held or (masters_by_ref.get(r.short, []) if r.short else []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
     # open OSM notes by a stop (its agency point or its OSM node): someone saw something there
     notes = [{'id': f['properties']['id'], 'lon': f['geometry']['coordinates'][0], 'lat': f['geometry']['coordinates'][1],
