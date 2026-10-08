@@ -8,7 +8,7 @@
 The catalog is MobilityData's public spreadsheet (files.mobilitydatabase.org/feeds_v2.csv), refetched
 after a day. No key needed. Feeds that need authentication are listed but not downloaded.
 """
-import argparse, csv, io, os, sys, time, urllib.request
+import argparse, csv, io, os, shutil, sys, time, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV_URL = 'https://files.mobilitydatabase.org/feeds_v2.csv'
@@ -19,6 +19,15 @@ def get(url, binary=False):
     req = urllib.request.Request(url, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'})
     with urllib.request.urlopen(req, timeout=120) as r:
         return r.read() if binary else r.read().decode('utf-8-sig', 'replace')
+
+
+def fetch_to(url, path):
+    """url into the file path, a piece at a time (a national feed is hundreds of MB): written beside it and
+    moved into place when whole, so a download cut short leaves what was there."""
+    req = urllib.request.Request(url, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'})
+    with urllib.request.urlopen(req, timeout=120) as r, open(path + '.part', 'wb') as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+    os.replace(path + '.part', path)
 
 
 def catalog(refresh=False):
@@ -68,10 +77,13 @@ def download(f, out_dir):
     slug = ''.join(c if c.isalnum() else '-' for c in (f['provider'] or f['id']).lower()).strip('-')[:40]
     path = os.path.join(out_dir, f'{slug}.zip')
     print(f'downloading {url}', file=sys.stderr)
-    data = get(url, binary=True)
-    if data[:2] != b'PK':
-        raise SystemExit(f'{url} did not return a zip (got {data[:40]!r})')
-    open(path, 'wb').write(data)
+    fetch_to(url, path + '.new')
+    with open(path + '.new', 'rb') as z:
+        head = z.read(40)
+    if head[:2] != b'PK':
+        os.remove(path + '.new')
+        raise SystemExit(f'{url} did not return a zip (got {head!r})')
+    os.replace(path + '.new', path)
     print(path)
     return path
 

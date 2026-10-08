@@ -8,7 +8,7 @@ bus/psv exceptions honoured), with a cost for straying from the GTFS shape. So i
 line wherever the map allows, and leaves it only where the map does not: a road that is missing, cut,
 one-way the wrong way, or closed to buses. Those places are the divergences, each with a guess at why.
 """
-import heapq, math
+import bisect, heapq, math
 
 # How much a bus would rather not: cost multipliers by highway class.
 PREFER = {'motorway': 1.0, 'trunk': 1.0, 'primary': 1.0, 'secondary': 1.0, 'tertiary': 1.05, 'unclassified': 1.15,
@@ -52,37 +52,195 @@ class Polyline:
         self.cell = cell
         self.grid = {}
         self.cum = [0.0]
+        # each segment as project() takes it, and its bounding box with the least a degree of longitude can be
+        # along it in metres: so a segment that can't be nearer than the nearest yet is passed over unmeasured
+        self.seg, self.box = [], []
         for i in range(len(pts) - 1):
             a, b = pts[i], pts[i + 1]
             self.cum.append(self.cum[-1] + metres(a, b))
             for ci in range(int(min(a[1], b[1]) / cell) - 1, int(max(a[1], b[1]) / cell) + 2):
                 for cj in range(int(min(a[0], b[0]) / cell) - 1, int(max(a[0], b[0]) / cell) + 2):
                     self.grid.setdefault((ci, cj), []).append(i)
+            kx = 111320 * math.cos(math.radians(a[1]))
+            dx, dy = (b[0] - a[0]) * kx, (b[1] - a[1]) * 110540
+            self.seg.append((a[0], a[1], b[0], b[1], kx, dx, dy, dx * dx + dy * dy))
+            self.box.append((min(a[0], b[0]), max(a[0], b[0]), min(a[1], b[1]), max(a[1], b[1]),
+                             math.cos(math.radians(min(90.0, max(abs(a[1]), abs(b[1])))))))
         self.length = self.cum[-1]
+        self.fine = cell / 8
+        self.order = {}   # fine cell -> (its cell's segments nearest-first by how near they can be, up to KEEP; more?): made when asked
+        self.span = self.cmin = None   # (the grid's extent, the narrowest degree of longitude: for _wide)
+
+    KEEP = 48   # of a fine cell's segments, the nearest kept: what's further is rarely asked for (and then worked out again)
+
+    def _all(self, p):
+        """[(bound, segment)] for p's cell's segments, by how near they can be to anywhere in p's fine cell (empty
+        if p's cell has none)."""
+        f = self.fine
+        fi, fj = int(p[1] / f), int(p[0] / f)
+        cands = self.grid.get((int(p[1] / self.cell), int(p[0] / self.cell)))
+        if not cands:
+            return []
+        # every point that int() puts in fine cell (fi, fj) is within a fine cell of its corner either way
+        x0, x1, y0, y1 = (fj - 1) * f, (fj + 1) * f, (fi - 1) * f, (fi + 1) * f
+        c = math.cos(math.radians(min(90.0, max(abs(y0), abs(y1)))))
+        # the least distance each segment can be from there (a little under, for floating point)
+        box = self.box
+        return sorted((max(max(sy0 - y1, y0 - sy1, 0.0) * 110540, max(sx0 - x1, x0 - sx1, 0.0) * 111320 * (cs if cs < c else c)) * (1 - 1e-9) - 1e-6, i)
+                      for i in cands for sx0, sx1, sy0, sy1, cs in (box[i],))
+
+    def _sorted(self, p):
+        """_all(p), nearest-first, as it's needed: the first KEEP kept for the next point in this fine cell."""
+        key = (int(p[1] / self.fine), int(p[0] / self.fine))
+        got = self.order.get(key)
+        if got is None:
+            lst = self._all(p)
+            got = self.order[key] = (lst[:self.KEEP], len(lst) > self.KEEP)
+        yield from got[0]
+        if got[1]:
+            yield from self._all(p)[self.KEEP:]
+
+    def _empty(self, p):
+        """Does p's cell hold no segment?"""
+        return not self.grid.get((int(p[1] / self.cell), int(p[0] / self.cell)))
+
+    def _measure(self, px, py, i):
+        """(distance m, fraction along) from (px, py) to segment i, exactly as project() and metres() work it out."""
+        ax, ay, bx, by, kx, dx, dy, den = self.seg[i]
+        if dx == 0 and dy == 0:
+            return math.hypot((ax - px) * 111320 * math.cos(math.radians((py + ay) / 2)), (ay - py) * 110540), 0.0
+        t = max(0.0, min(1.0, ((px - ax) * kx * dx + (py - ay) * 110540 * dy) / den))
+        qx, qy = ax + (bx - ax) * t, ay + (by - ay) * t
+        return math.hypot((qx - px) * 111320 * math.cos(math.radians((py + qy) / 2)), (qy - py) * 110540), t
 
     def nearest(self, p, lo=None, hi=None):
         """(distance m, segment index, position along in m) of the nearest segment, optionally within [lo, hi]."""
-        best = (float('inf'), -1, 0.0)
-        for i in self.grid.get((int(p[1] / self.cell), int(p[0] / self.cell)), []):
+        bd, bi, bt = float('inf'), -1, 0.0
+        px, py = p
+        # the nearest of p's cell's segments (the lowest index of those as near): nearest-first, until the rest
+        # can't be as near
+        for lb, i in self._sorted(p):
+            if lb > bd:
+                break
             if lo is not None and (i < lo or i > hi):
                 continue
-            _, d, t = project(p, self.pts[i], self.pts[i + 1])
-            if d < best[0]:
-                best = (d, i, self.cum[i] + t * (self.cum[i + 1] - self.cum[i]))
-        if best[1] < 0:  # nothing in this cell: search wider (rare, the caller is usually near the line)
-            for i in (range(lo, hi + 1) if lo is not None else range(len(self.pts) - 1)):
-                _, d, t = project(p, self.pts[i], self.pts[i + 1])
-                if d < best[0]:
-                    best = (d, i, self.cum[i] + t * (self.cum[i + 1] - self.cum[i]))
-        return best
+            d, t = self._measure(px, py, i)
+            if d < bd or (d == bd and i < bi):
+                bd, bi, bt = d, i, t
+        if bi < 0 and lo is None:  # nothing in this cell: search wider, ring by ring of cells around it
+            return self._wide(px, py)
+        if bi < 0:  # nothing of [lo, hi] in this cell: search all of it (the caller is usually near the line)
+            cp = math.cos(math.radians(min(90.0, abs(py))))
+            for i in range(lo, hi + 1):
+                if self._far(px, py, i, bd, cp):
+                    continue
+                d, t = self._measure(px, py, i)
+                if d < bd:
+                    bd, bi, bt = d, i, t
+        if bi < 0:
+            return (bd, bi, 0.0)
+        return (bd, bi, self.cum[bi] + bt * (self.cum[bi + 1] - self.cum[bi]))
+
+    def _wide(self, px, py):
+        """nearest() for a point whose cell holds no segment: the cells around it ring by ring, each segment
+        measured once, until the rings left can't hold one as near (a segment is in every cell within a cell of
+        its box, so one in no cell R rings out or less is more than R cells away); every segment, if that's
+        quicker. The same answer as measuring them all."""
+        if not self.seg:
+            return (float('inf'), -1, 0.0)
+        if self.span is None:
+            self._extent()
+        ci, cj = int(py / self.cell), int(px / self.cell)
+        cp = math.cos(math.radians(min(90.0, abs(py))))
+        step = self.cell * min(110540, 111320 * min(cp, self.cmin)) * (1 - 1e-9)
+        i0, i1, j0, j1 = self.span
+        last = max(ci - i0, i1 - ci, cj - j0, j1 - cj)
+        bd, bi, bt = float('inf'), -1, 0.0
+        seen, cells = set(), 0
+        for R in range(1, last + 1):
+            if bd < R * step - 1e-6 - step:   # (after ring R - 1: what's left is more than R - 1 cells away)
+                break
+            cells += 8 * R
+            if cells > 2 * len(self.seg) + 64:   # far from it all: measuring every segment is quicker
+                seen = None
+                break
+            for di in range(-R, R + 1):
+                for dj in ((-R, R) if abs(di) < R else range(-R, R + 1)):
+                    for i in self.grid.get((ci + di, cj + dj), ()):
+                        if i in seen:
+                            continue
+                        seen.add(i)
+                        if self._far(px, py, i, bd, cp):
+                            continue
+                        d, t = self._measure(px, py, i)
+                        if d < bd or (d == bd and i < bi):
+                            bd, bi, bt = d, i, t
+        if seen is None:
+            bd, bi, bt = float('inf'), -1, 0.0
+            for i in range(len(self.seg)):
+                if self._far(px, py, i, bd, cp):
+                    continue
+                d, t = self._measure(px, py, i)
+                if d < bd:
+                    bd, bi, bt = d, i, t
+        if bi < 0:
+            return (bd, bi, 0.0)
+        return (bd, bi, self.cum[bi] + bt * (self.cum[bi + 1] - self.cum[bi]))
+
+    def near(self, p, r):
+        """nearest(p)[0] <= r, without finding the nearest: a segment within r will do, and none further than
+        r is measured."""
+        px, py = p
+        if not self._empty(p):   # (as nearest(): the nearest of p's cell's segments)
+            for lb, i in self._sorted(p):
+                if lb > r:
+                    return False
+                if self._measure(px, py, i)[0] <= r:
+                    return True
+            return False
+        if not self.seg:
+            return False
+        # else every segment's: but only one in a cell within r (and a cell) of p's can be within r
+        if self.span is None:
+            self._extent()
+        ci, cj = int(py / self.cell), int(px / self.cell)
+        cp = math.cos(math.radians(min(90.0, abs(py))))
+        step = self.cell * min(110540, 111320 * min(cp, self.cmin)) * (1 - 1e-9)
+        if step <= 0:
+            return self.nearest(p)[0] <= r
+        seen = set()
+        for R in range(1, min(int(r / step) + 2, max(abs(ci - self.span[0]), abs(self.span[1] - ci), abs(cj - self.span[2]), abs(self.span[3] - cj))) + 1):
+            for di in range(-R, R + 1):
+                for dj in ((-R, R) if abs(di) < R else range(-R, R + 1)):
+                    for i in self.grid.get((ci + di, cj + dj), ()):
+                        if i not in seen:
+                            seen.add(i)
+                            if not self._far(px, py, i, r, cp) and self._measure(px, py, i)[0] <= r:
+                                return True
+        return False
+
+    def _extent(self):
+        ks = list(self.grid)
+        self.span = (min(k[0] for k in ks), max(k[0] for k in ks), min(k[1] for k in ks), max(k[1] for k in ks))
+        self.cmin = min(b[4] for b in self.box)
+
+    def _far(self, px, py, i, bd, cp):
+        """Is segment i surely further than bd metres from (px, py) (cp: the cosine of py), by its box?"""
+        sx0, sx1, sy0, sy1, cs = self.box[i]
+        lim = bd * (1 + 1e-9) + 1e-6
+        return ((sy0 - py if py < sy0 else py - sy1 if py > sy1 else 0.0) * 110540 > lim or
+                (sx0 - px if px < sx0 else px - sx1 if px > sx1 else 0.0) * 111320 * min(cs, cp) > lim)
 
     def positions(self, p, r, lo=None, hi=None):
         """Every place the line passes within r metres of p: [position along in m], one per pass."""
         hits = []
-        for i in self.grid.get((int(p[1] / self.cell), int(p[0] / self.cell)), []):
+        px, py = p
+        for lb, i in self._sorted(p):
+            if lb > r:
+                break
             if lo is not None and (i < lo or i > hi):
                 continue
-            _, d, t = project(p, self.pts[i], self.pts[i + 1])
+            d, t = self._measure(px, py, i)
             if d <= r:
                 hits.append((i, d, self.cum[i] + t * (self.cum[i + 1] - self.cum[i])))
         # consecutive segments near p are one pass; keep the nearest point of each
@@ -99,9 +257,10 @@ class Polyline:
     def slice(self, m0, m1):
         """Points along the line between two distances in metres."""
         out = []
-        for i in range(len(self.pts) - 1):
-            if self.cum[i + 1] < m0 or self.cum[i] > m1:
-                continue
+        # the segments ending before m0 and those starting after m1: the cumulative lengths are in order
+        for i in range(max(0, bisect.bisect_left(self.cum, m0, 1) - 1), len(self.pts) - 1):
+            if self.cum[i] > m1:
+                break
             a, b = self.pts[i], self.pts[i + 1]
             L = self.cum[i + 1] - self.cum[i] or 1
             t0 = max(0.0, (m0 - self.cum[i]) / L); t1 = min(1.0, (m1 - self.cum[i]) / L)
@@ -551,13 +710,13 @@ def coverage(guide, geom):
     on = 0
     for i in range(n):
         p = guide.slice(i * step, i * step + 0.01)
-        if p and routed.nearest(p[0])[0] <= DIVERGE:
+        if p and routed.near(p[0], DIVERGE):
             on += 1
     m = int(routed.length / step) + 1
     on2 = 0
     for i in range(m):
         p = routed.slice(i * step, i * step + 0.01)
-        if p and guide.nearest(p[0])[0] <= DIVERGE:
+        if p and guide.near(p[0], DIVERGE):
             on2 += 1
     return {'shape_covered': round(on / n, 3), 'path_on_shape': round(on2 / m, 3)}
 
@@ -599,7 +758,7 @@ def divergences(g, guide, legs, stops, at):
         for i in range(n + 1):
             m = min(i * step, guide.length)
             p = guide.slice(m, m + 0.01)
-            far = i < n and p and routed.nearest(p[0])[0] > DIVERGE
+            far = i < n and p and not routed.near(p[0], DIVERGE)
             if far and gap is None:
                 gap = [m, m]
             elif far:

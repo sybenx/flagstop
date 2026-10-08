@@ -114,7 +114,7 @@ def gather(bbox, cache_dir, own='', also=(), mine=None):
             path = f['url'] if os.path.exists(f['url']) else os.path.join(d, f"{f['id']}.zip")
             if path != f['url'] and (not os.path.exists(path) or time.time() - os.path.getmtime(path) > KEEP):
                 print(f"other agencies: fetching {f['agency']} ({f['id']})", file=sys.stderr)
-                open(path, 'wb').write(catalog.get(f['url'], binary=True))
+                catalog.fetch_to(f['url'], path)
             got = stops_in(path, bbox, f['agency'])
             if mine and got:
                 same = sum(1 for x in got if x['id'] in mine and abs(mine[x['id']][0] - x['lat']) < 5e-5 and abs(mine[x['id']][1] - x['lon']) < 5e-5)

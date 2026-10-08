@@ -50,40 +50,109 @@ def is_pt(el):
             or t.get('type') in ('route', 'route_master'))
 
 
+class _Index:
+    """An Overpass JSON's elements by (type, id), and how many of its ways hold each node, kept up to date as
+    elements are replaced, added and removed: a big city's roads are millions of elements, too many to look
+    through again for every element a changeset changes. A removed element leaves a gap (None) until close()."""
+    def __init__(self, data):
+        self.els = data['elements']
+        self.at = {}                 # (type, id) -> its positions in els (two copies of one: the last counts)
+        self.nodes = {}              # node id -> how many node elements there are of it
+        self.held = {}               # node id -> how many ways hold it
+        for i, e in enumerate(self.els):
+            self._add(i, e)
+
+    def _add(self, i, e):
+        self.at.setdefault((e['type'], e['id']), []).append(i)
+        if e['type'] == 'node':
+            self.nodes[e['id']] = self.nodes.get(e['id'], 0) + 1
+        elif e['type'] == 'way':
+            for nd in set(e.get('nodes', [])):
+                self.held[nd] = self.held.get(nd, 0) + 1
+
+    def _drop(self, e):
+        if e['type'] == 'node':
+            self.nodes[e['id']] -= 1
+        elif e['type'] == 'way':
+            for nd in set(e.get('nodes', [])):
+                self.held[nd] -= 1
+
+    def get(self, key):
+        at = self.at.get(key)
+        return at[-1] if at else None
+
+    def append(self, e):
+        self.els.append(e)
+        self._add(len(self.els) - 1, e)
+
+    def put(self, i, e):
+        self._drop(self.els[i])
+        self.els[i] = e
+        self.at[(e['type'], e['id'])].remove(i)
+        self._add(i, e)
+        self.at[(e['type'], e['id'])].sort()
+
+    def remove(self, i):
+        e = self.els[i]
+        self._drop(e)
+        self.at[(e['type'], e['id'])].remove(i)
+        self.els[i] = None
+
+    def has_node(self, nid):
+        return self.nodes.get(nid, 0) > 0
+
+    def holds(self, nid):
+        return self.held.get(nid, 0) > 0
+
+    def close(self):
+        self.els[:] = [e for e in self.els if e is not None]
+
+
 def apply(pt, roads, cs_list):
     """Patch the two Overpass JSON caches in place. -> how many elements changed."""
-    idx = lambda data: {(e['type'], e['id']): i for i, e in enumerate(data['elements'])}
     n, latest = 0, None
+    ix = {id(pt): _Index(pt), id(roads): _Index(roads)}
     for cs in sorted(cs_list, key=int):   # in the order they were made
         ch, closed = changes(cs)
         latest = max(filter(None, [latest, closed]))
+        ch_nodes = {}
+        for _, x in ch:
+            if x['type'] == 'node':
+                ch_nodes.setdefault(x['id'], []).append(x)
         for action, el in ch:
             key = (el['type'], el['id'])
-            for data, wanted in ((pt, is_pt(el) or key in idx(pt)), (roads, (el['type'] == 'way' and el['tags'].get('highway') in ROADS) or key in idx(roads)
-                                                                     or (el['type'] == 'node' and any(el['id'] in w.get('nodes', []) for w in roads['elements'] if w['type'] == 'way')))):
-                i = idx(data).get(key)
+            P, R = ix[id(pt)], ix[id(roads)]
+            for data, wanted in ((pt, is_pt(el) or P.get(key) is not None), (roads, (el['type'] == 'way' and el['tags'].get('highway') in ROADS) or R.get(key) is not None
+                                                                         or (el['type'] == 'node' and R.holds(el['id'])))):
+                X = ix[id(data)]
+                i = X.get(key)
                 # a changeset older than what the cache has for this object (given out of order) doesn't undo it
                 if i is not None and (data['elements'][i].get('version') or 0) >= el['version'] and action != 'delete':
                     continue
                 if action == 'delete':
                     if i is not None:
-                        data['elements'].pop(i); n += 1
+                        X.remove(i); n += 1
                 elif wanted:
                     rec = dict(el)
                     if data is roads and el['type'] == 'node':
                         rec = {'type': 'node', 'id': el['id'], 'lat': el['lat'], 'lon': el['lon']}   # roads keep bare nodes
                     if i is None:
-                        data['elements'].append(rec)
+                        X.append(rec)
                     else:
-                        data['elements'][i] = rec
+                        X.put(i, rec)
                     n += 1
             # a new or changed way's nodes, so it can be drawn and routed
             if action != 'delete' and el['type'] == 'way':
                 for data in (pt, roads):
-                    have = {e['id'] for e in data['elements'] if e['type'] == 'node'}
-                    if (el['type'], el['id']) in idx(data):
-                        for nid, e in ((nid, x) for nid in el['nodes'] if nid not in have for a, x in ch if x['type'] == 'node' and x['id'] == nid):
-                            data['elements'].append({'type': 'node', 'id': nid, 'lat': e['lat'], 'lon': e['lon']}); have.add(nid)
+                    X = ix[id(data)]
+                    if X.get(key) is not None:
+                        for nid in el['nodes']:
+                            if X.has_node(nid):
+                                continue
+                            for e in ch_nodes.get(nid, []):
+                                X.append({'type': 'node', 'id': nid, 'lat': e['lat'], 'lon': e['lon']})
+    for X in ix.values():
+        X.close()
     complete(pt, roads)
     for data in (pt, roads):
         o = data.setdefault('osm3s', {})

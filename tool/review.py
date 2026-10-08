@@ -129,7 +129,7 @@ def route_pattern(feed, p, g, match, osm_stops, stop_areas=()):
     for b in routed_breaks:
         if b['kind'] == 'spur':
             far = [n for n in (g.ways[b['b']]['nodes'][0], g.ways[b['b']]['nodes'][-1]) if n != b['node'] and n in g.coord]
-            b['turnaround'] = bool(guide and far and guide.nearest(g.coord[far[0]])[0] <= routing.DIVERGE)
+            b['turnaround'] = bool(guide and far and guide.near(g.coord[far[0]], routing.DIVERGE))
     one = type('F', (), {'patterns': [p], 'stops': feed.stops})
     return {
         'chain_ok': all(l['ok'] for l in tr['legs']) and not any(b['kind'] == 'gap' or (b['kind'] == 'spur' and not b['turnaround']) for b in routed_breaks),
@@ -179,7 +179,16 @@ def stop_positions(feed, traced, match, osm_stops, g, stop_areas, near=25):
     if not sp:
         return {}
     plats = [o for o in osm_stops.values() if o['tags'].get('public_transport') == 'platform' or o['tags'].get('highway') == 'bus_stop']
-    bay = {n: min(plats, key=lambda q: stopmatch.dist(x['lat'], x['lon'], q['lat'], q['lon']))['id'] for n, x in sp.items()} if plats else {}
+    # each stop position's platform, worked out for those a stop here could use (on its buses' ways, near it)
+    pgrid = stopmatch.Grid([(q['lat'], q['lon']) for q in plats])
+    bays = {}
+    def bay(n):
+        if n not in bays:
+            x = sp[n]
+            bays[n] = plats[pgrid.nearest(x['lat'], x['lon'], lambda k: stopmatch.dist(x['lat'], x['lon'], plats[k]['lat'], plats[k]['lon']))]['id'] if plats else None
+        return bays[n]
+    spl = list(sp.items())
+    sgrid = stopmatch.Grid([(x['lat'], x['lon']) for _, x in spl])
     grouped = {}
     for a in stop_areas:
         stops_ = {m['ref'] for m in a['members'] if m['role'] == 'stop' and m['type'] == 'node'}
@@ -196,8 +205,8 @@ def stop_positions(feed, traced, match, osm_stops, g, stop_areas, near=25):
             o = osm_stops.get(m['osm'][0]['id']) if m.get('status') == 'matched' and m.get('osm') else None
             if not o:
                 continue
-            cands = [(n, stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon'])) for n, x in sp.items() if n in on and bay.get(n) == o['id']]
-            cands = [c for c in cands if c[1] <= near]
+            cands = [(n, stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon'])) for n, x in (spl[i] for i in sgrid.near(o['lat'], o['lon'], near)) if n in on]
+            cands = [c for c in cands if c[1] <= near and bay(c[0]) == o['id']]
             if not cands:
                 continue
             pref = grouped.get(o['id'], set()) if o else set()
@@ -248,8 +257,9 @@ def main():
     paths = shape_paths(feed)
 
     # who else stops at each OSM stop, by their own feeds: a shared stop is known, not guessed from its tags
+    ogrid = stopmatch.Grid([(x['lat'], x['lon']) for x in other_stops])
     for o in osm_stops.values():
-        o['served_by'] = sorted({x['agency'] for x in other_stops if stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon']) <= 20})
+        o['served_by'] = sorted({x['agency'] for x in (other_stops[k] for k in ogrid.near(o['lat'], o['lon'], 20)) if stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon']) <= 20})
     global KERB
     KERB = kerb_side(feed, paths, osm_stops)
     if KERB == 'left':
@@ -263,11 +273,13 @@ def main():
     if jumped:
         print(f'positions: the agency moved {len(jumped)} stops since an earlier feed version', file=sys.stderr)
     claimed = {m['osm'][0]['id'] for m in match.values() if m and m['status'] == 'matched' and m.get('osm')}
+    osl = list(osm_stops.values())
+    sgrid = stopmatch.Grid([(o['lat'], o['lon']) for o in osl])
     for sid, j in jumped.items():
         m = match.get(sid)
         if not m or m['status'] != 'missing':
             continue
-        old = [(stopmatch.dist(j['from'][1], j['from'][0], o['lat'], o['lon']), o) for o in osm_stops.values()
+        old = [(stopmatch.dist(j['from'][1], j['from'][0], o['lat'], o['lon']), o) for o in (osl[k] for k in sgrid.near(j['from'][1], j['from'][0], far))
                if o['id'] not in claimed and stopmatch.is_platform(o) and stopmatch.dist(j['from'][1], j['from'][0], o['lat'], o['lon']) <= far]
         if old:
             d, o = min(old, key=lambda x: x[0])
@@ -337,8 +349,11 @@ def main():
                 masters_of_rel.setdefault(mm['ref'], []).append(m['id'])
 
     patterns_out = []
+    of_route = {}
     for p in feed.patterns:
-        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, None, conv) for rid in best.get(p.id, []) if p.id in chosen.get(rid, [])]
+        of_route.setdefault(p.route_id, []).append(p)
+    for p in feed.patterns:
+        audits = [compare.audit(feed, p, rels[rid], rel_ways, coords, match, None, conv, of_route[p.route_id]) for rid in best.get(p.id, []) if p.id in chosen.get(rid, [])]
         for au in audits:
             au['duplicate'] = len(audits) > 1
             au['both_directions'] = len(chosen.get(au['id'], [])) > 1
@@ -358,16 +373,16 @@ def main():
 
     routes_out = []
     for r in sorted(feed.routes.values(), key=lambda r: (len(r.short), r.short)):
-        pids = [p.id for p in feed.patterns if p.route_id == r.id]
+        pids = [p.id for p in of_route.get(r.id, [])]
         if not pids:
             continue
         # the route's masters: those holding a relation paired with one of its itineraries (route 16's "16 AM" and
         # "16 PM" share one master, ref 16), else one with its ref; a new master is proposed only when there is neither
         held = sorted({mid for pid in pids for rid in best.get(pid, []) if pid in chosen.get(rid, []) for mid in masters_of_rel.get(rid, [])})
         # a time-of-day line's routes ('16 AM', '16 PM'): one line, one master, its itineraries all in it
-        line = compare.line_routes(feed, r.id)
+        line = {x.id for x in compare.line_routes(feed, r.id)}
         routes_out.append({'id': r.id, 'short': r.short, 'long': r.long, 'desc': r.desc, 'color': r.color, 'text_color': r.text_color, 'url': r.url,
-                           'line': r.ref, 'line_patterns': [p.id for p in feed.patterns if p.route_id in {x.id for x in line}],
+                           'line': r.ref, 'line_patterns': [p.id for p in feed.patterns if p.route_id in line],
                            'patterns': pids, 'masters': held or (masters_by_ref.get(r.ref, []) if r.ref else []), 'proposed_master_tags': compare.proposed_master_tags(feed, r.id, conv)})
 
     # open OSM notes by a stop (its agency point or its OSM node): someone saw something there
@@ -379,13 +394,14 @@ def main():
     busy = re.compile(r'\b(bus|stop|shelter|bench)\b', re.I)
     near_note = lambda la, lo, x: stopmatch.dist(la, lo, x['lat'], x['lon']) <= (150 if busy.search(x['text']) else 30)
     brief = lambda x: {k: x[k] for k in ('id', 'text', 'date')}
+    ngrid = stopmatch.Grid([(x['lat'], x['lon']) for x in notes])
     def notes_by(s):
         m = match.get(s.id) or {}
         o = osm_stops.get(m['osm'][0]['id']) if m.get('osm') else None
         pts = [(s.lat, s.lon)] + ([(o['lat'], o['lon'])] if o else [])
-        return [brief(x) for x in notes if any(near_note(la, lo, x) for la, lo in pts)]
+        return [brief(notes[k]) for k in sorted({k for la, lo in pts for k in ngrid.near(la, lo, 150)}) if any(near_note(la, lo, notes[k]) for la, lo in pts)]
     for o in osm_stops.values():
-        o['notes'] = [brief(x) for x in notes if near_note(o['lat'], o['lon'], x)]
+        o['notes'] = [brief(notes[k]) for k in ngrid.near(o['lat'], o['lon'], 150) if near_note(o['lat'], o['lon'], notes[k])]
     stops_out = {}
     for s in feed.stops.values():
         stops_out[s.id] = {'id': s.id, 'code': s.code, 'ref': s.ref, 'name': s.name, 'lat': s.lat, 'lon': s.lon, 'desc': s.desc, 'tts': s.tts, 'url': s.url,

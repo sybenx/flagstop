@@ -41,6 +41,60 @@ def rings(lat, r, cell):
     return math.ceil(r / (cell * 110540)), math.ceil(r / (cell * 111320 * max(0.05, math.cos(math.radians(lat)))))
 
 
+class Grid:
+    """Places on a grid of `cell` degrees, so a search near a point looks at its neighbours, not at every place.
+    items: [(lat, lon), ...]; what's found are indexes into items, in their order."""
+    def __init__(self, items, cell=0.002):
+        self.items, self.cell, self.cells = items, cell, {}
+        for k, (lat, lon) in enumerate(items):
+            self.cells.setdefault((int(lat / cell), int(lon / cell)), []).append(k)
+        self.top = max((abs(lat) for lat, _ in items), default=0.0)   # the furthest from the equator: the narrowest cell
+        ks = list(self.cells)
+        self.span = (min(k[0] for k in ks), max(k[0] for k in ks), min(k[1] for k in ks), max(k[1] for k in ks)) if ks else None
+
+    def near(self, lat, lon, r):
+        """Indexes of the places that may be within r metres of (lat, lon), as dist() measures (every one that is,
+        and some that aren't: the caller measures), in the items' order."""
+        if not self.span:
+            return []
+        # dist() takes the cosine halfway between the two points: no further from the equator than lat + r
+        c = math.cos(math.radians(min(90.0, abs(lat) + r / 110540)))
+        if c < 0.01:
+            return list(range(len(self.items)))
+        ci, cj = int(lat / self.cell), int(lon / self.cell)
+        ni, nj = math.ceil(r / (self.cell * 110540)), math.ceil(r / (self.cell * 111320 * c))
+        if (2 * ni + 1) * (2 * nj + 1) > len(self.cells):   # more cells around than have places in them
+            return sorted(k for key, ks in self.cells.items() if abs(key[0] - ci) <= ni and abs(key[1] - cj) <= nj for k in ks)
+        return sorted(k for i in range(ci - ni, ci + ni + 1) for j in range(cj - nj, cj + nj + 1) for k in self.cells.get((i, j), ()))
+
+    def nearest(self, lat, lon, measure):
+        """The index of the nearest place by measure(k) (dist() from (lat, lon) to place k, however the caller
+        writes it), the first in the items' order if two are as near: as min() over them all would pick. None
+        if there are none."""
+        if not self.span:
+            return None
+        ci, cj = int(lat / self.cell), int(lon / self.cell)
+        # a place in a cell D rings out is more than (D - 2) cells away (int() rounds towards 0: cell 0 is twice
+        # as wide), so after ring R every place not yet seen is more than (R - 1) cells away
+        step = self.cell * min(110540, 111320 * math.cos(math.radians(min(90.0, max(self.top, abs(lat))))))
+        i0, i1, j0, j1 = self.span
+        last = max(ci - i0, i1 - ci, cj - j0, j1 - cj)
+        best, seen = None, 0
+        for R in range(0, last + 1):
+            ring = [(ci + di, cj + dj) for di in range(-R, R + 1) for dj in ((-R, R) if abs(di) < R else range(-R, R + 1))] if R else [(ci, cj)]
+            seen += len(ring)
+            if seen > 4 * len(self.items) + 64:   # far from them all: cheaper to measure every one
+                return min(range(len(self.items)), key=lambda k: (measure(k), k))
+            for key in ring:
+                for k in self.cells.get(key, ()):
+                    d = measure(k)
+                    if best is None or d < best[0] or (d == best[0] and k < best[1]):
+                        best = (d, k)
+            if best is not None and best[0] < (R - 1) * step * (1 - 1e-9):
+                break
+        return best[1]
+
+
 TEMP = re.compile(r'\b(temp(orary)?|detour|closed)\b', re.I)
 
 

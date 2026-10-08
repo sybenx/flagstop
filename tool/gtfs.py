@@ -120,11 +120,17 @@ def is_bus(route_type):
 
 
 def _rows(z, name):
+    return list(_each(z, name))
+
+
+def _each(z, name):
+    """A file's rows one at a time: stop_times.txt of a big city's feed is millions of them."""
     if name not in z.namelist():
-        return []
+        return
     with z.open(name) as f:
         text = io.TextIOWrapper(f, encoding='utf-8-sig', newline='')
-        return [{k.strip(): (v or '').strip() for k, v in r.items() if k} for r in csv.DictReader(text)]
+        for r in csv.DictReader(text):
+            yield {k.strip(): (v or '').strip() for k, v in r.items() if k}
 
 
 def load(path):
@@ -173,8 +179,10 @@ def load(path):
     trips = {r['trip_id']: r for r in _rows(z, 'trips.txt')}
     other = {tid for tid, t in trips.items() if t.get('route_id') in routes and not is_bus(routes[t['route_id']].type)}
     trips = {tid: t for tid, t in trips.items() if tid not in other}
-    seq, times = defaultdict(list), defaultdict(list)
-    for r in _rows(z, 'stop_times.txt'):
+    # times: each trip's first and last call (by stop_sequence) as (sequence, arrival s, departure s), the ends of
+    # what sorting all its calls would give: a big city's feed has millions of calls, and only the ends are used
+    seq, times = defaultdict(list), {}
+    for r in _each(z, 'stop_times.txt'):
         if r['trip_id'] in other and r['stop_id'] in stops:
             stops[r['stop_id']].other_modes = True
         if r['trip_id'] in trips and r['stop_id'] in stops:
@@ -183,7 +191,14 @@ def load(path):
             except ValueError:
                 continue
             seq[r['trip_id']].append((n, r['stop_id']))
-            times[r['trip_id']].append((n, _secs(r.get('arrival_time')), _secs(r.get('departure_time'))))
+            x = (n, _secs(r.get('arrival_time')), _secs(r.get('departure_time')))
+            ends = times.get(r['trip_id'])
+            if ends is None:
+                times[r['trip_id']] = [x, x]
+            elif x < ends[0]:
+                ends[0] = x
+            elif x > ends[1]:
+                ends[1] = x
 
     # Group trips into patterns: same route, direction, shape and stop sequence.
     groups = {}
@@ -210,11 +225,13 @@ def load(path):
     patterns = []
     by_shape = defaultdict(list)
     of_trip = {}      # trip -> the pattern it ended up in (after folding)
+    trips_of = defaultdict(list)   # id(pattern) -> its trips, as of_trip has them
     for (rid, d, sid, order), g in sorted(groups.items(), key=lambda kv: (-len(kv[0][3]), -kv[1]['trips'])):
         parent = next((p for p in by_shape[(rid, d, sid)] if subseq(order, p.stops)), None)
         for tid in g['tids']:
             of_trip[tid] = parent
         if parent:
+            trips_of[id(parent)] += g['tids']
             parent.trips += g['trips']
             parent.service_ids |= g['services']
             parent.variants += 1
@@ -228,18 +245,17 @@ def load(path):
         patterns.append(p)
         for tid in g['tids']:
             of_trip[tid] = p
+        trips_of[id(p)] += g['tids']
     patterns.sort(key=lambda p: (-p.trips, p.route_id, p.direction))
     # Two patterns of one route that differ by a stop or two at the ends (the last run of the day parks
     # at another bay) and whose shapes cover each other are one itinerary for the map's purposes.
-    kept = []
+    kept, kept_of = [], defaultdict(list)   # (kept_of: by route)
     for p in patterns:
         parent = None
-        for q in kept:
+        for q in kept_of[p.route_id]:
             # the same way round only: the two directions of a street can share every stop (a centre-island
             # busway, one-sided rural stops), in the opposite order. (Not by direction_id: a feed may give a
             # loop's Saturday runs the other one, and start them at another stop of the loop.)
-            if q.route_id != p.route_id:
-                continue
             both = set(p.stops) & set(q.stops)
             if not _same_way([x for x in p.stops if x in both], [x for x in q.stops if x in both]):
                 continue
@@ -247,14 +263,15 @@ def load(path):
             if common >= max(len(p.stops), len(q.stops)) - 2 and _mutual_cover(shapes.get(p.shape_id), shapes.get(q.shape_id)) >= 0.9:
                 parent = q; break
         if parent:
-            for tid, x in of_trip.items():
-                if x is p:
-                    of_trip[tid] = parent
+            moved = trips_of.pop(id(p), [])
+            for tid in moved:
+                of_trip[tid] = parent
+            trips_of[id(parent)] += moved
             parent.trips += p.trips; parent.service_ids |= p.service_ids; parent.variants += 1 + p.variants
             parent.alt_shapes.append(p.shape_id)
             parent.alt_stops.extend(x for x in p.stops if x not in parent.stops)
         else:
-            kept.append(p)
+            kept.append(p); kept_of[p.route_id].append(p)
     for tid, p in of_trip.items():
         xs = sorted(times.get(tid, []))
         if not p or not xs:
@@ -356,10 +373,13 @@ def _join_loops(patterns, trips, times, of_trip, shapes):
             if pa is not pb and pa.route_id == pb.route_id and pa.stops[-1] == pb.stops[0] and 0 <= span[b][0] - span[a][1] <= LAYOVER:
                 link[(id(pa), id(pb))] += 1
     joined, out = set(), []
+    of_route = defaultdict(list)
+    for b in patterns:
+        of_route[b.route_id].append(b)
     for a in patterns:
         if id(a) in joined:
             continue
-        b = next((b for b in patterns if b is not a and id(b) not in joined and b.route_id == a.route_id
+        b = next((b for b in of_route[a.route_id] if b is not a and id(b) not in joined
                   and a.stops[-1] == b.stops[0] and b.stops[-1] == a.stops[0]
                   # nearly every trip of a that has a next trip on its bus carries straight on into b
                   and nxt[id(a)] and link[(id(a), id(b))] >= 0.8 * nxt[id(a)]), None)
@@ -384,23 +404,41 @@ def _mutual_cover(a, b, tol=30.0, step=25.0):
         return 0.0
     import math
 
-    def near(p, line):
-        best = 1e9
+    def dist(p, line, i):
+        """p to segment i of line, in metres (a local flat projection at the segment's start)."""
+        (ax, ay), (bx, by) = line[i], line[i + 1]
+        kx = 111320 * math.cos(math.radians(ay)); ky = 110540
+        dx, dy = (bx - ax) * kx, (by - ay) * ky
+        L2 = dx * dx + dy * dy
+        t = 0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - ax) * kx * dx + (p[1] - ay) * ky * dy) / L2))
+        qx, qy = ax + (bx - ax) * t, ay + (by - ay) * t
+        return math.hypot((p[0] - qx) * kx, (p[1] - qy) * ky)
+
+    cell = 0.002
+    def grid(line):
+        """{cell: [segment]}: each segment in every cell a point within tol of it can be in (a degree of
+        longitude measured as at the segment's start, as dist() measures it); and the long segments, that would
+        fill too many cells, apart: they're measured from every point."""
+        g, long_ = {}, []
         for i in range(len(line) - 1):
             (ax, ay), (bx, by) = line[i], line[i + 1]
-            kx = 111320 * math.cos(math.radians(ay)); ky = 110540
-            dx, dy = (bx - ax) * kx, (by - ay) * ky
-            L2 = dx * dx + dy * dy
-            t = 0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - ax) * kx * dx + (p[1] - ay) * ky * dy) / L2))
-            qx, qy = ax + (bx - ax) * t, ay + (by - ay) * t
-            d = math.hypot((p[0] - qx) * kx, (p[1] - qy) * ky)
-            if d < best:
-                best = d
-        return best
+            kx = 111320 * math.cos(math.radians(ay))
+            if kx < 1:
+                long_.append(i); continue
+            my, mx = tol / 110540 * 1.001 + 1e-9, tol / kx * 1.001 + 1e-9
+            rows = range(int((min(ay, by) - my) / cell), int((max(ay, by) + my) / cell) + 1)
+            cols = range(int((min(ax, bx) - mx) / cell), int((max(ax, bx) + mx) / cell) + 1)
+            if len(rows) * len(cols) > 64:
+                long_.append(i); continue
+            for ci in rows:
+                for cj in cols:
+                    g.setdefault((ci, cj), []).append(i)
+        return g, long_
 
     def frac(x, y):
         pts = x[::max(1, len(x) // 150)]
-        return sum(1 for p in pts if near(p, y) <= tol) / len(pts)
+        g, long_ = grid(y)
+        return sum(1 for p in pts if any(dist(p, y, i) <= tol for i in g.get((int(p[1] / cell), int(p[0] / cell)), ())) or any(dist(p, y, i) <= tol for i in long_)) / len(pts)
     return min(frac(a, b), frac(b, a))
 
 

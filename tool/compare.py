@@ -4,7 +4,7 @@ A relation is paired with the pattern whose shape its ways cover best (ref agree
 one). Then, for the pair: stops the relation lacks or has extra, stops out of order, ways off the
 shape, tags to add (the GTFS tagging scheme), and duplicates (two relations for one pattern).
 """
-import re
+import math, re
 from routes import Polyline, DIVERGE, metres
 
 MASTER_TAGS = ('ref', 'name', 'network', 'operator', 'colour')
@@ -34,20 +34,20 @@ def relation_platforms(rel):
     return out
 
 
-def cover(polyline, pieces, tol=DIVERGE, step=15.0):
-    """(fraction of polyline within tol of the pieces, fraction of the pieces' length within tol of polyline)."""
+def cover(polyline, pieces, tol=DIVERGE, step=15.0, pl=None):
+    """(fraction of polyline within tol of the pieces, fraction of the pieces' length within tol of polyline).
+    pl: the pieces as one Polyline, when the caller has it already."""
     if not pieces or polyline.length == 0:
         return 0.0, 0.0
-    flat = [p for _, pts in pieces for p in pts]
-    pl = Polyline(flat)
+    pl = pl or Polyline([p for _, pts in pieces for p in pts])
     n = int(polyline.length / step) + 1
-    on = sum(1 for i in range(n) if pl.nearest(polyline.slice(i * step, i * step + 0.01)[0])[0] <= tol)
+    on = sum(1 for i in range(n) if pl.near(polyline.slice(i * step, i * step + 0.01)[0], tol))
     tot = hit = 0
     for _, pts in pieces:
         for i in range(len(pts) - 1):
             L = metres(pts[i], pts[i + 1]); tot += L
             mid = ((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2)
-            if polyline.nearest(mid)[0] <= tol:
+            if polyline.near(mid, tol):
                 hit += L
     return on / n, (hit / tot if tot else 0.0)
 
@@ -66,8 +66,11 @@ def pair(feed, patterns_traced, rels, ways, coords, stop_match):
         if p.id not in shapes and len(p.stops) > 1:
             shapes[p.id] = Polyline([(feed.stops[s].lon, feed.stops[s].lat) for s in p.stops if s in feed.stops])
     geoms = {rid: relation_geometry(r, ways, coords) for rid, r in rels.items()}
+    boxes = {k: _box(sh.pts) for k, sh in shapes.items()}
+    lines = {}   # each relation's ways as one Polyline, made once for all the patterns it's held against
     scores = {}
     for rid, r in rels.items():
+        rbox = _box([q for _, pts in geoms[rid] for q in pts])
         for p in feed.patterns:
             if p.id not in shapes:
                 continue
@@ -75,7 +78,11 @@ def pair(feed, patterns_traced, rels, ways, coords, stop_match):
             ref = _ref_of(r['tags'])
             if ref and route.short and ref.split()[0] != route.short.split()[0]:
                 continue  # 'ref' disagrees outright: not this route
-            a, b = cover(shapes[p.id], geoms[rid])
+            if not rbox or not boxes[p.id] or _apart(boxes[p.id], rbox, DIVERGE):
+                continue  # nowhere within DIVERGE of each other: it covers none of this shape
+            if rid not in lines:
+                lines[rid] = Polyline([q for _, pts in geoms[rid] for q in pts])
+            a, b = cover(shapes[p.id], geoms[rid], pl=lines[rid])
             if a > 0.3:
                 # Which way do the relation's ways run along this shape? Same direction counts for it.
                 d = _direction_agreement(shapes[p.id], geoms[rid])
@@ -106,6 +113,23 @@ def pair(feed, patterns_traced, rels, ways, coords, stop_match):
     return best_for_pattern, chosen, scores
 
 
+def _box(pts):
+    """(west, south, east, north) around the points, or None."""
+    if not pts:
+        return None
+    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _apart(a, b, tol):
+    """Is every point of box a more than tol metres from every point of box b (as metres() measures)?"""
+    gx = max(a[0] - b[2], b[0] - a[2], 0.0)
+    gy = max(a[1] - b[3], b[1] - a[3], 0.0)
+    lat = min(90.0, max(abs(a[1]), abs(a[3]), abs(b[1]), abs(b[3])))
+    lim = tol * (1 + 1e-6) + 1e-3   # (a little over: the boxes' sums in floating point)
+    return gy * 110540 > lim or gx * 111320 * math.cos(math.radians(lat)) > lim
+
+
 def _direction_agreement(shape, pieces):
     """-1..1: do the relation's member ways, taken in order, run from the shape's start to its end?"""
     if len(pieces) < 2:
@@ -113,9 +137,8 @@ def _direction_agreement(shape, pieces):
     pos = []
     for _, pts in pieces:
         mid = pts[len(pts) // 2]
-        d, _, m = shape.nearest(mid)
-        if d <= DIVERGE:
-            pos.append(m)
+        if shape.near(mid, DIVERGE):   # (and only then where along it: far from it, finding the nearest is slow)
+            pos.append(shape.nearest(mid)[2])
     if len(pos) < 4:
         return 0.0
     up = sum(1 for i in range(len(pos) - 1) if pos[i + 1] > pos[i])
@@ -199,8 +222,9 @@ def chain_breaks(way_ids, ways):
     return sorted(out, key=lambda x: x['i'])
 
 
-def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
-    """Everything about one relation that a reviewer should know, against its GTFS pattern."""
+def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None, siblings=None):
+    """Everything about one relation that a reviewer should know, against its GTFS pattern. siblings: the
+    route's patterns, when the caller has them to hand (else found among the feed's)."""
     t = rel['tags']
     route = feed.routes[p.route_id]
     issues = []
@@ -241,7 +265,7 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
         for wid, pts in relation_geometry(rel, ways, coords):
             L = sum(metres(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
             far = sum(metres(pts[i], pts[i + 1]) for i in range(len(pts) - 1)
-                      if shape.nearest(((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2))[0] > DIVERGE)
+                      if not shape.near(((pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2), DIVERGE))
             if L and far / L > 0.5:
                 off_ways.append({'way': wid, 'length': round(far), 'lon': pts[len(pts) // 2][0], 'lat': pts[len(pts) // 2][1], 'name': ways[wid]['tags'].get('name', '')})
     rel_ways = relation_way_ids(rel)
@@ -250,7 +274,7 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None):
     breaks = chain_breaks(rel_ways, ways)
     # Stops on the sibling pattern (the other direction) explain 'extra' members of a two-direction relation.
     sibling_stops = set()
-    for q in feed.patterns:
+    for q in (feed.patterns if siblings is None else siblings):
         if q.route_id == p.route_id and q.id != p.id:
             for sid in q.stops:
                 mm = stop_match.get(sid)
