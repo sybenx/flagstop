@@ -69,6 +69,10 @@ The agency's point and OSM's node are good at different things: the agency's poi
 
 Without a jump, a difference within the usual gap is two placements of the same stop and OSM's spot stays; a larger one is a question, as before. A stop the agency moved is also found in OSM where it used to be, not reported missing.
 
+A stop OSM hasn't got goes in at the agency's point, unless that point is in the road (often the centre line, or the middle of a junction): then at the kerb beside it, on the side buses pull in at, by the road's width (its `width` or `lanes`, else what its kind usually is). Which side that is comes from where OSM's stops with the agency's codes already are, so it's the left where traffic keeps left. A point already off the road stays (a stop on the left of a one-way street is one). Imagery decides the last metre: drag the new stop onto the sign.
+
+Route numbers with a time of day ("16 AM", "16 PM"; "9 Night", "4 Saturday") are one line run differently at different times: one route master with the number as its `ref`, a relation for each way it's run (each `ref` the number, the time in its name), and stops' `route_ref` lists the number once.
+
 ## A new feed
 
 Each build keeps a short summary of the feed version it reviewed (in `cache/`). When the agency publishes a new one, the Routes page opens with what changed since the last version: stops added, gone, moved or renamed, routes added or gone, routes calling at different stops. That's where to look first; a stop gone from the feed turns up in *OSM only*, to remove after a look.
@@ -99,7 +103,7 @@ Changes and stop decisions are kept in the browser and, while `tool/serve.py` ru
 
 ## Publishing it
 
-`.github/workflows/publish.yml` builds the review (the agency's feed from the Mobility Database, OSM's stops and routes) and publishes `web/` on GitHub Pages, daily and when run by hand. The published page needs no server: it routes in the browser and loads each route's roads from Overpass itself; your uploads show at once; what others change is checked live when you open a route, and comes in with the next build. It's off until you turn it on: Settings → Pages → Source: GitHub Actions, and a repository variable `PUBLISH` = `yes` (optionally `FEED_QUERY` for another agency). Check the feed's licence first: the page republishes its stops and shapes.
+`.github/workflows/publish.yml` builds the review (the agency's feed from the Mobility Database, OSM's stops and routes) and publishes `web/` on GitHub Pages, daily and when run by hand. The published page needs no server: it routes in the browser, with each route's roads as the build fetched them (`review.py --roads-per-route`; public Overpass is often too busy to ask from the page, which it does only for a route the build couldn't get); your uploads show at once; what others change is checked live when you open a route, and comes in with the next build. It's off until you turn it on: Settings → Pages → Source: GitHub Actions, and a repository variable `PUBLISH` = `yes` (optionally `FEED_QUERY` for another agency). Check the feed's licence first: the page republishes its stops and shapes.
 
 ## Uploading from the page
 
