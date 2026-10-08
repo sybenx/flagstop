@@ -1268,7 +1268,7 @@ function renderStops(P) {
     P.append(el('div', {class: 'row' + (S.stop === s.id ? ' on' : '') + (s.match && s.match.temporary ? ' dim' : ''), onclick: () => showStop(s.id)},
       el('span', {class: 'dotc ' + st}),
       el('div', {class: 'grow'}, el('div', {class: 't'}, s.name), el('div', {class: 's'}, [s.ref, s.desc, o && o.tags.name && o.tags.name !== s.name ? 'OSM: ' + o.tags.name : null].filter(Boolean).join(' · '))),
-      s.match && s.match.temporary ? el('span', {class: 'chip'}, 'temporary') : st === 'ambiguous' ? el('span', {class: 'chip warn'}, `${s.match.osm.length} candidates`) : st === 'moved' ? el('span', {class: 'chip warn'}, `moved ${s.match.osm[0].dist} m?`) : st === 'missing' ? el('span', {class: 'chip bad'}, 'not in OSM') : diffs.length ? el('span', {class: 'chip'}, diffs.join(', ')) : null));
+      s.match && s.match.temporary ? el('span', {class: 'chip'}, 'temporary') : s.routes && !s.routes.length ? el('span', {class: 'chip', title: 'In the feed, but no trip calls here now (a detour, say): its OSM stop stays as it is'}, 'no buses now') : st === 'ambiguous' ? el('span', {class: 'chip warn'}, `${s.match.osm.length} candidates`) : st === 'moved' ? el('span', {class: 'chip warn'}, `moved ${s.match.osm[0].dist} m?`) : st === 'missing' ? el('span', {class: 'chip bad'}, 'not in OSM') : diffs.length ? el('span', {class: 'chip'}, diffs.join(', ')) : null));
   }
 }
 function showStop(id) {
@@ -1306,6 +1306,12 @@ function renderStop(P, s) {
       existing ? el('span', {class: 'chip edit'}, 'added to changes') : el('button', {class: 'b primary', onclick: () => placeNewStop(s)}, 'Add stop here → changes'),
       editorButtons({lon: s.lon, lat: s.lat, zoom: 19, select: [], comment: `Bus stop ${s.ref} ${s.name}`}, {primaryLabel: 'Look in RapiD'})));
     d.append(el('details', {class: 'small'}, el('summary', {}, 'Tags it would get'), el('div', {class: 'kv'}, ...Object.entries(s.proposed_tags).flatMap(([k, v]) => [el('span', {class: 'k'}, k), el('span', {}, v)]))));
+  } else if (st === 'moved' && s.routes && !s.routes.length) {
+    // in the feed, but no bus calls here now: the agency's point (parked somewhere for a detour, say) moves nothing
+    const c = s.match.osm[0], oo = D.osm_stops[c.id];
+    d.append(el('h2', {style: 'margin-left:0'}, 'No bus calls here now'));
+    d.append(el('div', {class: 'small'}, "The agency still lists it, but no trip stops here (a detour, say). Its OSM stop, ", el('b', {}, oo.tags.name || oo.id), `, ${c.dist} m from where the feed puts it now, stays where it is.`));
+    d.append(osmStopBox(s, oo, c, false));
   } else if (st === 'moved') {
     const c = s.match.osm[0], oo = D.osm_stops[c.id];
     const gone = mergedWith(s);   // two stops the agency made one: the other goes when this one moves

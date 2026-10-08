@@ -302,12 +302,32 @@ def match(feed, osm_stops, across=None):
             r['merged_with'] = {'id': best[1]['id'], 'dist': round(best[0])}
         r['diff'] = diff(feed, s, osm_stops[r['osm'][0]['id']])
 
-    # An OSM stop claimed twice is really ambiguous for both.
+    # An OSM stop claimed twice is really ambiguous for both, unless one claim is plainly the better: the one stop
+    # buses call at, or the one stop that is it by its own id or code (and buses call at). A stop no bus uses (one
+    # the agency parked at a detour's temporary stop, say) doesn't take another's away.
+    served = lambda sid: bool(feed.stops[sid].routes)
     for oid, sids in claimed.items():
-        if len(sids) > 1:
+        if len(sids) < 2:
+            continue
+        by_id = [sid for sid in sids if served(sid) and results[sid]['osm'][0]['how'] == 'ref']
+        busy = [sid for sid in sids if served(sid)]
+        keep = by_id[0] if len(by_id) == 1 else busy[0] if len(busy) == 1 else None
+        if keep is None:
             for sid in sids:
                 results[sid]['status'] = 'ambiguous'
                 results[sid]['shared_with'] = [x for x in sids if x != sid]
+            continue
+        for sid in sids:
+            if sid == keep:
+                continue
+            r = results[sid]
+            r['osm'] = [c for c in r['osm'] if c['id'] != oid]   # it's the other stop's
+            r['notes'].append(f"OSM {oid} is {feed.stops[keep].name}'s ({keep}), which claims it {'by its code' if keep in by_id else 'and buses call at'}")
+            if not r['osm']:
+                r['status'], r['diff'] = 'missing', None
+            else:
+                r['status'] = 'ambiguous' if len(r['osm']) > 1 and r['osm'][1]['score'] >= r['osm'][0]['score'] - 0.12 else 'matched'
+                r['diff'] = diff(feed, feed.stops[sid], osm_stops[r['osm'][0]['id']]) if r['status'] == 'matched' else None
 
     # OSM stops the feed's stops claim, so not 'OSM only' (offered for removal on the page): the one a stop matched,
     # the one it moved from, and every one an ambiguous stop could be (a second candidate of a matched stop may

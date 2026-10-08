@@ -461,6 +461,20 @@ class Search(unittest.TestCase):
                 res, _ = stops.match(self.feed_with(s), {'n1': {**o, 'type': 'node'}})
                 self.assertEqual(res['77']['status'], 'moved')
 
+    def test_a_node_claimed_twice_goes_to_the_stop_that_is_it(self):
+        # route 12's temporary stop, matched by its code; a stop no bus uses parked 2 m from it by the agency
+        temp = Stop('214 West 300 North (Temp Stop)', id='12532091', code='6016'); temp.location_type = '0'; temp.routes = {'r12'}
+        idle = Stop('380 North 200 West, Hyrum', id='7548560', code='1220', lat=41.74 + 2 / 110540); idle.location_type = '0'
+        f = Feed(); f.stops = {temp.id: temp, idle.id: idle}
+        o = osm('214 West 300 North (Temp Stop)', ref='6016')
+        res, _ = stops.match(f, {'n1': {**o, 'type': 'node'}})
+        self.assertEqual(res['12532091']['status'], 'matched')
+        self.assertEqual(res['7548560']['status'], 'missing')
+        # both served, neither by code: still a question for both
+        idle.routes = {'r9'}; o2 = osm('somewhere', ref='')
+        res, _ = stops.match(f, {'n1': {**o2, 'type': 'node'}})
+        self.assertEqual({res[x]['status'] for x in res}, {'ambiguous'})
+
     def test_a_stop_id_is_matched_whole_not_inside_another(self):
         s = Stop('100 North Main St', id='12', code='12')
         o = osm('Elsewhere Road', lat=41.74 + 150 / 110540, **{'gtfs:stop_id': '1234'})

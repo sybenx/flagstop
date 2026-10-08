@@ -308,11 +308,18 @@ def main():
                 near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
                 m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
+    # A stop no bus calls at now (left in the feed during a detour, parked at its temporary stop, say): its OSM stop
+    # stays where it is, whatever the feed's point says, and no move is suggested for it
+    idle = {sid for sid, st in feed.stops.items() if not st.routes}
+    for sid in idle:
+        m = match.get(sid)
+        if m and m.get('decide') is not None and 'position' in (m.get('diff') or {}):
+            m['decide']['position'] = {'pick': 'keep', 'why': "no bus calls here now (a detour?): its OSM stop stays where it is"}
     # A stop the agency moved: where OSM's node goes, by how the node got where it is (its history)
     api = os.environ.get('OSM_API_URL', 'https://api.openstreetmap.org').rstrip('/')
     for sid, j in jumped.items():
         m = match.get(sid)
-        if not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None):
+        if sid in idle or not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None):
             continue
         o = osm_stops[m['osm'][0]['id']]
         if o['id'][0] != 'n':
@@ -327,7 +334,7 @@ def main():
     # OSM's node was at the agency's spot until someone moved it away (a slip of the mouse, an edit about something
     # else): its history says so, and where it was. Putting it back is the suggestion, still asked, on the map.
     for sid, m in match.items():
-        if not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None) or m.get('move_how') or m.get('merged_with'):
+        if sid in idle or not (m and m['status'] in ('matched', 'moved') and m.get('osm') and m['osm'][0]['id'] in osm_stops and m.get('decide') is not None) or m.get('move_how') or m.get('merged_with'):
             continue
         o, s = osm_stops[m['osm'][0]['id']], feed.stops[sid]
         if o['id'][0] != 'n' or stopmatch.dist(s.lat, s.lon, o['lat'], o['lon']) <= stopmatch.FAR:
