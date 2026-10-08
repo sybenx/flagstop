@@ -30,7 +30,33 @@ const Edits = {
       this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || [];
     } catch (e) { this.ops = {}; }
     try { this.uploaded = JSON.parse(localStorage.getItem(this.key + '.uploaded') || '{}'); } catch (e) { this.uploaded = {}; }
+    this.dropUploaded();
     this.history = []; this.future = []; this.committed = this.state();
+  },
+  /** Another tab changed the basket (or uploaded it): take its copy, rather than later saving this tab's older
+   *  one over it. -> true when anything changed. */
+  fromStorage() {
+    let s, up;
+    try { s = localStorage.getItem(this.key); up = localStorage.getItem(this.key + '.uploaded'); } catch (e) { return false; }
+    const was = this.state() + JSON.stringify(this.uploaded);
+    try { const j = JSON.parse(s || '{}'); this.ops = j.ops || {}; this.nextId = j.nextId || -1; this.decisions = j.decisions || {}; this.routing = j.routing || {}; this.answers = j.answers || {}; this.roads = j.roads || []; } catch (e) { return false; }
+    try { this.uploaded = JSON.parse(up || '{}'); } catch (e) { /* keep this tab's */ }
+    this.dropUploaded();
+    this.committed = this.state();
+    if (was === this.committed + JSON.stringify(this.uploaded)) return false;
+    this.history = []; this.future = [];   // another tab's steps aren't this one's to undo
+    return true;
+  },
+  /** A new object waiting in Changes that already went up as it is (an older copy of the basket, from another tab
+   *  or browser, saved over the upload): sending it again would put it on OSM twice. */
+  dropUploaded() {
+    const same = (a, b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+    let n = 0;
+    for (const [k, op] of Object.entries(this.ops)) {
+      const up = this.uploaded[k];
+      if (op.kind === 'create' && up && up.kind === 'create' && up.type === op.type && same(up.tags, op.tags)) { delete this.ops[k]; n++; }
+    }
+    return n;
   },
   state() { return JSON.stringify({ops: this.ops, nextId: this.nextId, decisions: this.decisions, routing: this.routing, answers: this.answers, roads: this.roads}); },
   save() {
@@ -66,6 +92,7 @@ const Edits = {
       if (!r.state || !(r.at > mine) || r.state === this.state()) return false;
       const s = JSON.parse(r.state);
       this.ops = s.ops || {}; this.nextId = s.nextId || -1; this.decisions = s.decisions || {}; this.routing = s.routing || {}; this.answers = s.answers || {}; this.roads = s.roads || [];
+      this.dropUploaded();
       this.history = []; this.future = []; this.committed = this.state();
       try { localStorage.setItem(this.key, this.committed); localStorage.setItem(this.key + '.at', String(r.at)); } catch (e) {}
       return true;
@@ -197,7 +224,11 @@ const Edits = {
   },
   /** Members may reference ops by key ('new:r-3'); resolve to {type, ref, role} with negative ids. */
   resolveMember(m) {
-    if (m.key) { const op = this.ops[m.key]; return op ? {type: op.type, ref: op.id, role: m.role} : null; }
+    if (m.key) {
+      if (this.ops[m.key]) return {type: this.ops[m.key].type, ref: this.ops[m.key].id, role: m.role};
+      const up = this.uploaded[m.key];   // made, and uploaded since: it has OSM's id now
+      return up && up.newId ? {type: up.type, ref: up.newId, role: m.role} : null;
+    }
     return m;
   },
   /** What changed in a modify op: [{k, before, after}] */
@@ -322,7 +353,7 @@ const Edits = {
     // 401: OSM no longer takes this sign-in (the app was revoked or re-registered, or the token expired).
     // Forget it, so the page asks for a fresh one instead of sending the dead one again; the changes stay.
     if (r.status === 401) { this.auth.signOut(); throw Object.assign(new Error("OSM didn't accept the sign-in: it was revoked or has expired"), {signedOut: true}); }
-    if (!r.ok) throw new Error(`${opts.method || 'GET'} ${path}: ${r.status} ${(await r.text()).slice(0, 300)}`);
+    if (!r.ok) throw Object.assign(new Error(`${opts.method || 'GET'} ${path}: ${r.status} ${(await r.text()).slice(0, 300)}`), {status: r.status});
     return r;
   },
   /** Fetch current versions of every existing object we touch; report conflicts where tags moved on. */
@@ -357,12 +388,26 @@ const Edits = {
     }
     return {versions, conflicts};
   },
+  CAP: 50,   // changes per upload, whatever they are: small enough for someone else to review
   async upload(comment, source, onStatus = () => {}) {
+    // one at a time: a second click while the first is still checking would send the same new objects twice
+    if (this.uploading) throw new Error('an upload is already running');
+    this.uploading = true;
+    try { return await this._upload(comment, source, onStatus); } finally { this.uploading = false; }
+  },
+  async _upload(comment, source, onStatus) {
     if (!this.auth.token()) throw new Error('not signed in');
     if ([...comment].length > 255) throw new Error(`the changeset comment is ${[...comment].length} characters; OSM takes 255 at most. Shorten it and upload again: nothing was sent`);
-    // when this upload began: the OSM data is taken to have it once its base time passes this (settle()); the
-    // changeset closes before landed() runs, so a time taken there would be after the data's own stamp
-    const started = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();   // whole seconds, as OSM stamps a changeset
+    if (this.count() > this.CAP) throw new Error(`${this.count()} changes; ${this.CAP} at most go in one upload. Remove some and upload again: nothing was sent`);
+    // an upload whose reply was lost: whether it went up is settled before anything is sent again
+    const unsure = this.unsure();
+    if (unsure) {
+      onStatus(`asking OSM whether changeset ${unsure.id} went up…`);
+      const diff = await this.recover(unsure.id);
+      if (diff === null) throw new Error(`OSM couldn't be asked whether changeset ${unsure.id} went up. Nothing was sent; try again when it can`);
+      this.unsure(null);
+      if (diff !== 'empty') { this.landed(unsure.id, diff, this.keptDeletes(diff), unsure.at); this.roads = []; this.save(); this.history = []; this.future = []; return {id: unsure.id, skipped: this.keptDeletes(diff), undid: [], recovered: true}; }
+    }
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});
@@ -372,36 +417,110 @@ const Edits = {
     const tags = {created_by: 'flagstop', comment, source: source || 'GTFS', host: typeof location !== 'undefined' ? location.origin : ''};
     const csXml = `<osm><changeset>${Object.entries(tags).map(([k, v]) => `<tag k="${this.xmlEsc(k)}" v="${this.xmlEsc(v)}"/>`).join('')}</changeset></osm>`;
     const id = (await (await this.api('/api/0.6/changeset/create', {method: 'PUT', headers: {'Content-Type': 'text/xml'}, body: csXml})).text()).trim();
+    // when this upload began: the OSM data is taken to have it once its base time passes this (settle()). Taken
+    // after the check (which can take a while), just before the upload, and before the changeset closes.
+    const started = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();   // whole seconds, as OSM stamps a changeset
     onStatus(`uploading to changeset ${id}…`);
+    const close = async () => { onStatus('closing changeset…'); try { await this.api(`/api/0.6/changeset/${id}/close`, {method: 'PUT'}); } catch (e) { /* OSM closes an idle changeset itself within the hour */ } };
     let diff;
+    this.unsure({id, at: started});   // until the reply is read: a reload or crash in between still knows to ask
     try {
       const res = await this.api(`/api/0.6/changeset/${id}/upload`, {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: this.osc(id, versions)});
       diff = this.parseXml(await res.text());
-    } finally {
-      onStatus('closing changeset…');
-      await this.api(`/api/0.6/changeset/${id}/close`, {method: 'PUT'});
+    } catch (e) {
+      // OSM said no (a conflict, a bad request): nothing went up. Anything else (the network, a gateway timing
+      // out) may have come after OSM took it: OSM applies an upload whole or not at all, so ask what it has.
+      if (e.status && e.status < 500) { this.unsure(null); await close(); throw e; }
+      onStatus(`the reply was lost: asking OSM what changeset ${id} has…`);
+      const got = await this.recover(id);
+      if (got === null) { await close(); throw new Error(`Changeset ${id}: the upload's reply was lost (${e.message}), and OSM couldn't be asked whether it went up. Everything is still in Changes; the next upload asks OSM first, and doesn't send it twice`); }
+      this.unsure(null);
+      if (got === 'empty') { await close(); throw new Error(`Changeset ${id}: the upload didn't go through (${e.message}). Nothing went up; everything is still in Changes`); }
+      diff = got;
     }
+    this.unsure(null);
     // <delete if-unused> quietly keeps an object something still uses (a route in a route_master, a node
     // in a way): the diffResult then gives it a new_id instead of none. Those stay in the basket.
-    const skipped = Object.entries(this.ops).filter(([, op]) => op.kind === 'delete' &&
-      [...diff.getElementsByTagName(op.type)].some(e => e.getAttribute('old_id') === String(op.id) && e.hasAttribute('new_id'))).map(([key]) => key);
-
+    const skipped = this.keptDeletes(diff);
     // edits of someone else's that this changeset undid: the page offers a record to leave on theirs
     const undid = Object.values(this.ops).filter(op => op.undoes).map(op => op.undoes);
+    // recorded before the changeset is closed: a close that fails mustn't leave what went up waiting to go again
     this.landed(id, diff, skipped, started);
     this.roads = [];
     this.save();
     this.history = []; this.future = [];   // what went to OSM isn't taken back from here
+    await close();
     return {id, skipped, undid};
+  },
+  /** The deletes in the basket OSM kept (if-unused: something still uses them): keys. */
+  keptDeletes(diff) {
+    return Object.entries(this.ops).filter(([, op]) => op.kind === 'delete' &&
+      [...diff.getElementsByTagName(op.type)].some(e => e.getAttribute('old_id') === String(op.id) && e.hasAttribute('new_id'))).map(([key]) => key);
+  },
+  /** An upload whose reply hasn't been read: {id, at} (set), or null (clear), or read when no argument. Kept
+   *  beside the basket, so a reload in between still knows. */
+  unsure(v) {
+    const k = this.key + '.unsure';
+    if (v === undefined) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return this._unsure || null; } }
+    this._unsure = v;
+    try { if (v) localStorage.setItem(k, JSON.stringify(v)); else localStorage.removeItem(k); } catch (e) {}
+  },
+  /** What a changeset whose upload reply was lost holds, as a diffResult for landed(): 'empty' when nothing went
+   *  up, null when OSM can't be asked. The basket's ops are found in it by id (modify, delete) or, for new
+   *  objects (no id until OSM gives one), by what they are: type, tags, position, nodes, members. */
+  async recover(id) {
+    let text;
+    try { text = await (await this.api(`/api/0.6/changeset/${id}/download`)).text(); } catch (e) { return null; }
+    const unesc = v => v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+    const got = [];
+    for (const [, kind, body] of text.matchAll(/<(create|modify|delete)\b[^>]*>([\s\S]*?)<\/\1>/g))
+      for (const [, type, a, inner = ''] of body.matchAll(/<(node|way|relation)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1>)/g)) {
+        const at = Object.fromEntries([...a.matchAll(/([\w:]+)="([^"]*)"/g)].map(x => [x[1], unesc(x[2])]));
+        got.push({kind, type, id: +at.id, version: +at.version, lat: at.lat != null ? +at.lat : null, lon: at.lon != null ? +at.lon : null,
+          tags: Object.fromEntries([...inner.matchAll(/<tag k="([^"]*)" v="([^"]*)"/g)].map(x => [unesc(x[1]), unesc(x[2])])),
+          nodes: [...inner.matchAll(/<nd ref="(-?\d+)"/g)].map(x => +x[1]),
+          members: [...inner.matchAll(/<member type="(\w+)" ref="(-?\d+)" role="([^"]*)"/g)].map(x => ({type: x[1], ref: +x[2], role: unesc(x[3])}))});
+      }
+    if (!got.length) return 'empty';
+    const tagsOf = op => Object.fromEntries(Object.entries(op.tags || {}).filter(([, v]) => v !== '' && v != null));
+    const same = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+    const claimed = new Set(), lines = [];
+    // new nodes first: the new ways' and relations' references to them are matched by their new ids
+    const newIds = {};
+    const ref = (type, r) => r < 0 ? newIds[type + r] : r;
+    for (const t of ['node', 'way', 'relation'])
+      for (const op of Object.values(this.ops).filter(o => o.type === t)) {
+        if (op.kind === 'create') {
+          const e = got.find(g => !claimed.has(g) && g.kind === 'create' && g.type === t && same(g.tags, tagsOf(op)) &&
+            (t !== 'node' || (Math.abs(g.lat - op.lat) < 2e-7 && Math.abs(g.lon - op.lon) < 2e-7)) &&
+            (t !== 'way' || JSON.stringify(g.nodes) === JSON.stringify((op.nodes || []).map(n => ref('node', n)))) &&
+            (t !== 'relation' || JSON.stringify(g.members.map(m => [m.type, m.ref, m.role])) === JSON.stringify((op.members || []).map(m => this.resolveMember(m)).filter(Boolean).map(m => [m.type, ref(m.type, m.ref), m.role || '']))));
+          if (e) { claimed.add(e); newIds[t + op.id] = e.id; lines.push(`<${t} old_id="${op.id}" new_id="${e.id}" new_version="${e.version}"/>`); }
+        } else {
+          const e = got.find(g => g.type === t && g.id === op.id);
+          // a delete OSM kept (if-unused) isn't in the changeset at all: the same as a diffResult's new_id for it
+          if (op.kind === 'delete') lines.push(e ? `<${t} old_id="${op.id}"/>` : `<${t} old_id="${op.id}" new_id="${op.id}" new_version="${op.base && op.base.version}"/>`);
+          else if (e) lines.push(`<${t} old_id="${op.id}" new_id="${op.id}" new_version="${e.version}"/>`);
+        }
+      }
+    return this.parseXml(`<diffResult>${lines.join('')}</diffResult>`);
   },
   /** What went up is laid over flagstop's copy until the OSM data has it, as iD does: the page shows it done
    *  at once (no refresh), with the ids and versions OSM gave it (diff: the upload's diffResult). */
   landed(id, diff, skipped = [], at = new Date().toISOString()) {
+    const result = op => [...diff.getElementsByTagName(op.type)].find(x => x.getAttribute('old_id') === String(op.id));
+    // what was new in this upload, by the ids OSM gave it: what's kept refers to those, not to placeholders
+    // (a member {key: 'new:r-1'} or a way's node -7 means nothing once this basket is empty)
+    const newIds = {};
+    for (const op of Object.values(this.ops)) { const e = op.kind === 'create' && result(op); if (e && e.getAttribute('new_id')) newIds[op.type + op.id] = +e.getAttribute('new_id'); }
+    const real = (type, ref) => ref < 0 && newIds[type + ref] ? newIds[type + ref] : ref;
     for (const [key, op] of Object.entries(this.ops)) {
       if (skipped.includes(key)) continue;
-      const e = [...diff.getElementsByTagName(op.type)].find(x => x.getAttribute('old_id') === String(op.id));
+      const e = result(op);
       const done = {...JSON.parse(JSON.stringify(op)), uploaded: id, at, newId: e && e.getAttribute('new_id') ? +e.getAttribute('new_id') : null,
         newVersion: e && e.getAttribute('new_version') ? +e.getAttribute('new_version') : null};
+      if (done.nodes) done.nodes = done.nodes.map(n => real('node', n));
+      if (done.members) done.members = done.members.map(m => { const r = this.resolveMember(m); return r ? {type: r.type, ref: real(r.type, r.ref), role: r.role || ''} : m; });
       this.uploaded[key] = done;
       if (op.kind === 'create' && done.newId) this.uploaded[op.type[0] + done.newId] = done;
     }

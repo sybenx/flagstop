@@ -6,7 +6,7 @@
    UPLOAD_CAP changes go in one upload; past that, upload first. */
 'use strict';
 
-const UPLOAD_CAP = 50;   // changes per upload, whatever they are: small enough for someone else to review
+const UPLOAD_CAP = Edits.CAP;   // changes per upload (edits.js)
 const KEY_WORDS = {ref: 'code', 'gtfs:stop_id': 'GTFS id', route_ref: 'routes', description: 'announcement', name: 'name', position: 'position', wheelchair: 'wheelchair', tagging: 'PTv2 tags'};
 
 const Review = {

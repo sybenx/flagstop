@@ -508,17 +508,20 @@ function render() {
 const tile = (n, label, cls = '') => el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
 const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
 
-/** What's waiting in Changes for an itinerary (not uploaded yet): a merge, its relation, its stops. */
-function pending(p) {
-  const rels = p.relations.map(a => Edits.get('r' + a.id)).filter(Boolean);
+/** What's waiting in Changes for an itinerary (not uploaded yet): a merge, its relation, its stops. With
+ *  from = Edits.uploaded: what went up for it that the OSM data here doesn't have yet. */
+function pending(p, from = Edits.ops) {
+  const rels = p.relations.map(a => from['r' + a.id]).filter(Boolean);
   const osm = new Set(p.stops.map(id => { const s = D.stops[id], o = matchedOsm(s) || (s.match && s.match.osm && s.match.osm[0] && D.osm_stops[s.match.osm[0].id]); return o && osmNumId(o); }).filter(Boolean));
-  const stops = Object.values(Edits.ops).filter(o => o.type === 'node' && (osm.has(o.id) || (o.kind === 'create' && p.stops.includes(o.tags['gtfs:stop_id'])))).length;
+  const stops = new Set(Object.values(from).filter(o => o.type === 'node' && (osm.has(o.id) || (o.kind === 'create' && p.stops.includes(o.tags['gtfs:stop_id'])))).map(o => o.id)).size;
   const bits = [rels.some(o => o.kind === 'delete') ? 'merge' : rels.length ? 'relation' : null, stops ? `${stops} stop${stops > 1 ? 's' : ''}` : null].filter(Boolean);
   return bits;
 }
 function pendingChip(p) {
   const bits = pending(p);
-  return bits.length ? el('span', {class: 'chip edit', title: 'Waiting in Changes, not uploaded yet'}, `in Changes: ${bits.join(', ')}`) : null;
+  if (bits.length) return el('span', {class: 'chip edit', title: 'Waiting in Changes, not uploaded yet'}, `in Changes: ${bits.join(', ')}`);
+  const up = pending(p, Edits.uploaded);
+  return up.length ? el('span', {class: 'chip edit', title: "Uploaded. The rest of this page shows OSM as it was until the next refresh"}, `uploaded: ${up.join(', ')}`) : null;
 }
 /** Open OSM notes someone left by a stop: worth reading before deciding anything about it. */
 function noteLines(notes) {
@@ -962,6 +965,9 @@ function relationPlan(p) {
 async function proposeRelation(p, opts = {}) {
   const say = (m, ms) => { if (!opts.quiet) toast(m, ms); };
   if (!p.routed) { toast("This route's roads are still loading: try again in a moment", 5000); return {ok: false, why: 'not routed yet'}; }
+  // a relation made for it went up, and the data here doesn't have it yet: made again, it would be there twice
+  const made = Object.values(Edits.uploaded).find(o => o.kind === 'create' && o.type === 'relation' && o.note === p.id);
+  if (made) { const why = `its new relation went up in changeset ${made.uploaded}, and the data here doesn't have it yet: refresh from OSM first`; say(`Not added: ${why}`, 8000); return {ok: false, why}; }
   const x = relationPlan(p), rt = x.rt;
   if (!x.chainOk && !opts.quiet && !confirm('The routed path is broken (a leg did not connect). Add the relation anyway?')) return {ok: false, why: 'the routed path is broken'};
   if (!x.chainOk && opts.quiet) return {ok: false, why: "the routed path is broken (a leg didn't connect): re-route it first"};
@@ -1014,16 +1020,28 @@ async function proposeRelation(p, opts = {}) {
   return out;
 }
 function proposeMaster(r) {
-  const members = [];
+  // waiting in Changes, or uploaded and not in the data yet: either way it's there, and isn't made twice
+  const all = Edits.all(), members = [];
   for (const pid of r.patterns) {
     const p = patternById(pid);
     if (p.temporary) continue;
-    const key = Object.keys(Edits.ops).find(k => Edits.ops[k].type === 'relation' && Edits.ops[k].note === pid);
-    if (key) members.push(Edits.ops[key].kind === 'create' ? {key, role: ''} : {type: 'relation', ref: Edits.ops[key].id, role: ''});
+    const key = Object.keys(all).find(k => all[k].type === 'relation' && all[k].note === pid && all[k].kind !== 'delete');
+    const op = key && all[key];
+    if (op) members.push(op.kind !== 'create' ? {type: 'relation', ref: op.id, role: ''} : Edits.ops[key] ? {key, role: ''} : {type: 'relation', ref: op.newId, role: ''});
     else if (p.relations.length) members.push({type: 'relation', ref: p.relations.sort((a, b) => a.id - b.id)[0].id, role: ''});
   }
   if (!members.length) return toast('No relations to put in it yet');
-  if (Object.values(Edits.ops).some(o => o.kind === 'create' && o.type === 'relation' && o.note === 'master:' + r.id)) return;   // once
+  const sig = x => { const y = Edits.resolveMember(x) || x; return y.type + y.ref; };
+  const mk = Object.keys(all).find(k => all[k].kind === 'create' && all[k].type === 'relation' && all[k].note === 'master:' + r.id);
+  if (mk) {
+    // made already (for the other direction): what's missing from it goes in
+    const m = all[mk], have = new Set((m.members || []).map(sig)), add = members.filter(x => !have.has(sig(x)));
+    if (!add.length) return;
+    if (Edits.ops[mk]) { Edits.ops[mk].members = [...m.members, ...add]; Edits.save(); }
+    else Edits.modify('relation', m.newId, {version: m.newVersion, tags: m.tags, members: m.members}, {members: [...m.members, ...add]}, 'master:' + r.id);
+    toast('route_master: added to it in changes'); render();
+    return;
+  }
   Edits.createRelation(r.proposed_master_tags, members, 'master:' + r.id);
   toast('route_master added to changes'); render();
 }
@@ -1371,6 +1389,9 @@ function renderChanges(P) {
   if (Edits.auth.lost) d.append(el('div', {class: 'note', style: 'background:color-mix(in srgb, var(--miss) 14%, transparent)'},
     el('b', {}, 'Signed out: '), "OSM didn't accept flagstop's sign-in any more (the app was revoked or re-registered on OSM, or the sign-in expired). Your changes are all still here. Sign in again below; if you registered flagstop again on OSM, paste its new client ID under \"Set up upload\" first."));
   // the last upload: its changeset, until the next one replaces it
+  const unsure = Edits.unsure();
+  if (unsure) d.append(el('div', {class: 'note', style: 'background:color-mix(in srgb, var(--miss) 14%, transparent)'}, el('b', {}, 'Not sure it went up: '),
+    'the reply to ', el('a', {href: `${OSM_WWW}/changeset/${unsure.id}`, target: '_blank'}, `changeset ${unsure.id}`), " was lost, and OSM couldn't be asked about it yet. Nothing is sent twice: the next upload asks OSM first, and takes out of Changes whatever had gone up."));
   const last = myUploads('lastUpload');
   if (last) d.append(el('div', {class: 'note'}, el('b', {}, 'Last upload: '),
     el('a', {href: `${OSM_WWW}/changeset/${last.id}`, target: '_blank'}, `changeset ${last.id}`),
@@ -1394,11 +1415,13 @@ function renderChanges(P) {
     const btns = el('div', {class: 'btns'});
     if (user && over) btns.append(el('button', {class: 'b primary', disabled: ''}, `Upload (over ${UPLOAD_CAP})`));
     else if (user) {
-      btns.append(el('button', {class: 'b primary', onclick: async () => {
+      btns.append(el('button', {class: 'b primary', onclick: async e => {
+        if (Edits.uploading) return;
         if (!confirm(`Upload ${ops.length} change${ops.length > 1 ? 's' : ''} to OpenStreetMap as ${user.display_name}?`)) return;
+        const button = e.currentTarget; button.disabled = true;
         try {
           const n = ops.length;
-          const {id, skipped, undid} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
+          const {id, skipped, undid, recovered} = await Edits.upload(comment.value, `${D.agency.agency_name} GTFS`, s => status.textContent = s);
           // remembered, so the changeset stays findable after the page redraws or reloads
           // remembered with what goes with it (records for undone edits, deletes OSM skipped), so it all
           // survives the redraw that follows, and a reload
@@ -1408,14 +1431,14 @@ function renderChanges(P) {
             localStorage.setItem(Edits.key + '.uploads', JSON.stringify(ups.slice(-50)));
           } catch (e) {}
           S.comment = null;
-          toast(`Uploaded: changeset ${id}`, 6000);
+          toast(recovered ? `Changeset ${id} had gone up after all: taken out of Changes` : `Uploaded: changeset ${id}`, 6000);
           render();
         } catch (e) {
           status.textContent = '';
           if (e.conflicts) { status.append(el('div', {style: 'color:var(--miss)'}, 'Not uploaded — these changed on OSM since flagstop looked:'), el('ul', {}, ...e.conflicts.map(c => el('li', {}, `${c.key}: ${c.why}`))), el('div', {}, 'Remove those lines or refresh the OSM data (tool/review.py --refresh) and decide again.')); }
           else if (e.signedOut) { Edits.auth.lost = true; render(); }   // shows why, and the sign-in button
           else status.textContent = 'Upload failed: ' + e.message;
-        }
+        } finally { button.disabled = false; }
       }}, `Upload to OSM as ${user.display_name}`));
       btns.append(el('button', {class: 'b', onclick: () => { Edits.auth.signOut(); render(); }}, 'sign out'));
     } else {
@@ -1508,3 +1531,9 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
 }).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });
 
 window.addEventListener('hashchange', () => { if (D && map) applyHash(); });
+// the basket changed in another tab of this browser (an answer, an upload): this tab takes it, so it doesn't save
+// its own older copy over it later (and bring back what went up)
+window.addEventListener('storage', e => {
+  if (!D || !e.key || !(e.key === Edits.key || e.key === Edits.key + '.uploaded')) return;
+  if (Edits.fromStorage()) { Edits.listeners.forEach(f => f()); render(); draw(); toast('Changes updated from another tab'); }
+});

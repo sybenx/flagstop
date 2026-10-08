@@ -1233,9 +1233,9 @@ def main(argv=None):
         log = json.load(open(LOG)) if os.path.exists(LOG) else []
         print(f'snapshot: {base or "none"}; {len(log)} changeset{"" if len(log) == 1 else "s"} uploaded')
         for cs in log:
-            kinds = {}
-            for blk in re.findall(r'<(create|modify|delete)\b', cs['osc']):
-                kinds[blk] = kinds.get(blk, 0) + 1
+            kinds = {}   # changes of each kind: the elements in each block, not the blocks
+            for blk, body in re.findall(r'<(create|modify|delete)\b[^>]*>(.*?)</\1>', cs['osc'], re.S):
+                kinds[blk] = kinds.get(blk, 0) + len(re.findall(r'<(?:node|way|relation)\b', body))
             print(f"  {cs['id']}  {cs['closed_at']}  {cs['tags'].get('comment', '')[:70]}  {kinds}")
         return
     ap.print_help()

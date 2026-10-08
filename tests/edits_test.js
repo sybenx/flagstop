@@ -18,7 +18,7 @@ Edits.auth.token = () => 'test-token';
 const tests = [];
 const test = (name, fn) => tests.push({name, fn});
 function reset() {
-  Edits.ops = {}; Edits.uploaded = {}; Edits.roads = []; Edits.decisions = {}; Edits.nextId = -1; Edits.fetch = null;
+  Edits.ops = {}; Edits.uploaded = {}; Edits.roads = []; Edits.decisions = {}; Edits.nextId = -1; Edits.fetch = null; Edits._unsure = null;
   Roads.nodes = {}; Roads.ways = {}; Roads.rels = {};
 }
 
@@ -252,7 +252,7 @@ test('repair: a split way\'s own pieces are driven whatever their length; other 
 // ---------------------------------------------------------------------------------------------------------
 const reply = (status, body) => ({status, ok: status >= 200 && status < 300, json: async () => body, text: async () => typeof body === 'string' ? body : JSON.stringify(body)});
 /** A fake OSM API: objects: {'node/10': element | 410}; records every request as 'METHOD path'. */
-function fakeOsm(objects, {changeset = '777', diffResult = '<diffResult/>'} = {}) {
+function fakeOsm(objects, {changeset = '777', diffResult = '<diffResult/>', upload = null, download = null} = {}) {
   const log = [];
   const f = async (url, opts = {}) => {
     const p = String(url).replace(OSM_API, ''), method = opts.method || 'GET';
@@ -263,7 +263,12 @@ function fakeOsm(objects, {changeset = '777', diffResult = '<diffResult/>'} = {}
       return o === 410 ? reply(410, 'gone') : o ? reply(200, {elements: [{type: mm[1], id: +mm[2], ...o}]}) : reply(404, 'nope');
     }
     if (method === 'PUT' && p === '/api/0.6/changeset/create') return reply(200, changeset + '\n');
-    if (method === 'POST' && p === `/api/0.6/changeset/${changeset}/upload`) return reply(200, diffResult);
+    if (method === 'POST' && p === `/api/0.6/changeset/${changeset}/upload`) {
+      if (upload === 'network') throw new TypeError('Failed to fetch');   // the reply lost, whatever OSM did
+      if (typeof upload === 'number') return reply(upload, 'refused');
+      return reply(200, diffResult);
+    }
+    if (method === 'GET' && p === `/api/0.6/changeset/${changeset}/download`) return download == null ? reply(503, 'busy') : reply(200, download);
     if (method === 'PUT' && p === `/api/0.6/changeset/${changeset}/close`) return reply(200, '');
     return reply(400, 'unexpected ' + method + ' ' + p);
   };
@@ -368,6 +373,118 @@ test('upload: refuses without a sign-in, or a comment OSM would cut, before read
   const token = Edits.auth.token; Edits.auth.token = () => '';
   try { await assert.rejects(() => Edits.upload('ok', 'GTFS'), /not signed in/); } finally { Edits.auth.token = token; }
   assert.deepStrictEqual(api.log, []);
+});
+
+// what OSM has in changeset 777 when it took the upload and the reply was lost: as /changeset/777/download gives it
+const took = `<?xml version="1.0" encoding="UTF-8"?>
+<osmChange version="0.6" generator="OpenStreetMap server">
+<create>
+  <node id="9001" visible="true" version="1" changeset="777" lat="41.7400000" lon="-111.8300000"><tag k="highway" v="bus_stop"/><tag k="name" v="A &amp; B"/></node>
+</create>
+<create>
+  <relation id="9100" visible="true" version="1" changeset="777"><member type="node" ref="9001" role="platform"/><tag k="type" v="route"/></relation>
+</create>
+<modify>
+  <node id="10" visible="true" version="2" changeset="777" lat="41.7400000" lon="-111.8300000"><tag k="name" v="B"/></node>
+</modify>
+</osmChange>`;
+const lostBasket = () => {
+  reset();
+  const n = Edits.createNode(41.74, -111.83, {highway: 'bus_stop', name: 'A & B'}, 'new stop');
+  Edits.createRelation({type: 'route'}, [{key: n, role: 'platform'}], 'new route');
+  Edits.modify('node', 10, {version: 1, tags: {name: 'A'}, lat: 41.74, lon: -111.83}, {tags: {name: 'B'}}, 'rename');
+};
+
+test('upload: the reply lost after OSM took it: found in the changeset, kept as uploaded, nothing waits to go again', async () => {
+  lostBasket();
+  const api = Edits.fetch = fakeOsm({'node/10': {version: 1, tags: {name: 'A'}, lat: 41.74, lon: -111.83}}, {upload: 'network', download: took});
+  const res = await Edits.upload('x', 'GTFS');
+  assert.strictEqual(res.id, '777');
+  assert.deepStrictEqual(Object.keys(Edits.ops), [], 'nothing left to send twice');
+  assert.strictEqual(Edits.uploaded['new:n-1'].newId, 9001);
+  assert.strictEqual(Edits.uploaded['new:r-2'].newId, 9100);
+  assert.deepStrictEqual(Edits.uploaded['new:r-2'].members, [{type: 'node', ref: 9001, role: 'platform'}], 'its member by the id OSM gave');
+  assert.strictEqual(Edits.uploaded['n10'].newVersion, 2);
+  assert.strictEqual(Edits.unsure(), null);
+  assert.ok(wrote(api.log).some(r => r.path === '/api/0.6/changeset/777/close'));
+});
+
+test('upload: the reply lost and OSM can\'t be asked: all stays in Changes, and the next upload asks before sending', async () => {
+  lostBasket();
+  const objs = {'node/10': {version: 1, tags: {name: 'A'}, lat: 41.74, lon: -111.83}};
+  Edits.fetch = fakeOsm(objs, {upload: 'network', download: null});
+  await assert.rejects(() => Edits.upload('x', 'GTFS'), /couldn't be asked/);
+  assert.strictEqual(Edits.count(), 3);
+  assert.strictEqual(Edits.unsure().id, '777');
+  // still can't ask: refused, nothing sent
+  let api = Edits.fetch = fakeOsm(objs, {download: null});
+  await assert.rejects(() => Edits.upload('x', 'GTFS'), /Nothing was sent/);
+  assert.deepStrictEqual(wrote(api.log), []);
+  // now it can, and it had gone up: taken as uploaded, no second changeset
+  api = Edits.fetch = fakeOsm(objs, {download: took});
+  const res = await Edits.upload('x', 'GTFS');
+  assert.ok(res.recovered);
+  assert.deepStrictEqual(wrote(api.log), [], 'nothing uploaded a second time');
+  assert.strictEqual(Edits.count(), 0);
+  assert.strictEqual(Edits.uploaded['new:n-1'].newId, 9001);
+});
+
+test('upload: the reply lost and the changeset is empty: it didn\'t go through, and can be sent again', async () => {
+  lostBasket();
+  Edits.fetch = fakeOsm({'node/10': {version: 1, tags: {name: 'A'}, lat: 41.74, lon: -111.83}}, {upload: 'network', download: '<osmChange version="0.6"/>'});
+  await assert.rejects(() => Edits.upload('x', 'GTFS'), /didn't go through/);
+  assert.strictEqual(Edits.count(), 3);
+  assert.strictEqual(Edits.unsure(), null);
+});
+
+test('upload: OSM refusing it (409) leaves Changes as it was, with no asking after', async () => {
+  lostBasket();
+  const api = Edits.fetch = fakeOsm({'node/10': {version: 1, tags: {name: 'A'}, lat: 41.74, lon: -111.83}}, {upload: 409});
+  await assert.rejects(() => Edits.upload('x', 'GTFS'), /409/);
+  assert.strictEqual(Edits.count(), 3);
+  assert.strictEqual(Edits.unsure(), null);
+  assert.ok(!api.log.some(r => r.path.endsWith('/download')));
+});
+
+test('upload: one at a time; more than the cap is refused before anything is read', async () => {
+  reset();
+  Edits.createNode(41.74, -111.83, {highway: 'bus_stop'}, 'n');
+  let api = Edits.fetch = fakeOsm({}, {diffResult: '<diffResult><node old_id="-1" new_id="5" new_version="1"/></diffResult>'});
+  const [a, b] = await Promise.allSettled([Edits.upload('x', 'GTFS'), Edits.upload('x', 'GTFS')]);
+  assert.strictEqual(a.status, 'fulfilled');
+  assert.match(String(b.reason), /already running/);
+  assert.strictEqual(wrote(api.log).filter(r => r.path.endsWith('/upload')).length, 1);
+  reset();
+  for (let i = 0; i <= Edits.CAP; i++) Edits.createNode(41.74, -111.83 + i * 1e-4, {}, 'n');
+  api = Edits.fetch = fakeOsm({});
+  await assert.rejects(() => Edits.upload('x', 'GTFS'), /at most go in one upload/);
+  assert.deepStrictEqual(api.log, []);
+});
+
+test('upload: a relation edited again after its new member went up keeps that member, by its OSM id', async () => {
+  reset();
+  const r = Edits.createRelation({type: 'route_master'}, [{type: 'relation', ref: 50, role: ''}], 'master');
+  const route = Edits.createRelation({type: 'route'}, [], 'route A');
+  Edits.modify('relation', 500, {version: 1, tags: {type: 'route_master'}, members: [{type: 'relation', ref: 50, role: ''}]}, {members: [{type: 'relation', ref: 50, role: ''}, {key: route, role: ''}]}, 'A in its master');
+  Edits.fetch = fakeOsm({'relation/500': {version: 1, tags: {type: 'route_master'}, members: [{type: 'relation', ref: 50, role: ''}]}},
+    {diffResult: '<diffResult><relation old_id="-1" new_id="901" new_version="1"/><relation old_id="-2" new_id="902" new_version="1"/><relation old_id="500" new_id="500" new_version="2"/></diffResult>'});
+  await Edits.upload('x', 'GTFS');
+  // direction B, built from what flagstop knows of r500 now: the uploaded copy
+  const now = Edits.get('r500');
+  Edits.modify('relation', 500, {version: 1, tags: {}, members: []}, {members: [...now.members, {type: 'relation', ref: 77, role: ''}]}, 'B in its master');
+  assert.match(Edits.osc(8), /<relation id="500" version="2" changeset="8">\s*<member type="relation" ref="50" role=""\/>\s*<member type="relation" ref="902" role=""\/>\s*<member type="relation" ref="77" role=""\/>/);
+  // and a member by key to something uploaded since resolves to its OSM id, not to nothing
+  assert.deepStrictEqual(Edits.resolveMember({key: route, role: 'x'}), {type: 'relation', ref: 902, role: 'x'});
+  void r;
+});
+
+test('a new object already uploaded as it is, in an older copy of the basket, is dropped rather than sent twice', () => {
+  reset();
+  const k = Edits.createNode(41.74, -111.83, {highway: 'bus_stop', name: 'A'}, 'n');
+  Edits.uploaded[k] = {...Edits.ops[k], uploaded: '5', newId: 9, newVersion: 1};
+  const k2 = Edits.createNode(41.75, -111.83, {highway: 'bus_stop', name: 'B'}, 'n2');   // not uploaded: stays
+  assert.strictEqual(Edits.dropUploaded(), 1);
+  assert.deepStrictEqual(Object.keys(Edits.ops), [k2]);
 });
 
 (async () => {
