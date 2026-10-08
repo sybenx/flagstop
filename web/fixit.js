@@ -138,7 +138,9 @@ const FixIt = {
     else if (x.timetable.clash.length) ul.append(el('li', {class: 'muted'}, `the timetable left as OSM has it (${x.timetable.clash.join(', ')} differ)`));
     if (rp.duplicates.length) ul.append(el('li', {}, S.fixit.keepDuplicates ? `${rp.duplicates.length} other relation${rp.duplicates.length > 1 ? 's' : ''} for this itinerary left as they are` :
       `${rp.duplicates.length} other relation${rp.duplicates.length > 1 ? 's' : ''} for this itinerary (${rp.duplicates.map(a => a.tags.name || 'r' + a.id).join(', ')}) deleted, the one kept swapped into the route_master`,
-      ' ', el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); S.fixit.keepDuplicates = !S.fixit.keepDuplicates; render(); }}, S.fixit.keepDuplicates ? 'merge them' : 'keep them')));
+      ' ', el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); S.fixit.keepDuplicates = !S.fixit.keepDuplicates; render(); }}, S.fixit.keepDuplicates ? 'merge them' : 'keep them'),
+      // each one deleted: every one of its tags, each kept onto the relation that stays if ticked
+      ...(S.fixit.keepDuplicates || !rp.reuse ? [] : rp.duplicates.map(a => Carry.box({...a, id: 'r' + a.id}, {id: 'r' + rp.reuse.id, tags: {...rp.reuse.tags, ...rp.tags}}, CARRY.relation, {title: `r${a.id}'s tags`})))));
     ul.append(el('li', {}, rp.masters.length ? `in its route_master (r${rp.masters[0]})` : 'a route_master made for it'));
     will.append(ul);
     d.append(will);
@@ -166,7 +168,8 @@ const FixIt = {
       const b = (v, label) => el('button', {class: 'b tiny' + (q.answer === v ? ' chosen' : ''), onclick: () => set(key, v)}, (q.answer === v ? '✓ ' : '') + label);
       row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${their.tags.name || sh.id} (${sh.dist} m); OSM's stop with its code, ${own.tags.name || sh.own}, is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`),
         el('div', {style: 'margin:4px 0'}, lookButtons(s, null)),
-        el('div', {class: 'btns'}, b(sh.id, `one stop: ${their.tags.name || sh.id}`), b(sh.own, `keep ${own.tags.name || sh.own} where it is`), b('move:' + sh.own, `move ${own.tags.name || sh.own} here`)));
+        el('div', {class: 'btns'}, b(sh.id, `one stop: ${their.tags.name || sh.id}`), b(sh.own, `keep ${own.tags.name || sh.own} where it is`), b('move:' + sh.own, `move ${own.tags.name || sh.own} here`)),
+        q.answer === sh.id ? shareBox(s) : null);
     } else if (q.kind === 'which') {
       row.append(el('div', {class: 'why'}, 'More than one OSM stop could be the agency\'s. Look at them on the map.'), el('div', {style: 'margin:4px 0'}, lookButtons(s, null)));
       const b = el('div', {class: 'btns'});
@@ -179,7 +182,8 @@ const FixIt = {
         el('div', {class: 'btns'},
           el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + (q.s.match && q.s.match.inroad ? "move OSM's stop to the kerb" : "move OSM's stop to the agency's point") + (mergedWith(s) ? `, remove ${mergedWith(s).tags.name || 'the other'}` : '')),
           mergedWith(s) ? el('button', {class: 'b tiny' + (q.answer === 'move-keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'move-keep')}, (q.answer === 'move-keep' ? '✓ ' : '') + `move it, keep ${mergedWith(s).tags.name || 'the other'}`) : null,
-          el('button', {class: 'b tiny' + (q.answer === 'keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'keep')}, (q.answer === 'keep' ? '✓ ' : '') + 'leave it where it is')));
+          el('button', {class: 'b tiny' + (q.answer === 'keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'keep')}, (q.answer === 'keep' ? '✓ ' : '') + 'leave it where it is')),
+        q.answer === 'agency' && mergedWith(s) ? goneBox(s) : null);
     } else {
       const diff = (s.match && s.match.diff) || {}, from = (diff[q.k] && diff[q.k].osm) || '—', to = (diff[q.k] && diff[q.k].gtfs) || '';
       row.append(el('div', {class: 'why'}, `${from} → ${to}. ${q.why}`),
@@ -210,7 +214,7 @@ const FixIt = {
           const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
           if (c.move) markUndo(key, s);
           Edits.ops[key].suggested = true; Edits.ops[key].route = r.short;
-          if (c.removeOther) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
+          if (c.removeOther) { carryGone(s, o); kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`)); }
         }
       }
       Edits.save();
@@ -218,6 +222,7 @@ const FixIt = {
       if (!res.ok) { say(`The stops are in Changes; the relation isn't: ${res.why}.`); return; }
       const keep = x.x.reuse ? {type: 'relation', ref: x.x.reuse.id} : {key: res.key};
       if (!S.fixit.keepDuplicates) for (const a of x.x.duplicates) {
+        if (x.x.reuse) Carry.onto({...a, id: 'r' + a.id}, asWillBe({...x.x.reuse, id: 'r' + x.x.reuse.id}), CARRY.relation);   // what of it is ticked, onto the one that stays
         Edits.delete('relation', a.id, relBase(a), `duplicate of route ${r.short}`);
         editMasters([], a.id, keep);   // out of its master, the kept one in (OSM keeps a relation a master still lists)
       }

@@ -123,7 +123,8 @@ const Review = {
               el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : s.match && s.match.inroad ? 'move it to the kerb' : "move to the agency's point") + (mergedWith(s) ? `, remove ${mergedWith(s).tags.name || 'the other'}` : '') : "agency's")),
               k === 'position' && mergedWith(s) ? el('button', {class: 'b tiny' + (v === 'move-keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'move-keep' ? null : 'move-keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'move-keep' ? '✓ ' : '') + `move it, keep ${mergedWith(s).tags.name || 'the other'}`) : null,
               el('button', {class: 'b tiny' + (v === 'keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'keep' ? null : 'keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'keep' ? '✓ ' : '') + (k === 'position' ? 'leave it' : "keep OSM's")),
-              k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
+              k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null),
+            k === 'position' && v === 'agency' && mergedWith(s) ? goneBox(s) : null));
         } else {
           // one chip per difference: filled = the agency's value goes in, outlined = OSM's stays. Click flips it;
           // the reason is on hover.
@@ -163,6 +164,7 @@ const Review = {
         Edits.ops[key].suggested = true;   // counts toward the per-upload cap
         Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
         // two stops the agency made one: the one moved here stays, the other goes
+        if (c.removeOther) carryGone(s, o);   // what of the other's tags is ticked, onto this one
         if (c.removeOther) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
       }
       Edits.save();

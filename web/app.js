@@ -243,6 +243,7 @@ function editMasters(ids, drop, add) {
 }
 function markDuplicate(a, p) {
   const keep = keptRelation({...p, relations: p.relations.filter(x => x.id !== a.id)});
+  if (keep) Carry.onto({...a, id: 'r' + a.id}, asWillBe({...keep, id: 'r' + keep.id}), CARRY.relation);   // what of it is ticked, onto the one kept
   Edits.delete('relation', a.id, relBase(a), `duplicate of route ${routeOf(p).short}`);
   // A relation still in a route_master is not deleted by OSM (the upload uses if-unused): take it out, put the kept one in.
   editMasters([], a.id, keep ? {type: 'relation', ref: keep.id} : null);
@@ -1067,7 +1068,8 @@ function renderAudit(a, p) {
   if (a.both_directions) issues.push(el('li', {}, 'One relation holds both directions. PTv2 wants one per direction: this one is kept for one, and a new one created for the other (see "Fix relation").'));
   const kept = keptRelation(p);
   if (a.duplicate && kept && kept.id === a.id) issues.push(el('li', {}, 'Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. This one is the oldest: it is kept, and "Fix relation" rewrites it.'));
-  else if (a.duplicate && (!op || op.kind !== 'delete')) issues.push(el('li', {}, `Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. r${kept ? kept.id : '?'} is kept; `, el('a', {href: '#', onclick: e => { e.preventDefault(); markDuplicate(a, p); }}, 'mark this one for deletion'), '.'));
+  else if (a.duplicate && (!op || op.kind !== 'delete')) issues.push(el('li', {}, `Another relation covers this same itinerary — OSM has one relation per itinerary, not per service day. r${kept ? kept.id : '?'} is kept; `, el('a', {href: '#', onclick: e => { e.preventDefault(); markDuplicate(a, p); }}, 'mark this one for deletion'), '.',
+    kept && kept.id !== a.id ? Carry.box({...a, id: 'r' + a.id}, asWillBe({...kept, id: 'r' + kept.id}), CARRY.relation, {title: `If it's deleted, r${a.id}'s tags`}) : null));
   if (a.ways.chain_breaks.length) issues.push(el('li', {}, `the way chain breaks in ${a.ways.chain_breaks.length} place${a.ways.chain_breaks.length > 1 ? 's' : ''} (routers and validators reject it): `, ...chainLinks(a.ways.chain_breaks)));
   if (a.stops.missing.length) issues.push(el('li', {}, `${a.stops.missing.length} matched platform${a.stops.missing.length > 1 ? 's are' : ' is'} not ${a.stops.missing.length > 1 ? 'members' : 'a member'}: `, ...a.stops.missing.slice(0, 8).flatMap(x => [el('a', {href: '#', onclick: e => { e.preventDefault(); showStop(x.stop); }}, `#${x.i + 1}`), ' ']), a.stops.missing.length > 8 ? '…' : ''));
   const extra = a.stops.extra.length, other = a.stops.extra_other_direction.length;
@@ -1396,6 +1398,7 @@ function renderStop(P, s) {
         Edits.hold(`${s.name}: ${gone ? 'two stops made one' : 'moved'}`);
         try {
           Edits.decisions[s.id] = oo.id; markUndo(Edits.modify('node', osmNumId(oo), nodeBase(oo), {...moveLL(s), tags: identityTags(s)}, `${s.ref} ${s.name}: ${away ? 'put back' : `moved ${c.dist} m`}`), s);
+          if (gone) carryGone(s, oo);   // what of the other's tags is ticked, onto this one
           const kept = gone ? await removeStops([gone], new Set(), `merged into ${s.name}`) : [];
           toast(kept.length ? `Moved; not removed, something else uses it: ${kept.join('; ')}` : gone ? 'Moved, and the other removed: in Changes' : 'Node move added to changes', 6000);
         } finally { Edits.release(); }
@@ -1409,6 +1412,7 @@ function renderStop(P, s) {
       }}, `Move it here, keep ${gone.tags.name || gone.id}`) : null,
       el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.save(); toast('Treated as the same stop, position kept'); render(); draw(); }}, 'Same stop, keep OSM\'s position'),
       el('button', {class: 'b', onclick: () => placeNewStop(s)}, 'Different stop — add new')));
+    if (gone) d.append(goneBox(s));
     d.append(osmStopBox(s, oo, c, false));
     // (its history explains it: the other stops of that name or street nearby aren't candidates)
     for (const c2 of away ? [] : s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
@@ -1426,7 +1430,7 @@ function renderStop(P, s) {
           render(); draw();
         }}, `One stop: ${a.tags.name || a.id}, both networks (remove ${own.tags.name || own.id})`),
         el('button', {class: 'b', onclick: async () => { Edits.hold(`${s.name}: its own`); try { await pickStop(s, own.id, 'keep'); } finally { Edits.release(); } toast('Its own stop, where it is', 5000); render(); draw(); }}, `Keep ${own.tags.name || own.id} where it is`),
-        el('button', {class: 'b', onclick: async () => { Edits.hold(`${s.name}: moved`); try { await pickStop(s, own.id, 'move'); } finally { Edits.release(); } toast('Node move added to changes'); render(); draw(); }}, `Move ${own.tags.name || own.id} here (${sh.own_dist} m)`)));
+        el('button', {class: 'b', onclick: async () => { Edits.hold(`${s.name}: moved`); try { await pickStop(s, own.id, 'move'); } finally { Edits.release(); } toast('Node move added to changes'); render(); draw(); }}, `Move ${own.tags.name || own.id} here (${sh.own_dist} m)`)), shareBox(s));
     } else if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
     const cands = Edits.decisions[s.id] ? [{id: Edits.decisions[s.id], dist: Math.round(m([o.lon, o.lat], [s.lon, s.lat])), how: 'chosen'}] : s.match.osm;
     for (const c of cands) if (D.osm_stops[c.id]) d.append(osmStopBox(s, D.osm_stops[c.id], c, st === 'ambiguous'));
@@ -1594,6 +1598,7 @@ async function shareStop(s, a, own) {
     Edits.decisions[s.id] = a.id;
     const key = Edits.modify('node', osmNumId(a), nodeBase(a), {tags: choiceTags(s, a.id)}, `${s.ref} ${s.name}: shares ${a.tags.name || a.id}`);
     Edits.ops[key].share = s.match.shared.network;   // said so in the changeset comment
+    Carry.onto(own, asWillBe(a), CARRY.stop);   // what of the old one's tags is ticked, onto the shared one
     const n = osmNumId(own), to = osmNumId(a);
     const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(ptRel);
     for (const e of rels) {   // as they are in Changes, if edited there
@@ -1623,6 +1628,60 @@ async function pickStop(s, oid, how, route) {
   if (route) { Edits.ops[key].suggested = true; Edits.ops[key].route = route; }
   return [];
 }
+/** Two things made one: the one that goes is deleted, and every one of its tags is listed with a keep option. Ticked,
+ *  it goes onto the one that stays; nothing of it disappears unsaid. The defaults are per kind of merge (CARRY), as
+ *  OSM practice has it; the reviewer's answer, kept per object (Edits.answers[its id]['keep:' + key]), overrides.
+ *  rename: a key that goes on under another (a second station point's name as the station's alt_name). */
+const CARRY = {
+  // a second point for the same station: what it says that the station doesn't, kept; where they differ, the station's
+  station: (k, v, now) => now == null,
+  // a duplicate relation for the same itinerary: what only it has (a description, a website), kept; a service day's
+  // own (its name, its timetable) isn't the route's, and where the two differ the kept relation's stays
+  relation: (k, v, now) => now == null && !/^(name|opening_hours|interval|interval:conditional|gtfs:shape_id)$/.test(k),
+  // another pole (a stop shared now, two stops made one): what it says describes that pole, not this one; the
+  // agency's codes and routes go on by the share or the move. Kept only if ticked.
+  stop: () => false,
+};
+const Carry = {
+  rows(from, into, def, rename = {}) {
+    const a = Edits.answers[from.id] || {}, it = into.tags || {};
+    return Object.entries(from.tags || {}).map(([k, v]) => {
+      const to = rename[k] && !(rename[k] in it) && it[k] != null && it[k] !== v ? rename[k] : k, now = it[to];
+      if (now === v) return {k, to, v, same: true};
+      const ans = a['keep:' + k];
+      return {k, to, v, now, on: ans ? ans === 'yes' : !!def(k, v, now)};
+    });
+  },
+  /** The tags that go onto the one that stays: {key: value}. */
+  tags(from, into, def, rename) { return Object.fromEntries(this.rows(from, into, def, rename).filter(r => r.on).map(r => [r.to, r.v])); },
+  box(from, into, def, {rename, title} = {}) {
+    const rows = this.rows(from, into, def, rename), diff = rows.filter(r => !r.same), same = rows.filter(r => r.same), lost = diff.filter(r => !r.on);
+    const set = (k, on) => { Edits.answer(from.id, 'keep:' + k, on ? 'yes' : 'no'); render(); draw(); };
+    return el('div', {class: 'carry small'},
+      el('div', {}, el('b', {}, title || `${from.tags.name || from.id}'s tags`), ` — it's deleted; ticked goes onto ${into.tags.name || into.id || 'the one that stays'}:`),
+      ...diff.map(r => el('div', {}, el('label', {}, el('input', {type: 'checkbox', checked: r.on ? '' : null, onchange: e => set(r.k, e.target.checked)}), ` ${r.to}=${r.v}`,
+        r.to !== r.k ? el('span', {class: 'muted'}, ` (its ${r.k})`) : r.now != null ? el('span', {class: 'muted'}, ` (instead of ${r.now})`) : null))),
+      same.length ? el('div', {class: 'muted'}, `The same on both already: ${same.map(r => `${r.k}=${r.v}`).join(', ')}.`) : null,
+      el('div', {class: 'muted'}, lost.length ? `Lost with it: ${lost.map(r => `${r.k}=${r.v}`).join(', ')}.` : 'Nothing of it is lost.'));
+  },
+  /** Onto the one that stays (into an edit already in Changes, if there is one). */
+  onto(from, into, def, rename) {
+    const t = this.tags(from, into, def, rename);
+    if (Object.keys(t).length) Edits.modify(typeOf(into), osmNumId(into), into.nodes ? {version: into.version, tags: into.tags, nodes: into.nodes} : into.members ? relBase(into) : nodeBase(into), {tags: t});
+    return t;
+  },
+};
+/** What a stop's node will say once the share or move in Changes is done: for showing which of the other's tags are
+ *  the same already. */
+const asWillBe = o => { const op = Edits.get(o.id[0] + osmNumId(o)); return {...o, tags: op && op.kind !== 'delete' ? op.tags : o.tags}; };
+/** A stop shared with another network: its own node goes; its tags, each with a keep option onto the shared one
+ *  (as it will be, with the agency's codes on it). */
+const shareBox = s => { const sh = s.match.shared, a = D.osm_stops[sh.id], own = D.osm_stops[sh.own];
+  return a && own ? Carry.box(own, {...a, tags: {...a.tags, ...choiceTags(s, a.id)}}, CARRY.stop, {title: `If it's one stop, ${own.tags.name || own.id}'s tags`}) : null; };
+/** Two stops made one: the other goes; its tags, each with a keep option onto the one moved here. */
+const goneBox = s => { const g = mergedWith(s), o = s.match && s.match.osm[0] && D.osm_stops[s.match.osm[0].id];
+  return g && o ? Carry.box(g, asWillBe(o), CARRY.stop, {title: `${g.tags.name || g.id}, removed: its tags`}) : null; };
+const carryGone = (s, moved) => { const g = mergedWith(s); if (g) Carry.onto(g, asWillBe(moved), CARRY.stop); };
 /** A relation a gone stop can leave: a route of this agency's, or a stop area. */
 const ptRel = e => (e.tags || {}).public_transport === 'stop_area' || ((e.tags || {}).type === 'route' && ours(e));
 async function removeStops(list, mine = new Set(), why = 'stop gone') {

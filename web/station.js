@@ -164,32 +164,6 @@ const Station = {
         inRoutes.length ? `${inRoutes.length} route relation${inRoutes.length > 1 ? 's list' : ' lists'} the station: ${inRoutes.map(r => r.name || 'r' + r.id).join(', ')}. Fix relation puts the bay in its place.` : null));
   },
 
-  /** Folding a second station point into the station: which of its tags go onto the station. Each is ticked or
-   *  not: what the station hasn't got, ticked; where the two differ (the name, say), the station's stays unless
-   *  ticked. -> {key: true|false} */
-  foldPicks(s, main) {
-    const a = S.station.answers, f = (a.fold = a.fold || {})[s.id] = (a.fold || {})[s.id] || {};
-    const out = {};
-    for (const [k, v] of Object.entries(s.tags)) {
-      if (['amenity', 'public_transport', 'bus'].includes(k) || main.tags[k] === v) continue;
-      // a second name has a place of its own (alt_name): kept there, not lost with the point
-      const to = k === 'name' && !main.tags.alt_name ? 'alt_name' : k;
-      out[to] = {from: k, value: v, on: to in f ? f[to] : !(to in main.tags)};
-    }
-    return out;
-  },
-  foldBox(s, main) {
-    const picks = this.foldPicks(s, main), f = S.station.answers.fold[s.id], mn = main.tags.name || main.id;
-    const keys = Object.keys(picks);
-    if (!keys.length) return el('div', {class: 'why'}, `Nothing it says is missing from "${mn}": it's deleted.`);
-    const own = keys.filter(k => picks[k].on && /^(opening_hours|phone|contact:|website|email)/.test(k)), lost = keys.filter(k => !picks[k].on);
-    return el('div', {class: 'why'}, `Then it's deleted: what's ticked goes onto "${mn}" first, what isn't goes with it.`,
-      ...keys.map(k => el('div', {}, el('label', {}, el('input', {type: 'checkbox', checked: picks[k].on ? '' : null, onchange: e => { f[k] = e.target.checked; render(); }}),
-        ` ${k}=${picks[k].value}`, picks[k].from !== k ? el('span', {class: 'muted'}, ` (its name, as the station's other name)`) : k in main.tags ? el('span', {class: 'muted'}, ` (instead of "${main.tags[k]}")`) : null))),
-      lost.length ? el('div', {class: 'muted'}, `Lost with it: ${lost.map(k => `${k}=${picks[k].value}`).join(', ')}.`) : null,
-      own.length ? el('div', {}, el('b', {}, `The station would then have its ${own.map(k => k.replace(/^contact:/, '')).join(', ')}. `), 'If those are an office\'s in the station (a lost and found, a ticket window), it\'s "something in it" instead.') : null);
-  },
-
   render(P) {
     const p = this.place(S.station.id);
     if (!p) { S.station = null; return renderStops(P); }
@@ -213,7 +187,9 @@ const Station = {
         box.append(el('div', {class: 'decide'}, el('div', {}, el('b', {}, `"${s.tags.name || s.id}"`), ' is:'),
           el('div', {class: 'btns'}, btn('Something in it, like an office: keep it, not as a station', 'office'), btn('The same station twice: fold it in', 'same'), btn('Leave both', 'leave')),
           cur === 'office' ? el('div', {class: 'why'}, `Loses the station tags, keeps its name${what(s).replace(/^ \(has/, ',').replace(/\)$/, '')}, and becomes ${Object.entries(this.notStation(s)).map(([k, v]) => `${k}=${v}`).join(' ') || 'what it already says it is'}${this.notStation(s).office ? ' (iD can make that more exact)' : ''}.`) : null,
-          cur === 'same' ? this.foldBox(s, x.main) : null));
+          cur === 'same' ? Carry.box(s, x.main, CARRY.station, {rename: {name: 'alt_name'}}) : null,
+          cur === 'same' && Object.keys(Carry.tags(s, x.main, CARRY.station, {name: 'alt_name'})).some(k => /^(opening_hours|phone|contact:|website|email)/.test(k))
+            ? el('div', {class: 'why'}, el('b', {}, "The station would then have its hours or contact details. "), 'If those are an office\'s in the station (a lost and found, a ticket window), it\'s "something in it" instead.') : null));
       }
       d.append(box);
     }
@@ -288,7 +264,7 @@ const Station = {
           const tags = this.notStation(s), drop = ['amenity', 'public_transport', 'bus'].filter(k => s.tags[k] && !(k in tags) && !(k === 'amenity' && s.tags.amenity !== 'bus_station'));
           Edits.modify(typeOf(s), osmNumId(s), nodeBase(s), {removeTags: drop, tags}, `${s.tags.name || s.id}: not a second station, ${name}`);
         } else if (v === 'same') {
-          const picks = this.foldPicks(s, main), add = Object.fromEntries(Object.keys(picks).filter(k => picks[k].on).map(k => [k, picks[k].value]));
+          const add = Carry.tags(s, main, CARRY.station, {name: 'alt_name'});
           if (Object.keys(add).length) Edits.modify(typeOf(main), osmNumId(main), nodeBase(main), {tags: add}, `${name}: station`);
           if (Object.values(Roads.rels).some(r => r.members.some(mm => mm.type === typeOf(s) && mm.ref === osmNumId(s)))) say(`"${s.tags.name || s.id}" is in a relation: not deleted`);
           else Edits.delete(typeOf(s), osmNumId(s), nodeBase(s), `${s.tags.name || s.id}: the same station as ${name}`);

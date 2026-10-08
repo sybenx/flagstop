@@ -195,3 +195,6 @@ button.b[disabled] { opacity: .35; cursor: default; pointer-events: none; }
 /* an answer that has been chosen: not the blue of something still to do */
 button.b.chosen { background: var(--ink); color: var(--panel); border-color: var(--ink); }
 button.b.chosen:hover { color: var(--panel); opacity: .85; }
+/* a merge's tag list: every tag of the one that goes, each with a keep option */
+.carry { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+.carry label { cursor: pointer; overflow-wrap: anywhere; }

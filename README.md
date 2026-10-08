@@ -89,6 +89,10 @@ Open OSM notes by a stop (within 30 m, or 150 m when the note talks about a bus 
 
 Other operators: the Mobility Database is searched for other agencies' feeds covering the area (active, no key needed), and only their stops here are read. An OSM stop one of them serves is known to be shared: its network/operator lists both without a question, and it's never offered for removal. A feed the catalog doesn't have can be given by hand: `tool/review.py feed.zip --also shuttle.zip`; `--no-others` skips the lookup.
 
+## When two things are made one
+
+A merge deletes something: a duplicate route relation, a second station point, a stop's node when it's shared with another network or when two stops were made one. Every tag of what's deleted is listed on the card, each with a keep option that puts it onto what stays; nothing goes unsaid. What's already the same on both says so, and what's left unticked is listed as lost with it. The defaults follow OSM practice per kind: a station's second point gives the station what it lacks (its name as `alt_name`); a duplicate relation gives the one kept what only it has, but not a service day's name or timetable; another pole's details (shelter, bench, wheelchair) describe that pole, so they're off unless ticked. The kept relation's own tags the merge changes are listed too, each with keep-as-it-is. Answers are kept per object, so the same question isn't asked twice across cards.
+
 ## What the agency is authoritative for
 
 Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).
