@@ -172,6 +172,7 @@ async function ensureRouted(p) {
     try {
       if (!p.graph) p.graph = new Router.Graph(await roadsFor(p));
       Object.assign(p, Router.routePattern({id: p.id, stops: p.stops, shape: p.shape}, stopsLL(p), p.graph, D.osm_stops, D.stop_areas || [], sid => D.stops[sid].match));
+      markInRoad(p);
       return true;
     } catch (e) { p.routeError = e.message; return false; }
     finally { p.routing = null; }
@@ -681,25 +682,35 @@ function frame(pts, maxZoom) {
   else fit(pts, 40);
 }
 const looked = sid => S.looked.has(sid);
-/** Where a stop goes when it's moved: the agency's point, or (the agency moved it, and a mapper had placed OSM's
- *  node by hand) OSM's node shifted by the agency's move. [lon, lat] (tool/positions.py) */
-const moveTo = s => (s && s.match && s.match.move_to) || [s.lon, s.lat];
+/** Where a stop goes when it's moved: OSM's node shifted by the agency's move, when the agency moved it and a mapper
+ *  had placed the node by hand (its offset from the agency's point kept; tool/positions.py); else the agency's
+ *  point, or the kerb beside it when that's in the road, as for a new stop (newStopSpot). -> {at: [lon, lat], kerb} */
+const moveSpot = s => s.match && s.match.move_how === 'shift' && s.match.move_to ? {at: s.match.move_to} :
+  s.match && s.match.inroad ? {at: s.match.inroad.at, kerb: true, inroad: true} : newStopSpot(s, S.pattern && patternById(S.pattern));
+const moveTo = s => moveSpot(s).at;
 const moveLL = s => { const [lon, lat] = moveTo(s); return {lat, lon}; };
 /** Where a new stop goes: the agency's point, unless that's in the road (often the centre line, or the middle of a
  *  junction): then at the kerb beside it, on the side buses pull in at (the build finds which, D.positions.kerb).
  *  A point already beside the road stays (a stop on the left of a one-way street is one). p: the itinerary it's
  *  added for, else any routed one calling there. -> {at: [lon, lat], kerb: true if moved there} */
 function newStopSpot(s, p) {
-  const pt = [s.lon, s.lat], q = [p, ...D.patterns.filter(x => x.stops.includes(s.id))].find(x => x && x.routed && x.graph);
+  return kerbFor([s.lon, s.lat], [p, ...D.patterns.filter(x => x.stops.includes(s.id))]);
+}
+/** A point beside the bus's road or in it: {at: [lon, lat], kerb: true if in it (at: the kerb beside it, on the side
+ *  buses pull in at), d: metres from the middle of the road, half: centre to kerb (m)}. pats: itineraries to measure
+ *  against, the first routed one. margin: how far inside the kerb counts as in the road (0.5 m past it, for a new
+ *  stop's rough point; well inside it for a node someone placed). */
+function kerbFor(pt, pats, margin = -0.5, ownSide = false) {
+  const q = pats.find(x => x && x.routed && x.graph);
   if (!q) return {at: pt};
   const rt = routedOf(q), geom = rt.geometry || [];
-  const kx = 111320 * Math.cos(s.lat * Math.PI / 180), ky = 110540;
-  const near = (line, f) => {   // the nearest segment of a line to the point, in metres
+  const kx = 111320 * Math.cos(pt[1] * Math.PI / 180), ky = 110540;
+  const near = (line, f) => {   // each segment of a line, with how far the point is from it, in metres
     for (let i = 0; i < line.length - 1; i++) {
       const a = line[i], b = line[i + 1], vx = (b[0] - a[0]) * kx, vy = (b[1] - a[1]) * ky, wx = (pt[0] - a[0]) * kx, wy = (pt[1] - a[1]) * ky, L2 = vx * vx + vy * vy;
       if (!L2) continue;
       const u = Math.max(0, Math.min(1, (wx * vx + wy * vy) / L2));
-      f({d: Math.hypot(wx - u * vx, wy - u * vy), a, vx, vy, u, L: Math.sqrt(L2)});
+      f({d: Math.hypot(wx - u * vx, wy - u * vy), a, vx, vy, u, L: Math.sqrt(L2), left: vx * wy - vy * wx > 0});
     }
   };
   let best = null;
@@ -714,10 +725,30 @@ function newStopSpot(s, p) {
   const t = (road && road.tags) || {}, hw = String(t.highway || '').replace(/_link$/, '');
   const half = parseFloat(t.width) > 0 ? parseFloat(t.width) / 2 : parseInt(t.lanes) > 0 ? parseInt(t.lanes) * 3.25 / 2 :
     ({motorway: 7.5, trunk: 7, primary: 6, secondary: 5.5, tertiary: 4.5, unclassified: 3.5, residential: 4, living_street: 3, service: 2.5, busway: 3.5}[hw] || 4);
-  if (best.d > half + 0.5) return {at: pt};   // beside the road already
-  const sign = ((D.positions && D.positions.kerb) || 'right') === 'right' ? 1 : -1, off = half + 1.5;   // the kerb, a step onto the pavement
+  if (best.d > half + margin) return {at: pt, d: best.d, half};   // beside the road already
+  // the kerb, a step onto the pavement: on the side buses pull in at; for a node someone placed (ownSide), the kerb
+  // on the side it's on (a stop on the left of a one-way street isn't taken across), unless it's on the middle line
+  const side = ownSide && best.d > 1 ? (best.left ? 'left' : 'right') : ((D.positions && D.positions.kerb) || 'right');
+  const sign = side === 'right' ? 1 : -1, off = half + 1.5;
   const nx = sign * best.vy / best.L, ny = -sign * best.vx / best.L;
-  return {at: [best.a[0] + (best.u * best.vx + nx * off) / kx, best.a[1] + (best.u * best.vy + ny * off) / ky], kerb: true};
+  return {at: [best.a[0] + (best.u * best.vx + nx * off) / kx, best.a[1] + (best.u * best.vy + ny * off) / ky], kerb: true, d: best.d, half};
+}
+/** OSM's stops in the road (a node placed on the centre line, at the agency's point, say), on a route just routed:
+ *  each a question, to the nearer kerb (on the middle line: the side buses pull in at). A node that's a point of the road itself
+ *  isn't moved (it would bend the road), nor one already asked about for another reason (moved, too far off). */
+function markInRoad(p) {
+  if (!p.graph) return;
+  const vertices = p.graph._vertices || (p.graph._vertices = new Set([...p.graph.ways.values()].flatMap(w => w.nodes)));
+  for (const sid of new Set(p.stops)) {
+    const s = D.stops[sid], o = matchedOsm(s), m = s.match;
+    if (!o || o.id[0] !== 'n' || !m || m.inroad !== undefined || vertices.has(osmNumId(o))) continue;
+    const pos = (m.decide || {}).position;
+    if (pos && pos.pick !== 'keep') { m.inroad = null; continue; }
+    const k = kerbFor(osmPos(o), [p], -1, true);   // well inside the kerb: a node someone placed, not a rough point
+    m.inroad = k.kerb ? {at: k.at, d: Math.round(k.d)} : null;
+    if (k.kerb) (m.decide = m.decide || {}).position = {pick: 'ask', inroad: true,
+      why: `OSM's stop is in the road, ${Math.round(k.d)} m from its middle: to the kerb beside it?`};
+  }
 }
 /** The OSM stop that goes when this one moves to the agency's spot (two stops the agency made one), or null. */
 const mergedWith = s => (s && s.match && s.match.merged_with && D.osm_stops[s.match.merged_with.id]) || null;
@@ -727,10 +758,10 @@ function lookFeatures() {
   if (!s) return [];
   const c = (s.match && s.match.osm) || [], o = matchedOsm(s) || (c[0] && D.osm_stops[c[0].id]);
   const shift = s.match && s.match.move_how === 'shift';
-  // a stop OSM hasn't got: where it would go (at the kerb, when the agency's point is in the road)
-  const fresh = !o && !c.length ? newStopSpot(s, S.pattern && patternById(S.pattern)) : null;
-  const to = fresh ? fresh.at : moveTo(s), out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : fresh && fresh.kerb ? `goes here: at the kerb by the agency's point` : `agency: ${s.name}`})];
-  if (shift || (fresh && fresh.kerb)) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
+  // where it goes, moved or new: at the kerb, when the agency's point is in the road
+  const spot = moveSpot(s), to = spot.at;
+  const out = [point(to, {kind: 'to', label: shift ? "goes here: OSM's spot, moved as the agency moved it" : spot.inroad ? 'goes here: the kerb beside it' : spot.kerb ? `goes here: at the kerb by the agency's point` : `agency: ${s.name}`})];
+  if (shift || (spot.kerb && !spot.inroad)) out.push(point([s.lon, s.lat], {kind: 'other', label: `agency's point: ${s.name}`}));
   if (o) {
     const now = osmPos(o), dm = Math.round(m(now, to));
     out.push(point(now, {kind: 'now', label: `now: ${o.tags.name || o.id} (OSM)`}));
@@ -1259,6 +1290,8 @@ function osmStopBox(s, o, c, pickable) {
   const cur = osmPos(o), d = m(cur, [s.lon, s.lat]), placed = cur[0] !== o.lon || cur[1] !== o.lat;
   if (diff) delete diff.position;
   if (diff && d >= 2) diff.position = {gtfs: `${Math.round(d)} m ${compass(cur, [s.lon, s.lat])} of the OSM stop${placed ? ' as you placed it' : ''}`, osm: 'kept', near: d <= FAR()};
+  // OSM's stop in the road (markInRoad): the move on offer is to the kerb beside it
+  if (diff && !placed && s.match && s.match.inroad) diff.position = {gtfs: `the kerb beside it, ${Math.round(m(cur, s.match.inroad.at))} m ${compass(cur, s.match.inroad.at)}`, osm: `in the road, ${s.match.inroad.d} m from its middle`, inroad: true};
   if (diff && Object.keys(diff).length) {
     const g = el('div', {class: 'diff'}, el('span', {class: 'hd'}, 'use'), el('span', {class: 'hd'}, 'key'), el('span', {class: 'hd'}, 'agency says'), el('span', {class: 'hd'}, 'OSM has'));
     const checks = {};
@@ -1270,7 +1303,7 @@ function osmStopBox(s, o, c, pickable) {
       const cb = el('input', {type: 'checkbox', checked: on ? '' : null, title: dec ? dec.why : isIdentity ? "the agency's code for it" : ''});
       checks[k] = cb;
       g.append(cb, el('span', {class: 'k'}, k), el('span', {class: 'g'}, k === 'position' ? v.gtfs : (v.gtfs || '—')),
-        el('span', {class: 'o'}, k === 'position' ? (v.near ? 'close enough to be the same spot' : 'on the sign, probably') : (v.osm || '—')));
+        el('span', {class: 'o'}, k === 'position' ? (v.inroad ? v.osm : v.near ? 'close enough to be the same spot' : 'on the sign, probably') : (v.osm || '—')));
     }
     box.append(g);
     if (diff.tagging) box.append(el('div', {class: 'muted'}, `tagging: OSM has ${diff.tagging.osm}; PTv2 wants ${diff.tagging.gtfs}`));

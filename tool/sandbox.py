@@ -596,6 +596,13 @@ LOCAL_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
 LOCAL_ORIGIN = re.compile(r'^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
 
 
+class Server(ThreadingHTTPServer):
+    # a page load asks for fifteen things at once (scripts, data, roads); the default queue of 5 waiting
+    # connections let macOS reset the rest, and a script that didn't load broke the page
+    request_queue_size = 128
+    daemon_threads = True
+
+
 class Handler(BaseHTTPRequestHandler):
     store = None
     overpass = None
@@ -820,7 +827,7 @@ def serve(port, base):
     print(f'sandbox: {os.path.basename(base)} ({len(store.el["node"])} nodes, {len(store.el["way"])} ways, {len(store.el["relation"])} relations) as of {store.meta.get("date", "?")}, '
           f'{n} changeset{"" if n == 1 else "s"} uploaded so far', file=sys.stderr)
     print(f'http://127.0.0.1:{port}/', file=sys.stderr)
-    ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
+    Server(('127.0.0.1', port), Handler).serve_forever()
 
 
 # ---------------------------------------------------------------- the report: is what went up good and safe?
@@ -1205,7 +1212,7 @@ def run(port, sb_port, feed, reset=False, refresh=False, also=()):
     store = Store(base)
     n = store.load_log()
     Handler.store, Handler.overpass = store, Overpass(store)
-    srv = ThreadingHTTPServer(('127.0.0.1', sb_port), Handler)
+    srv = Server(('127.0.0.1', sb_port), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     sb = f'http://127.0.0.1:{sb_port}'
     print(f'sandbox: {os.path.basename(base)} as of {store.meta.get("date", "?")}, {n} changeset{"" if n == 1 else "s"} so far, at {sb}', file=sys.stderr)

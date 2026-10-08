@@ -121,7 +121,7 @@ const FixIt = {
     const ul = el('ul', {class: 'plain small'});
     if (x.changes) ul.append(el('li', {}, `${x.changes} stop${x.changes > 1 ? 's' : ''} updated to the agency's data (codes, names, announcements, routes), as the review decided`,
       el('a', {href: '#', class: 'muted', style: 'margin-left:6px', onclick: e => { e.preventDefault(); Review.open(p.id); }}, 'see each')));
-    if (x.adds) ul.append(el('li', {}, `${x.adds} stop${x.adds > 1 ? 's' : ''} the agency has and OSM hasn't: added at the agency's point, with its tags`));
+    if (x.adds) ul.append(el('li', {}, `${x.adds} stop${x.adds > 1 ? 's' : ''} the agency has and OSM hasn't: added at the agency's point (at the kerb beside it, where that's in the road), with its tags`));
     const relWhat = rp.reuse ? `relation ${rp.reuse.tags.name || 'r' + rp.reuse.id} rewritten` : 'a new relation';
     ul.append(el('li', {}, `${relWhat}: the agency's ${p.stops.length} stops in order, then the roads of its line` +
       (rp.keepWays ? ' (the mapper\'s roads kept: they already follow the line)' : rp.splits ? `, split where the bus turns partway along a road (${rp.splits})` : '') +
@@ -166,7 +166,7 @@ const FixIt = {
       const wait = !looked(s.id), off = wait ? {disabled: '', title: 'Look at it on the map first'} : {};
       row.append(el('div', {class: 'why'}, q.why), el('div', {style: 'margin:4px 0'}, lookButtons(s, q.o)),
         el('div', {class: 'btns'},
-          el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + "move OSM's stop to the agency's point"),
+          el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + (q.s.match && q.s.match.inroad ? "move OSM's stop to the kerb" : "move OSM's stop to the agency's point")),
           el('button', {class: 'b tiny' + (q.answer === 'keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'keep')}, (q.answer === 'keep' ? '✓ ' : '') + 'leave it where it is')));
     } else {
       const diff = (s.match && s.match.diff) || {}, from = (diff[q.k] && diff[q.k].osm) || '—', to = (diff[q.k] && diff[q.k].gtfs) || '';

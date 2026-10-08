@@ -182,6 +182,13 @@ STATE_LOCK = threading.Lock()   # one /api/state write at a time
 MAX_BODY = 64 * 1024 * 1024   # bytes: a saved basket or a road patch is far less
 
 
+class Server(ThreadingHTTPServer):
+    # a page load asks for fifteen things at once (scripts, data, roads); the default queue of 5 waiting
+    # connections let macOS reset the rest, and a script that didn't load broke the page
+    request_queue_size = 128
+    daemon_threads = True
+
+
 class Handler(SimpleHTTPRequestHandler):
     def parse_request(self):
         if not super().parse_request():
@@ -405,7 +412,7 @@ def main():
     else:
         print('no feed/roads in cache/: serving the page without re-routing', file=sys.stderr)
     print(f'http://127.0.0.1:{a.port}/', file=sys.stderr)
-    ThreadingHTTPServer(('127.0.0.1', a.port), Handler).serve_forever()
+    Server(('127.0.0.1', a.port), Handler).serve_forever()
 
 
 if __name__ == '__main__':

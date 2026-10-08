@@ -117,7 +117,7 @@ const Review = {
             el('div', {}, el('b', {}, `? ${what}`), k === 'position' ? '' : ` ${from} → ${to}`), el('div', {class: 'why'}, dk.why),
             k === 'position' ? el('div', {style: 'margin:4px 0'}, lookButtons(s, o)) : null,
             el('span', {class: 'btns'},
-              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : "move to the agency's point") : "agency's")),
+              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : s.match && s.match.inroad ? 'move it to the kerb' : "move to the agency's point") : "agency's")),
               el('button', {class: 'b tiny' + (v === 'keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'keep' ? null : 'keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'keep' ? '✓ ' : '') + (k === 'position' ? 'leave it' : "keep OSM's")),
               k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
         } else {
