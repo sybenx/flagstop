@@ -35,6 +35,9 @@ const Losses = {
     } catch (e) { if (S.losses) { S.losses.error = e.message; S.losses.loading = null; render(); } }
   },
 
+  /** Metres within which two placements are the same stop: this feed's, else a usual one. */
+  far() { return (typeof D !== 'undefined' && D && D.positions && D.positions.far) || 25; },
+
   async version(t, id, v) {
     const r = await fetch(`${OSM_API}/api/0.6/${t}/${id}/${v}.json`);
     if (!r.ok) throw new Error(`${t} ${id} v${v}: OSM said ${r.status}`);
@@ -64,10 +67,14 @@ const Losses = {
         if (into) { d.into = {type: into.k.type, id: into.k.id, name: into.k.tags.name, d: into.d, tags: into.k.tags, lat: into.k.lat, lon: into.k.lon}; d.lost = Object.fromEntries(Object.entries(t).filter(([k, v]) => into.k.tags[k] !== v)); }
         deleted.push(d);
       } else if (e.action === 'modify' && e.version > 1) {
-        const t = (await this.version(e.type, e.id, e.version - 1)).tags || {};
+        const was = await this.version(e.type, e.id, e.version - 1), t = was.tags || {};
         const gone = Object.fromEntries(Object.entries(t).filter(([k]) => !(k in e.tags)));
         const changed = Object.fromEntries(Object.entries(t).filter(([k, v]) => k in e.tags && e.tags[k] !== v).map(([k, v]) => [k, [v, e.tags[k]]]));
-        if (Object.keys(gone).length || Object.keys(changed).length) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed, tags: e.tags, lat: e.lat, lon: e.lon});
+        // a point moved further than two placements of one stop differ: where from, and whether it became another stop
+        // (its code or id changed too: an old stop's node, used for the stop the agency has there now)
+        const md = e.type === 'node' && was.lat != null && e.lat != null ? Math.round(m([was.lon, was.lat], [e.lon, e.lat])) : 0;
+        const moved = md > this.far() ? {m: md, from: [was.lon, was.lat], to: [e.lon, e.lat], became: ['ref', 'gtfs:stop_id', 'gtfs:stop_code'].some(k => k in changed), was: t} : null;
+        if (Object.keys(gone).length || Object.keys(changed).length || moved) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed, tags: e.tags, lat: e.lat, lon: e.lon, moved});
       }
     }));
     return {deleted, removed};
@@ -79,6 +86,22 @@ const Losses = {
     const {k, how, x, c} = it, rel = x.type === 'relation';
     if (!/^flagstop/.test(c.tool || '')) return {none: `edited by hand${c.tool ? ` (${c.tool.split(' ')[0]})` : ''}: as you meant it, presumably`};
     if (how === 'deleted with it') return {none: rel ? 'a relation deleted whole' : x.tags.highway === 'bus_stop' || x.tags.public_transport ? "the stop is gone from the agency's data; its pole's details went with it" : 'deleted whole'};
+    if (how === 'moved') {
+      // left over where it was: an OSM stop the agency doesn't have, near the old spot (the other half of a merge)
+      // (not another network's stop, nor one kept for when a detour's over)
+      const has = typeof D !== 'undefined' && D, extra = new Set((has && D.extra_stops) || []), from = x.moved.from;
+      const theirs = id => ((has && D.extra_owner) || {})[id] === 'other', kept = id => !!((has && D.detoured) || {})[id];
+      const left = [...extra].filter(id => !theirs(id) && !kept(id)).map(id => D.osm_stops[id]).filter(o => o && o.lon != null && o.id !== `n${x.id}` && o.tags.public_transport !== 'stop_position' && m([o.lon, o.lat], from) <= 150)
+        .map(o => ({o, d: Math.round(m([o.lon, o.lat], from))})).sort((a, b) => a.d - b.d);
+      // its own details, from the old spot, still on it at the new one
+      // (a move of a few dozen metres is the same pole placed better: its details hold)
+      const came = x.moved.m <= 50 && !x.moved.became ? [] : Object.entries(x.moved.was).filter(([k, v]) => tagWeight(k, v, x.moved.was) === 2 && x.tags[k] === v && !/^(check_date|survey|source|note|fixme)/.test(k));
+      const what = x.moved.became ? `an old stop's node, used for the stop the agency has there now` : `the agency's stop moved, and its node with it`;
+      if (!left.length && !came.length) return {none: `${what}: nothing left over where it was`};
+      return {act: 'look', left, why: [`nothing to do if the agency ${x.moved.became ? 'combined or moved' : 'moved'} this stop (${what})`,
+        left.length ? `but ${left.map(l => `${l.o.tags.name || l.o.id} (${l.d} m from where it was)`).join(', ')} ${left.length > 1 ? 'are' : 'is'} still in OSM, and the agency has no stop there now (${left.length > 1 ? 'their codes are' : 'its code is'} another stop's, or gone): look; gone for good, remove ${left.length > 1 ? 'them' : 'it'} in OSM only; coming back (after a detour, say), leave ${left.length > 1 ? 'them' : 'it'}` : null,
+        came.length ? `its ${came.map(([k, v]) => `${k}=${v}`).join(', ')} came with it from the old spot: check ${came.length > 1 ? 'they hold' : 'it holds'} at the new one` : null].filter(Boolean).join('; ')};
+    }
     if (it.onto) {
       const kept = (x.into.tags || {})[k];
       if (it.w === 0) return {none: /name/.test(k) ? "a service day's name: the relations it named are one now" : "the agency's feed sets this"};
@@ -126,6 +149,16 @@ const Losses = {
   async show(x) {
     const label = (x.tags || {}).name || x.name || `${x.type} ${x.id}`;
     if (this.marker) this.marker.remove();
+    if (this.marker2) { this.marker2.remove(); this.marker2 = null; }
+    if (x.moved) {   // where it was (grey), where it is (marked), the move between
+      const {from, to} = x.moved;
+      // one label below its marker, the other above: neither covers the other, nor runs off the map
+      this.marker2 = new maplibregl.Marker({color: '#868e96'}).setLngLat(from).setPopup(new maplibregl.Popup({offset: 8, anchor: 'top', closeButton: false}).setText(`was: ${x.moved.was.name || ''} ${x.moved.was.ref ? `(${x.moved.was.ref})` : ''}`)).addTo(map);
+      this.marker = new maplibregl.Marker({color: '#d6336c'}).setLngLat(to).setPopup(new maplibregl.Popup({offset: 40, anchor: 'bottom', closeButton: false}).setText(`now: ${label} ${(x.tags || {}).ref ? `(${x.tags.ref})` : ''}`)).addTo(map);
+      this.marker.togglePopup(); this.marker2.togglePopup();
+      set('rel', [line([from, to])]);
+      return frame([from, to], 17.5);   // room for both labels
+    }
     if (x.type === 'node' && x.lat != null) {
       this.marker = new maplibregl.Marker({color: '#d6336c'}).setLngLat([x.lon, x.lat]).setPopup(new maplibregl.Popup({offset: 24}).setText(label)).addTo(map);
       this.marker.togglePopup();
@@ -194,6 +227,8 @@ const Losses = {
             ...(x.into ? {target: x.into, value: v, onto: true} : {})});
         }
         for (const x of c.removed) {
+          if (x.moved) items.push({c, x, k: 'position', how: 'moved', w: 1, what: x.moved.became
+            ? `became another stop: moved ${x.moved.m} m, ${x.moved.was.ref || x.moved.was['gtfs:stop_id'] || '?'} → ${x.tags.ref || x.tags['gtfs:stop_id'] || '?'}` : `moved ${x.moved.m} m`});
           for (const [k, v] of Object.entries(x.removed)) items.push({c, x, k, what: `${k}=${v}`, how: 'removed', w: tagWeight(k, v, {}), target: x, value: v, now: undefined});
           // a name changed only by its service day going (a merge) is low; changed otherwise, it's the new name that counts
           const bare = v => (v || '').replace(SERVICE_DAY, '').replace(/\s*[-–,]\s*$/, '').trim();
@@ -206,11 +241,12 @@ const Losses = {
       for (const it of items) it.v = this.verdict(it);
       const head = it => [el('b', {style: it.w === 2 ? 'color:var(--miss)' : ''}, it.what), ` · ${it.how} · `, link(it.x.type, it.x.id, `${it.x.type[0]}${it.x.id}`), ` "${(it.x.tags || {}).name || it.x.name || ''}" · `,
         el('a', {href: `${OSM_WWW}/changeset/${it.c.id}`, target: '_blank'}, it.c.id), el('span', {class: 'muted'}, ` ${it.c.date} · ${WEIGHT_WORDS[it.w]}`)];
-      const act = it => it.v.act === 'onto' ? `Put ${it.k}=${it.value} onto ${it.x.into.type} ${it.x.into.id}` : it.v.act === 'describe' ? `Put "${it.v.value}" in description` : it.v.act === 'tag' ? `Add ${it.v.key}=${it.v.value}` : `Put back: ${it.k}=${it.v.value || it.value}`;
+      const act = it => it.v.act === 'look' ? 'Show both places on the map' : it.v.act === 'onto' ? `Put ${it.k}=${it.value} onto ${it.x.into.type} ${it.x.into.id}` : it.v.act === 'describe' ? `Put "${it.v.value}" in description` : it.v.act === 'tag' ? `Add ${it.v.key}=${it.v.value}` : `Put back: ${it.k}=${it.v.value || it.value}`;
       const sugg = items.filter(it => it.v.act).sort((a, b) => b.w - a.w), rest = items.filter(it => !it.v.act);
       box.append(el('details', {class: 'small', open: sugg.length ? '' : null}, el('summary', {}, el('b', {}, `Suggested: ${sugg.length}`)),
         ...(sugg.length ? sugg.map(it => this.clickable(el('div', {class: 'carry'}, el('div', {}, ...head(it)), el('div', {}, el('b', {}, 'Suggest: '), act(it), el('span', {class: 'muted'}, ` — ${it.v.why}`)),
-          el('button', {class: 'b tiny primary', onclick: () => this.putBack(it)}, act(it))), it.x)) : [el('div', {class: 'muted'}, 'Nothing: what went, went as it should.')])));
+          el('button', {class: 'b tiny primary', onclick: () => it.v.act === 'look' ? this.show(it.x) : this.putBack(it)}, act(it)),
+          ...(it.v.left || []).map(l => el('button', {class: 'b tiny', onclick: () => this.show({type: 'node', id: +l.o.id.slice(1), lat: l.o.lat, lon: l.o.lon, tags: l.o.tags})}, `Show ${l.o.tags.name || l.o.id}`))), it.x)) : [el('div', {class: 'muted'}, 'Nothing: what went, went as it should.')])));
       const why = new Map();
       const kind = t => t.replace(/\s*\(.*\)\s*$/, '').replace(/^(relation|node|way) \d+ has its own: .*/, 'what it went into has its own value');   // the reason, without its particulars
       for (const it of rest) why.set(kind(it.v.none), [...(why.get(kind(it.v.none)) || []), it]);
