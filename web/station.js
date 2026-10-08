@@ -56,7 +56,7 @@ const Station = {
     S.tab = 'stops'; S.stop = null;
     render(); draw();
     const p = this.place(id), pts = [...p.stations, ...p.bays.map(b => b.o)].map(osmPos);
-    fit(pts, 80);
+    frame(pts, 19);   // close enough to tell the bays apart
     this.look(p);
   },
   close() { S.station = null; render(); draw(); },

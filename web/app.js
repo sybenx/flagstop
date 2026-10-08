@@ -41,10 +41,11 @@ function editorUrl(which, {lon, lat, zoom = 18, select = [], pattern = null, com
   return 'https://www.openstreetmap.org/edit?editor=id' + hash;
 }
 const openIn = (which, opts) => window.open(editorUrl(which, opts), 'flagstop-' + which);
-const bboxOf = pts => {
+const bboxOf = (pts, margin = true) => {   // margin: ~120 m round it (an area to fetch); false: just the points
   let l = 180, r = -180, b = 90, t = -90;
   for (const [x, y] of pts) { l = Math.min(l, x); r = Math.max(r, x); b = Math.min(b, y); t = Math.max(t, y); }
-  return {left: l - 0.0015, right: r + 0.0015, bottom: b - 0.001, top: t + 0.001};
+  const mx = margin ? 0.0015 : 0, my = margin ? 0.001 : 0;
+  return {left: l - mx, right: r + mx, bottom: b - my, top: t + my};
 };
 const centerOf = pts => { const b = bboxOf(pts); return {lon: (b.left + b.right) / 2, lat: (b.top + b.bottom) / 2}; };
 async function josm(cmd, params) {
@@ -124,10 +125,14 @@ function roadsQuery(p) {
 }
 /** A route's roads: from the local server's day-old copy when there is one (tool/serve.py), else Overpass. */
 async function roadsFor(p) {
-  try {
-    const r = await fetch(`api/roads?pattern=${encodeURIComponent(p.id)}`);
-    if (r.ok) return await r.json();
-  } catch (e) { /* no server: a published copy of the page */ }
+  // twice: a dropped connection (a reload, a busy moment) shouldn't send this route to Overpass, slow and rationed
+  for (let i = 0; i < (SERVER ? 2 : 1); i++) {
+    try {
+      const r = await fetch(`api/roads?pattern=${encodeURIComponent(p.id)}`);
+      if (r.ok) return await r.json();
+      break;   // the server answered, without roads for it
+    } catch (e) { /* no server (a published copy of the page), or the connection dropped */ }
+  }
   let last = null;
   for (const url of OVERPASS) {
     try {
@@ -645,10 +650,13 @@ function lookAt(sid) {
   render(); draw();
   const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat]), ...(mergedWith(s) ? [[mergedWith(s).lon, mergedWith(s).lat]] : [])];
   if (!S.imagery && typeof imagery === 'function') imagery(true);   // the sign, the shelter, the kerb: what decides where a stop is
-  // close enough to see the kerb (18.5), but never so close that one of the points is off the map
-  const b = bboxOf(pts), w = map.getContainer().clientWidth, pad = Math.min(110, Math.floor(w / 5));
+  frame(pts, 18.5);   // close enough to see the kerb
+}
+/** Every point in view, as close as maxZoom at most: never so close that one of them is off the map. */
+function frame(pts, maxZoom) {
+  const b = bboxOf(pts, false), w = map.getContainer().clientWidth, pad = Math.min(110, Math.floor(w / 5));
   const cam = map.cameraForBounds([[b.left, b.bottom], [b.right, b.top]], {padding: pad});
-  if (cam) map.easeTo({center: cam.center, zoom: Math.min(cam.zoom, 18.5), duration: 500});
+  if (cam) map.easeTo({center: cam.center, zoom: Math.min(cam.zoom, maxZoom), duration: 500});
   else fit(pts, 40);
 }
 const looked = sid => S.looked.has(sid);
@@ -1098,7 +1106,11 @@ function showStop(id) {
   S.stop = id; S.tab = 'stops';
   render(); draw();
   const s = D.stops[id], o = matchedOsm(s);
-  map.flyTo({center: o ? [o.lon, o.lat] : [s.lon, s.lat], zoom: Math.max(map.getZoom(), 17), duration: 500});
+  // the agency's point and OSM's: the matched one, or every one the page asks about (moved from, which of two,
+  // the one that goes when two were made one), all in view
+  const asked = o ? [o] : ((s.match && s.match.osm) || []).slice(0, 4).map(x => D.osm_stops[x.id]).filter(Boolean);
+  const gone = mergedWith(s);
+  frame([[s.lon, s.lat], ...asked.map(osmPos), ...(gone ? [osmPos(gone)] : [])], Math.max(map.getZoom(), 17));
 }
 function renderStop(P, s) {
   P.append(el('button', {class: 'back', onclick: () => { S.stop = null; if (S.pattern) S.tab = 'routes'; render(); draw(); }}, S.pattern ? '← back to the route' : '← all stops'));
