@@ -603,14 +603,21 @@ function revertNote(u, newId) {
     el('b', {}, `Record for ${u.user}'s changeset ${u.changeset}`), el('div', {class: 'muted'}, 'This upload undid part of it. To leave a record there, copy this into the comment box on their changeset:'),
     ta, el('div', {class: 'btns'},
       el('button', {class: 'b tiny', onclick: () => navigator.clipboard.writeText(ta.value).then(() => toast('Copied'))}, 'Copy'),
-      el('a', {class: 'b tiny', href: `https://www.openstreetmap.org/changeset/${u.changeset}`, target: '_blank', style: 'text-decoration:none'}, `Open changeset ${u.changeset}`)));
+      el('a', {class: 'b tiny', href: `${OSM_WWW}/changeset/${u.changeset}`, target: '_blank', style: 'text-decoration:none'}, `Open changeset ${u.changeset}`)));
 }
 
+/** What this basket uploaded ('lastUpload', 'uploads'), kept beside it: per agency, and per sandbox generation,
+ *  so another agency or a sandbox reset doesn't show (or refresh with) changesets that aren't its own. Before
+ *  they were kept this way they had one key for everything: still read, for the real OSM only. */
+function myUploads(what) {
+  const world = typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.world;
+  try { return JSON.parse(localStorage.getItem(Edits.key + '.' + what) || (!world && localStorage.getItem('flagstop.' + what)) || 'null'); } catch (e) { return null; }
+}
 /** Fetch OSM again and rebuild the review on the server, then show it. */
 async function refreshOSM() {
   try {
     // your uploads the data doesn't have yet: read straight from OSM (seconds), not Overpass (minutes, and behind)
-    let ups = []; try { ups = JSON.parse(localStorage.getItem('flagstop.uploads') || '[]'); } catch (e) { /* storage off */ }
+    const ups = myUploads('uploads') || [];
     const changesets = ups.filter(u => !D.osm_base || new Date(u.at) > new Date(D.osm_base)).map(u => u.id);
     let st = await (await fetch('/api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
     if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
@@ -631,8 +638,11 @@ function lookAt(sid) {
   render(); draw();
   const pts = [[s.lon, s.lat], ...(o ? [osmPos(o)] : []), ...c.slice(1).map(x => D.osm_stops[x.id]).filter(Boolean).map(x => [x.lon, x.lat]), ...(mergedWith(s) ? [[mergedWith(s).lon, mergedWith(s).lat]] : [])];
   if (!S.imagery && typeof imagery === 'function') imagery(true);   // the sign, the shelter, the kerb: what decides where a stop is
-  fit(pts, 110);
-  map.once('moveend', () => { if (map.getZoom() < 18.5) map.easeTo({zoom: 18.5, duration: 300}); });
+  // close enough to see the kerb (18.5), but never so close that one of the points is off the map
+  const b = bboxOf(pts), w = map.getContainer().clientWidth, pad = Math.min(110, Math.floor(w / 5));
+  const cam = map.cameraForBounds([[b.left, b.bottom], [b.right, b.top]], {padding: pad});
+  if (cam) map.easeTo({center: cam.center, zoom: Math.min(cam.zoom, 18.5), duration: 500});
+  else fit(pts, 40);
 }
 const looked = sid => S.looked.has(sid);
 /** Where a stop goes when it's moved: the agency's point, or (the agency moved it, and a mapper had placed OSM's
@@ -1361,9 +1371,9 @@ function renderChanges(P) {
   if (Edits.auth.lost) d.append(el('div', {class: 'note', style: 'background:color-mix(in srgb, var(--miss) 14%, transparent)'},
     el('b', {}, 'Signed out: '), "OSM didn't accept flagstop's sign-in any more (the app was revoked or re-registered on OSM, or the sign-in expired). Your changes are all still here. Sign in again below; if you registered flagstop again on OSM, paste its new client ID under \"Set up upload\" first."));
   // the last upload: its changeset, until the next one replaces it
-  let last = null; try { last = JSON.parse(localStorage.getItem('flagstop.lastUpload') || 'null'); } catch (e) {}
+  const last = myUploads('lastUpload');
   if (last) d.append(el('div', {class: 'note'}, el('b', {}, 'Last upload: '),
-    el('a', {href: `https://www.openstreetmap.org/changeset/${last.id}`, target: '_blank'}, `changeset ${last.id}`),
+    el('a', {href: `${OSM_WWW}/changeset/${last.id}`, target: '_blank'}, `changeset ${last.id}`),
     ` · ${last.n} change${last.n === 1 ? '' : 's'} · ${new Date(last.at).toLocaleString()}`, el('div', {class: 'muted'}, `"${last.comment}"`),
     (last.skipped || []).length ? el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${last.skipped.join(', ')}: something still uses ${last.skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). Still in Changes: remove the parent's reference, then upload again.`) : null,
     ...(last.undid || []).map(u => revertNote(u, last.id)),
@@ -1393,9 +1403,9 @@ function renderChanges(P) {
           // remembered with what goes with it (records for undone edits, deletes OSM skipped), so it all
           // survives the redraw that follows, and a reload
           try {
-            localStorage.setItem('flagstop.lastUpload', JSON.stringify({id, comment: comment.value, n, at: new Date().toISOString(), undid: undid || [], skipped}));
-            const ups = JSON.parse(localStorage.getItem('flagstop.uploads') || '[]'); ups.push({id, at: new Date().toISOString()});
-            localStorage.setItem('flagstop.uploads', JSON.stringify(ups.slice(-50)));
+            localStorage.setItem(Edits.key + '.lastUpload', JSON.stringify({id, comment: comment.value, n, at: new Date().toISOString(), undid: undid || [], skipped}));
+            const ups = myUploads('uploads') || []; ups.push({id, at: new Date().toISOString()});
+            localStorage.setItem(Edits.key + '.uploads', JSON.stringify(ups.slice(-50)));
           } catch (e) {}
           S.comment = null;
           toast(`Uploaded: changeset ${id}`, 6000);
