@@ -536,7 +536,7 @@ function render() {
   if (S.tab === 'routes') S.fixit && S.pattern ? FixIt.render(P) : S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
   else if (S.tab === 'stops') S.station ? Station.render(P) : S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
-  else if (S.tab === 'changes') renderChanges(P);
+  else if (S.tab === 'changes') { renderChanges(P); const x = el('div', {class: 'detail'}); Losses.render(x); P.append(x); }   // and what uploads took away
   else renderAbout(P);
   syncHash();
 }

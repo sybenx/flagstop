@@ -93,6 +93,8 @@ Other operators: the Mobility Database is searched for other agencies' feeds cov
 
 A merge deletes something: a duplicate route relation, a second station point, a stop's node when it's shared with another network or when two stops were made one. Every tag of what's deleted is listed on the card, each with a keep option that puts it onto what stays; nothing goes unsaid. What's already the same on both says so, and what's left unticked is listed as lost with it. The defaults follow OSM practice per kind: a station's second point gives the station what it lacks (its name as `alt_name`); a duplicate relation gives the one kept what only it has, but not a service day's name or timetable; another pole's details (shelter, bench, wheelchair) describe that pole, so they're off unless ticked. The kept relation's own tags the merge changes are listed too, each with keep-as-it-is. Answers are kept per object, so the same question isn't asked twice across cards.
 
+Already uploaded: the Changes tab's *What uploads took away* (or `python3 tool/deleted.py --user NAME`) reads a mapper's changesets from OSM and lists every object they deleted, with all its tags as they were, what it was merged into and which of its tags didn't go there, and every tag removed or changed on what stayed. Read-only.
+
 ## What the agency is authoritative for
 
 Identity and structure: that a stop exists, its code, which routes call at it and in what order, which itineraries a route has. Everything else — position, name, the drawn shape — is a hint. Proposals follow the local mappers' conventions (`operator`, `network`, `network:wikidata` are taken from the majority of already-mapped stops, not from the feed).
@@ -168,6 +170,7 @@ guessed from tags. The system id is in the Passio GO app's URL for that agency.
 
 ```
 tool/gtfs.py      the feed → stops, routes, patterns (one per distinct itinerary; short runs folded in)
+tool/deleted.py   what a mapper's changesets deleted or retagged, with every tag as it was (read-only)
 tool/osm.py       Overpass queries and parsing
 tool/stops.py     stop conflation and tag diff
 tool/routes.py    road graph, bus-legal shape-guided routing, divergences
@@ -187,6 +190,7 @@ web/review.js     checking a route's stops against flagstop's suggestions, 50 pe
 web/fix.js        a proposed map fix shown before/after ("OSM says / should be"); re-routing with Changes
 web/merge.js      two relations for one route -> one, explained and shown
 web/station.js    a station: how it's mapped, shown on it, and the parts it lacks
+web/losses.js     what uploads took away: deleted objects' tags, tags removed or changed (as tool/deleted.py)
 tests/            unit tests for the rules; snapshot.json, what the review decided, to diff against
 ```
 
