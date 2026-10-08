@@ -1384,8 +1384,19 @@ function renderStop(P, s) {
     for (const c2 of away ? [] : s.match.osm.slice(1)) d.append(osmStopBox(s, D.osm_stops[c2.id], c2, false));
     if (gone && !s.match.osm.some(c2 => c2.id === gone.id)) d.append(osmStopBox(s, gone, {how: 'the other side', dist: s.match.merged_with.dist}, false));
   } else {
-    d.append(el('h2', {style: 'margin-left:0'}, st === 'ambiguous' ? 'Which is it?' : 'OSM stop'));
-    if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
+    const sh = st === 'ambiguous' && s.match.shared, a = sh && D.osm_stops[sh.id], own = sh && D.osm_stops[sh.own];
+    d.append(el('h2', {style: 'margin-left:0'}, sh && a && own ? 'A shared stop, or its own?' : st === 'ambiguous' ? 'Which is it?' : 'OSM stop'));
+    if (sh && a && own) {
+      d.append(el('div', {class: 'small'}, `The agency's point is on ${sh.network}'s `, el('b', {}, a.tags.name || a.id), ` (${sh.dist} m). OSM's stop with its code, `,
+        el('b', {}, own.tags.name || own.id), `, is ${sh.own_dist} m away. The agency may have moved its stop onto the shared one, or its point may be off.`));
+      d.append(el('div', {class: 'btns'},
+        el('button', {class: 'b primary', onclick: async () => {
+          const kept = await shareStop(s, a, own);
+          toast(kept.length ? `Shared; the old one not removed, something else uses it: ${kept.join('; ')}` : `Shared, and ${own.tags.name || own.id} removed: in Changes`, 6000);
+          render(); draw();
+        }}, `One stop: ${a.tags.name || a.id}, both networks (remove ${own.tags.name || own.id})`),
+        el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = own.id; Edits.save(); render(); draw(); }}, `Its own stop: ${own.tags.name || own.id} (${sh.own_dist} m)`)));
+    } else if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
     const cands = Edits.decisions[s.id] ? [{id: Edits.decisions[s.id], dist: Math.round(m([o.lon, o.lat], [s.lon, s.lat])), how: 'chosen'}] : s.match.osm;
     for (const c of cands) if (D.osm_stops[c.id]) d.append(osmStopBox(s, D.osm_stops[c.id], c, st === 'ambiguous'));
     if (st === 'ambiguous') d.append(el('div', {class: 'btns'}, el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = 'none'; Edits.save(); render(); draw(); }}, 'None of these — it\'s missing')));
@@ -1537,6 +1548,36 @@ function ours(e) {
   const t = e.tags || {}, c = D.conventions || {};
   return D.patterns.some(p => p.relations.some(a => a.id === e.id)) || ['network:wikidata', 'network', 'operator'].some(k => t[k] && c[k] && t[k] === c[k]);
 }
+/** The tags a stop's picked OSM stop takes, of what that choice would change: what flagstop suggests the agency's for. */
+function choiceTags(s, oid) {
+  const c = ((s.match && s.match.choices) || {})[oid] || {}, tags = {};
+  for (const [k, v] of Object.entries(c.diff || {})) if (k !== 'position' && k !== 'tagging' && (c.decide || {})[k] && c.decide[k].pick === 'agency') tags[k] = v.gtfs;
+  return tags;
+}
+/** One stop for two networks: the agency's stop is the other network's (their name and code stay, the agency's ids,
+ *  routes and network go on it), and its own node goes, the agency's routes and stop areas listing the shared one in
+ *  its place. -> what removeStops kept, and why */
+async function shareStop(s, a, own) {
+  Edits.hold(`${s.name}: shares ${a.tags.name || a.id}`);
+  try {
+    Edits.decisions[s.id] = a.id;
+    const key = Edits.modify('node', osmNumId(a), nodeBase(a), {tags: choiceTags(s, a.id)}, `${s.ref} ${s.name}: shares ${a.tags.name || a.id}`);
+    Edits.ops[key].share = s.match.shared.network;   // said so in the changeset comment
+    const n = osmNumId(own), to = osmNumId(a);
+    const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(ptRel);
+    for (const e of rels) {   // as they are in Changes, if edited there
+      const op = Edits.get('r' + e.id), cur = (op && op.members) || e.members;
+      const has = cur.some(x => x.type === 'node' && x.ref === to), area = (e.tags || {}).public_transport === 'stop_area';
+      const members = cur.flatMap(x => x.type === 'node' && x.ref === n ? (area && has ? [] : [{...x, ref: to}]) : [x]);
+      const k = Edits.modify('relation', e.id, {version: e.version, tags: e.tags, members: e.members}, {members}, op ? null : `${(e.tags || {}).name || 'r' + e.id}: ${a.tags.name || a.id} for ${own.tags.name || own.id}`);
+      if (!op) Edits.ops[k].swap = true;   // a stop swapped, not the route rebuilt
+    }
+    Edits.save();
+    return await removeStops([own], new Set(rels.map(e => e.id)), `shared with ${a.tags.name || a.id}`);
+  } finally { Edits.release(); }
+}
+/** A relation a gone stop can leave: a route of this agency's, or a stop area. */
+const ptRel = e => (e.tags || {}).public_transport === 'stop_area' || ((e.tags || {}).type === 'route' && ours(e));
 async function removeStops(list, mine = new Set(), why = 'stop gone') {
   const kept = [];
   for (const o of list) {
@@ -1545,8 +1586,7 @@ async function removeStops(list, mine = new Set(), why = 'stop gone') {
     const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
     // a route of this agency's, or a stop area, lets it go; anything else that lists it (another agency's route
     // still stopping there, a relation of another kind) keeps it, and it's left alone
-    const pt = e => (e.tags || {}).public_transport === 'stop_area' || ((e.tags || {}).type === 'route' && ours(e));
-    const other = rels.filter(e => !pt(e));
+    const other = rels.filter(e => !ptRel(e));
     if (other.length) { kept.push(`${o.tags.name || o.id} (also in ${other.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
     for (const e of rels) {   // out of the routes and stop areas that list it, as they are in Changes if edited there
       const op = Edits.get('r' + e.id), cur = (op && op.members) || e.members;
@@ -1576,10 +1616,14 @@ function changesetComment() {
   const extraSt = ops.filter(o => /second station|same station as/.test(o.note || '')).length;
   if (extraSt) parts.push(`${n(extraSt, 'second station point')} sorted out`);   // a station's changes, said once under its name
   // a route that only lost a stop that's gone is said with the stop ("1 removed"), not as a rebuilt relation
-  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || ''));
+  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
   for (const o of rels) {
     const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
     if (r) routes.add(r);
+  }
+  for (const o of ops.filter(o => o.swap)) {   // a route given a shared stop (shareStop): said by its number
+    const p = D.patterns.find(p => p.relations.some(a => a.id === o.id)), r = p && routeOf(p);
+    if (r) routes.add(r.short);
   }
   const dropped = rels.filter(o => o.kind === 'delete').length, kept = rels.filter(o => o.kind === 'modify'), made = rels.filter(o => o.kind === 'create');
   if (dropped && kept.length) parts.push(`merged ${n(dropped + kept.length, 'relation')} into ${kept.length === 1 ? 'one' : kept.length}`);
@@ -1595,7 +1639,9 @@ function changesetComment() {
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
-  const removed = nodes.filter(o => o.kind === 'delete' || (o.kind === 'modify' && !Edits.diff(o).some(x => x.k === 'position') && Edits.diff(o).every(x => x.after == null))).length;
+  const removed = nodes.filter(o => !/: shared with /.test(o.note || '')).filter(o => o.kind === 'delete' || (o.kind === 'modify' && !Edits.diff(o).some(x => x.k === 'position') && Edits.diff(o).every(x => x.after == null))).length;
+  const shared = [...new Set(nodes.filter(o => o.share).map(o => o.share))];   // shareStop
+  if (shared.length) parts.push(`${n(nodes.filter(o => o.share).length, 'stop')} shared with ${list(shared)}'s (the old one removed)`);
   const stopBits = [moved ? `${n(moved, 'stop')} moved` : null, added ? `${added} added` : null, removed ? `${removed} removed` : null].filter(Boolean);
   if (stopBits.length) parts.push(stopBits.join(', ').replace(/^(\d+) (added|removed)$/, (_, k, w) => `${n(+k, 'stop')} ${w}`));
   if (tagged.length) {
@@ -1783,6 +1829,14 @@ fetch('api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j
 const dataTimeout = new AbortController(); setTimeout(() => dataTimeout.abort(), 60000);
 fetch('data/review.json', {signal: dataTimeout.signal}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
+  // a stop asked between two OSM stops with what each would change (a shared pole or its own): the picked one's
+  for (const s of Object.values(D.stops)) if (s.match && s.match.choices) {
+    const m = s.match, pick = () => m.choices[Edits.decisions[s.id]] || {};
+    Object.defineProperty(m, 'diff', {get: () => pick().diff || null, configurable: true});
+    Object.defineProperty(m, 'decide', {get: () => pick().decide, configurable: true});
+    const notes = m.notes || [];
+    Object.defineProperty(m, 'notes', {get: () => pick().note ? [...notes, pick().note] : notes, configurable: true});
+  }
   Edits.load(d.agency.agency_name, typeof FLAGSTOP_OSM !== 'undefined' ? FLAGSTOP_OSM.world : '');   // a sandbox's generation: its own basket
   Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
   Edits.sync().then(took => { if (took) { toast('Your Changes and decisions, as saved from another browser', 5000); render(); draw(); } });

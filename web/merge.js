@@ -56,7 +56,11 @@ const Merge = {
     // a stop OSM had twice: the one not picked (here, or earlier in Check stops or the Stops tab)
     const unpicked = stops.filter(x => x.o && (x.s.match || {}).status === 'ambiguous')
       .flatMap(x => x.s.match.osm.map(c => ({o: D.osm_stops[c.id], sid: x.s.id}))).filter(x => x.o && !picked.has(x.o.id) && !usedBy(x.o, x.sid)).map(x => x.o);
-    const gone = [...new Map([...stale.filter(o => !claim[o.id]), ...unpicked].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
+    // (a stop's own, left for a shared one: that goes with the sharing, its routes given the shared one)
+    const shares = new Set(stops.filter(x => x.o && (x.s.match || {}).shared && x.s.match.shared.id === x.o.id).map(x => x.s.match.shared.own));
+    // (and a stop that could still be either, its question unanswered: not leaving yet)
+    for (const q of decide) if (q.kind === 'which' && !(ans[q.s.id] || {}).pick) for (const c of q.cands) shares.add(c.id);
+    const gone = [...new Map([...stale.filter(o => !claim[o.id] && !shares.has(o.id)), ...unpicked.filter(o => !shares.has(o.id))].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
     // on a detour (and not told to map it): the kept relation's stops and roads stay as they are, the regular route;
     // so nothing is left off it, nothing split, and the detour's temporary stops aren't asked about
     if (detoured(p)) {
@@ -115,7 +119,10 @@ const Merge = {
           el('div', {class: 'btns'}, btn(mergedWith(q.s) ? `Move it here, remove ${mergedWith(q.s).tags.name || 'the other'}` : 'Move it here', 'move'), btn('Keep it', 'keep')),
           changes ? el('div', {class: 'why'}, "Moving it also gives it the agency's address and codes.") : null);
       }
-      if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
+      const sh = q.kind === 'which' && q.s.match.shared;
+      if (sh) row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${(D.osm_stops[sh.id] || {tags: {}}).tags.name || sh.id} (${sh.dist} m); OSM's stop with its code is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`), look(),
+        el('div', {class: 'btns'}, ...q.cands.map(c => btn(c.id === sh.id ? `One stop: ${c.o.tags.name || c.id}` : `Its own: ${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
+      else if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
         el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
       if (q.kind === 'missing') row.append(look(), el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
           " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn(newStopSpot(q.s, patternById(S.merge.pid)).kerb ? "Add it, at the kerb by the agency's point" : "Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
@@ -244,7 +251,11 @@ const Merge = {
           const gone = mergedWith(q.s);   // two stops made one: the other goes
           if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }
-        if (q.kind === 'which') { Edits.decisions[q.s.id] = (S.merge.answers[q.s.id] || {}).pick; }
+        if (q.kind === 'which') {
+          const pick = (S.merge.answers[q.s.id] || {}).pick, sh = q.s.match.shared;
+          if (sh && pick === sh.id && D.osm_stops[sh.own]) { const kept = await shareStop(q.s, D.osm_stops[pick], D.osm_stops[sh.own]); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
+          else Edits.decisions[q.s.id] = pick;
+        }
         if (q.kind === 'missing' && q.answer === 'add') { const [lon, lat] = newStopSpot(q.s, p).at; added[q.s.id] = Edits.createNode(lat, lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`); }
       }
       const plat = ({s, o, add}) => add ? {key: added[s.id], role: 'platform'} : {type: 'node', ref: osmNumId(o), role: 'platform'};

@@ -349,6 +349,67 @@ def match(feed, osm_stops, across=None):
     return results, extra
 
 
+def shared_poles(feed, results, osm_stops, across=None):
+    """The agency's point on another network's stop (a university shuttle's, placed with care), while the OSM stop
+    carrying its code is further off than its points stray: the agency may have moved its stop onto the shared
+    pole, or its point may be off. Neither is assumed: the stop becomes 'ambiguous' between the two, the other
+    network's first ('shared'), and r['shared'] says which is which. Run after calibrate() (FAR).
+    -> {stop_id: the other network's OSM id}"""
+    across = across or (lambda sid, o: False)   # (sid, o) -> True when o is across the street from where buses pull in
+    plat = [o for o in osm_stops.values() if is_platform(o)]
+    grid = Grid([(o['lat'], o['lon']) for o in plat])
+    ids = set(feed.stops)
+    taken = {r['osm'][0]['id'] for r in results.values() if r and r['status'] in ('matched', 'moved') and r['osm']}
+    nets = lambda o: {x.strip() for k in ('network', 'operator') for x in (o['tags'].get(k) or '').split(';') if x.strip()}
+    out = {}
+    for sid, r in results.items():
+        s = feed.stops[sid]
+        if not r or r['status'] != 'matched' or not r['osm'] or r['osm'][0]['how'] != 'ref' or r['osm'][0]['dist'] <= FAR or not s.routes:
+            continue
+        own = osm_stops[r['osm'][0]['id']]
+        best = None
+        for k in grid.near(s.lat, s.lon, FAR):
+            o = plat[k]
+            d = dist(s.lat, s.lon, o['lat'], o['lon'])
+            # someone else's: a network or operator, none of them the one on this agency's own stop, and no id of this feed's
+            if d > FAR or o['id'] in taken or across(sid, o) or not nets(o) or nets(o) & nets(own) \
+                    or any(v.strip() in ids for v in (o['tags'].get('gtfs:stop_id') or '').split(';')):
+                continue
+            if best is None or d < best[0]:
+                best = (d, o)
+        if not best:
+            continue
+        d, o = best
+        r['status'], r['diff'] = 'ambiguous', None
+        r['osm'] = [{'id': o['id'], 'dist': round(d), 'score': 1.0, 'how': 'shared'}, r['osm'][0]]
+        r['shared'] = {'id': o['id'], 'dist': round(d), 'network': o['tags'].get('network') or o['tags'].get('operator'),
+                       'own': own['id'], 'own_dist': r['osm'][1]['dist']}
+        out[sid] = o['id']
+    return out
+
+
+def theirs(feed, s, o, diff, conv, aliases=()):
+    """On a stop that is only another network's in OSM so far (owner 'other'), or shared with one already (the
+    agency's code in gtfs:stop_code, another in ref), its name and ref are theirs, what their riders read on the
+    sign: they stay. The agency's code goes in gtfs:stop_code instead. -> the note to show, or None."""
+    t, kept = o['tags'], []
+    # theirs alone; or shared already, the agency's code in gtfs:stop_code and another in ref (theirs, so kept)
+    shared = foreign(feed, o, conv, aliases) and s.code and t.get('gtfs:stop_code') == s.code and t.get('ref') not in (None, '', s.code)
+    if owner(feed, o, conv, aliases) != 'other' and not shared:
+        return None
+    for k in ('name', 'ref'):
+        if k in diff and t.get(k):
+            diff.pop(k)
+            kept.append(f"{k} {t[k]}")
+    if s.code and t.get('gtfs:stop_code') != s.code:
+        diff['gtfs:stop_code'] = {'gtfs': s.code, 'osm': t.get('gtfs:stop_code', '')}
+    who = ';'.join(foreign(feed, o, conv, aliases)[:1]) or t.get('network') or t.get('operator')
+    if shared:
+        return f"{t.get('name') or o['id']} is shared with {who}: its {' and '.join(kept)} stay theirs; the agency's code {s.code} is in gtfs:stop_code" if kept else None
+    return f"{t.get('name') or o['id']} is {who}'s stop" + (f": its {' and '.join(kept)} stay theirs" if kept else '') + \
+        (f"; the agency's code {s.code} goes in gtfs:stop_code" if s.code else '')
+
+
 def conventions(feed, results, osm_stops):
     """What the local mappers already write for operator/network on this agency's stops: the value most
     of the matched stops carry, if a clear majority does. Proposals follow the mappers, not the feed."""
@@ -418,12 +479,17 @@ def owner(feed, o, conv, aliases=()):
     vals = [x.strip() for k in ('network', 'operator') for x in (o['tags'].get(k) or '').split(';') if x.strip()]
     if not vals:
         return None
+    return 'other' if len(foreign(feed, o, conv, aliases)) == len(vals) else 'agency'
+
+
+def foreign(feed, o, conv, aliases=()):
+    """The network and operator values on an OSM stop that aren't this agency's (by its current name, an old or
+    short one): another network's, on a stop shared with it."""
+    vals = [x.strip() for k in ('network', 'operator') for x in (o['tags'].get(k) or '').split(';') if x.strip()]
     agency = feed.agency.get('agency_name', '').lower()
-    for cur in {conv.get('network'), conv.get('operator')} - {None}:
-        for x in vals:
-            if x == cur or x.lower() in aliases or (len(x) > 2 and x.lower() in agency) or set(x.lower().split()) <= set(cur.lower().split()):
-                return 'agency'
-    return 'other'
+    curs = {conv.get('network'), conv.get('operator')} - {None}
+    ours = lambda x: any(x == cur or x.lower() in aliases or (len(x) > 2 and x.lower() in agency) or set(x.lower().split()) <= set(cur.lower().split()) for cur in curs)
+    return [x for x in vals if not ours(x)]
 
 
 def proposed_tags(feed, s, conv=None):
@@ -591,8 +657,9 @@ def decide(s, o, diff, side=None, others=None):
     t, out = o['tags'], {}
     d = dist(s.lat, s.lon, o['lat'], o['lon'])
     for k, v in (diff or {}).items():
-        if k in ('ref', 'gtfs:stop_id', 'route_ref'):
+        if k in ('ref', 'gtfs:stop_id', 'gtfs:stop_code', 'route_ref'):
             out[k] = {'pick': 'agency', 'why': {'ref': "the agency's stop code", 'gtfs:stop_id': "the agency's id for the stop",
+                                                 'gtfs:stop_code': "the agency's stop code (ref is the other network's)",
                                                  'route_ref': 'which routes call here, per the timetable'}[k]}
         elif k == 'network':
             if not v['osm']:

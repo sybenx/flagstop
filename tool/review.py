@@ -158,6 +158,15 @@ def across_fn(feed, paths):
     return across
 
 
+def far_side_fn(feed, paths):
+    """-> far(stop_id, osm_stop): some itinerary calling there has the OSM stop across the street, and none on its
+    side. Stricter than across_fn: for offering another network's stop as this one, a doubt is enough."""
+    def far(sid, o):
+        sides = {side((o['lon'], o['lat']), g, kerb=5) for g in paths.get(sid) or []}
+        return 'left' in sides and 'right' not in sides
+    return far
+
+
 def stop_sides(feed, paths, match, osm_stops):
     """{stop_id: {'osm': side, 'gtfs': side}}: a stop some itinerary has on its right is on the right; only 'left'
     for every one of them counts as across."""
@@ -272,6 +281,10 @@ def main():
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
     typical, far = stopmatch.calibrate(match)
     print(f'positions: usually {typical} m apart; the same spot within {far} m', file=sys.stderr)
+    # the agency's point on another network's stop, its own code on one further off: asked, both offered
+    shared = stopmatch.shared_poles(feed, match, osm_stops, far_side_fn(feed, paths))
+    if shared:
+        print(f'stops: {len(shared)} on another network\'s stop, their own further off: asked which', file=sys.stderr)
     # The agency's moves, from the feed versions kept: a stop it moved is found in OSM where it used to be
     vs = positions.versions(a.cache, slug)
     jumped = positions.jumps(vs)
@@ -303,6 +316,9 @@ def main():
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['diff'].update(stopmatch.network_diff(feed, osm_stops[m['osm'][0]['id']], conv, aliases))
             stopmatch.keep_foreign_routes(feed, osm_stops[m['osm'][0]['id']], m['diff'])
+            note = stopmatch.theirs(feed, feed.stops[sid], osm_stops[m['osm'][0]['id']], m['diff'], conv, aliases)
+            if note:
+                m['notes'].append(note)
     # Which side of the street each stop is on, for the buses that call there; then what to suggest per difference.
     sides = stop_sides(feed, paths, match, osm_stops)
     names = {stopmatch.address(st.name): (st.id, st.name) for st in feed.stops.values()}
@@ -313,6 +329,17 @@ def main():
                 near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
                 m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
+    # a shared pole or the agency's own (shared_poles): what each would change, the page shows the one picked
+    for sid in shared:
+        m, st = match[sid], feed.stops[sid]
+        m['choices'] = {}
+        for c in m['osm']:
+            o = osm_stops[c['id']]
+            df = stopmatch.diff(feed, st, o)
+            df.update(stopmatch.network_diff(feed, o, conv, aliases))
+            stopmatch.keep_foreign_routes(feed, o, df)
+            note = stopmatch.theirs(feed, st, o, df, conv, aliases)
+            m['choices'][c['id']] = {'diff': df, 'decide': stopmatch.decide(st, o, df, None, names), **({'note': note} if note else {})}
     # A stop no bus calls at now (left in the feed during a detour, parked at its temporary stop, say): its OSM stop
     # stays where it is, whatever the feed's point says, and no move is suggested for it
     idle = {sid for sid, st in feed.stops.items() if not st.routes}

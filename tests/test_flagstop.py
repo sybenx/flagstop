@@ -475,6 +475,42 @@ class Search(unittest.TestCase):
         res, _ = stops.match(f, {'n1': {**o2, 'type': 'node'}})
         self.assertEqual({res[x]['status'] for x in res}, {'ambiguous'})
 
+    def test_the_agencys_point_on_another_networks_stop_asks_shared_or_its_own(self):
+        # CVTD's 115 (Richard's Hall): its point moved onto the Aggie Shuttle's Richards Hall, its own node 94 m east
+        s = Stop('1071 East 700 North', id='7569115', code='115', desc="Richard's Hall"); s.location_type = '0'; s.routes = {'r1'}
+        f = Feed(); f.stops = {s.id: s}
+        own = {**osm('1071 East 700 North', lon=-111.83 + 94 / 83000, ref='115', network='Connect Public Transit', operator='Connect Public Transit'), 'id': 'n1', 'type': 'node'}
+        aggie = {**osm('Richards Hall', lat=41.74 + 11 / 110540, ref='27', network='Aggie Shuttle', operator='Utah State University'), 'id': 'n2', 'type': 'node'}
+        res, _ = stops.match(f, {'n1': own, 'n2': aggie})
+        self.assertEqual(res[s.id]['osm'][0]['id'], 'n1')   # by its code, at first
+        self.assertEqual(stops.shared_poles(f, res, {'n1': own, 'n2': aggie}), {s.id: 'n2'})
+        r = res[s.id]
+        self.assertEqual((r['status'], [c['id'] for c in r['osm']]), ('ambiguous', ['n2', 'n1']))   # asked: neither forced
+        self.assertEqual((r['shared']['own'], r['shared']['own_dist']), ('n1', 94))
+        # sharing: their name and ref stay, the agency's code goes in gtfs:stop_code
+        conv = {'network': 'Connect Public Transit', 'operator': 'Connect Public Transit'}
+        df = stops.diff(f, s, aggie); df.update(stops.network_diff(f, aggie, conv))
+        note = stops.theirs(f, s, aggie, df, conv)
+        self.assertNotIn('name', df); self.assertNotIn('ref', df)
+        self.assertEqual(df['gtfs:stop_code']['gtfs'], '115')
+        self.assertEqual(df['network']['gtfs'], 'Aggie Shuttle;Connect Public Transit')
+        self.assertIn('stay theirs', note)
+        self.assertEqual(stops.decide(s, aggie, df)['gtfs:stop_code']['pick'], 'agency')
+        # once shared, the next review leaves it so: no renaming it to the address, no ref 27 -> 115
+        done = {**aggie, 'tags': {**aggie['tags'], **{k: v['gtfs'] for k, v in df.items() if k != 'position'}}}
+        df2 = stops.diff(f, s, done); df2.update(stops.network_diff(f, done, conv))
+        self.assertIn('ref', df2)
+        stops.theirs(f, s, done, df2, conv)
+        self.assertEqual({k for k in df2 if k != 'position'}, set())
+        # the agency's own stop within its usual reach: nothing to ask
+        near = {**own, 'lon': -111.83 + 5 / 83000}
+        res, _ = stops.match(f, {'n1': near, 'n2': aggie})
+        self.assertEqual(stops.shared_poles(f, res, {'n1': near, 'n2': aggie}), {})
+        # nor when the stop at the point is this agency's (another of its networks' names on its own)
+        mine = {**aggie, 'tags': {**aggie['tags'], 'network': 'Connect Public Transit'}}
+        res, _ = stops.match(f, {'n1': own, 'n2': mine})
+        self.assertEqual(stops.shared_poles(f, res, {'n1': own, 'n2': mine}), {})
+
     def test_a_stop_id_is_matched_whole_not_inside_another(self):
         s = Stop('100 North Main St', id='12', code='12')
         o = osm('Elsewhere Road', lat=41.74 + 150 / 110540, **{'gtfs:stop_id': '1234'})
