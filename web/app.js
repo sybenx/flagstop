@@ -1210,7 +1210,7 @@ async function proposeRelation(p, opts = {}) {
   if (!p.routed) { toast("This route's roads are still loading: try again in a moment", 5000); return {ok: false, why: 'not routed yet'}; }
   // a relation made for it went up, and the data here doesn't have it yet: made again, it would be there twice
   const made = Object.values(Edits.uploaded).find(o => o.kind === 'create' && o.type === 'relation' && o.note === p.id);
-  if (made) { const why = `its new relation went up in changeset ${made.uploaded}, and the data here doesn't have it yet: refresh from OSM first`; say(`Not added: ${why}`, 8000); return {ok: false, why}; }
+  if (made) { const why = `its new relation went up in changeset ${made.uploaded}, and the data here doesn't have it yet: ${SERVER ? 'refresh from OSM first' : 'it will after the next rebuild (each morning)'}`; say(`Not added: ${why}`, 8000); return {ok: false, why}; }
   const x = relationPlan(p), rt = x.rt;
   const asIs = detoured(p) && x.reuse;   // on a detour: the regular route's stops and roads stay
   if (asIs) x.chainOk = true;
@@ -1838,6 +1838,7 @@ function renderChanges(P) {
     // the data here has it already (refreshed since): nothing to refresh for
     // (last.at is this browser's clock after the upload; the data's is the changeset's close, a moment before)
     D.osm_base && new Date(D.osm_base).getTime() >= new Date(last.at).getTime() - 60000 ? el('div', {class: 'muted small'}, 'In the data shown here.') :
+    !SERVER ? el('div', {class: 'muted small'}, "Shown here already, over the data; the data itself has it from the next rebuild (each morning).") :
     el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => refreshOSM()}, 'Refresh from OSM to see it'),
       el('span', {class: 'muted small', style: 'align-self:center'}, "flagstop shows OSM as it was before; OSM's copy for this can lag a few minutes"))));
   const undoing = ops.map(([, o]) => o.undoes).filter(Boolean);
@@ -1875,7 +1876,8 @@ function renderChanges(P) {
           render();
         } catch (e) {
           status.textContent = '';
-          if (e.conflicts) { status.append(el('div', {style: 'color:var(--miss)'}, 'Not uploaded — these changed on OSM since flagstop looked:'), el('ul', {}, ...e.conflicts.map(c => el('li', {}, `${c.key}: ${c.why}`))), el('div', {}, 'Remove those lines or refresh the OSM data (tool/review.py --refresh) and decide again.')); }
+          if (e.conflicts) { status.append(el('div', {style: 'color:var(--miss)'}, 'Not uploaded — these changed on OSM since flagstop looked:'), el('ul', {}, ...e.conflicts.map(c => el('li', {}, `${c.key}: ${c.why}`))), el('div', {}, SERVER ? 'Remove those lines, or refresh from OSM (the link at the top) and decide again.'
+            : `The data here is OSM as of ${(D.osm_base || '').replace('T', ' ').slice(0, 16)} UTC, and someone (you, maybe, from another browser) has edited these since. It's rebuilt each morning with everything up to then; decide them again after that, or remove those lines and upload the rest now.`)); }
           else if (e.signedOut) { Edits.auth.lost = true; render(); }   // shows why, and the sign-in button
           else status.textContent = 'Upload failed: ' + e.message;
         } finally { button.disabled = false; }

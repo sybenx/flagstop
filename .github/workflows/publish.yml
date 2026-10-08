@@ -51,6 +51,11 @@ jobs:
       - name: OSM (Geofabrik's regional extract)
         continue-on-error: true
         run: python3 tool/extract.py "$(ls -t cache/*.zip | head -1)" --cache cache
+      # Geofabrik's extract is about a day behind: every changeset over the area since its time, read from OSM's own
+      # API and applied on top (uploads made since, yours included, are in the data). If that fails, the extract as it is.
+      - name: OSM caught up to now (changesets since the extract)
+        continue-on-error: true
+        run: python3 tool/patch.py --since-base
       # with each route's roads: the page reads them instead of asking Overpass itself
       - name: the review (stops and routes, and each route's roads)
         env:

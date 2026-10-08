@@ -3,6 +3,8 @@ second, where Overpass takes minutes and runs a minute or two behind (an upload'
 upload undone).
 
     python3 tool/patch.py <changeset id> [...]      patch cache/*-osm-pt.json and *-osm-roads.json in place
+    python3 tool/patch.py --since-base             every changeset over the feed's area since the data's own time
+                                                   (a day-old regional extract, caught up to now)
 
 Each changeset's osmChange (creates, modifies, deletes, with the new ids) is applied to both caches: stops
 and relations to the stops-and-routes data, roads and their nodes to the roads data. A route that now runs
@@ -108,8 +110,9 @@ class _Index:
         self.els[:] = [e for e in self.els if e is not None]
 
 
-def apply(pt, roads, cs_list):
-    """Patch the two Overpass JSON caches in place. -> how many elements changed."""
+def apply(pt, roads, cs_list, fill=True):
+    """Patch the two Overpass JSON caches in place. fill: give pt every road its routes list (not for a roads file
+    patched alone, whose pt is a throwaway). -> how many elements changed."""
     n, latest = 0, None
     ix = {id(pt): _Index(pt), id(roads): _Index(roads)}
     for cs in sorted(cs_list, key=int):   # in the order they were made
@@ -153,7 +156,8 @@ def apply(pt, roads, cs_list):
                                 X.append({'type': 'node', 'id': nid, 'lat': e['lat'], 'lon': e['lon']})
     for X in ix.values():
         X.close()
-    complete(pt, roads)
+    if fill:
+        complete(pt, roads)
     for data in (pt, roads):
         o = data.setdefault('osm3s', {})
         if latest and (o.get('timestamp_osm_base') or '') < latest:
@@ -189,22 +193,62 @@ def complete(pt, roads):
             pt['elements'].append({'type': 'node', 'id': nid, 'lat': rn[nid]['lat'], 'lon': rn[nid]['lon']})
 
 
+BIG = 10000   # changes: a changeset this big over the area is an import or a bot's, mostly elsewhere; read, it's slow
+
+
+def since(base, bbox):
+    """Closed changesets whose box meets the area (south, west, north, east), made since `base` (an ISO time), oldest
+    first. The API gives 100 at a time, newest first: page back by time."""
+    s_, w, n_, e = bbox
+    out, until = {}, None
+    while True:
+        q = f"bbox={w},{s_},{e},{n_}&closed=true&time={base}" + (f",{until}" if until else '')
+        cs = json.loads(get(f'{API}/changesets.json?{q}'))['changesets']
+        new = [c for c in cs if c['id'] not in out]
+        for c in new:
+            out[c['id']] = c
+        if len(cs) < 100 or not new:
+            break
+        until = min(c['created_at'] for c in cs)
+    big = [c['id'] for c in out.values() if (c.get('changes_count') or 0) > BIG]
+    if big:
+        print(f'patch: left out {len(big)} changeset{"s" if len(big) > 1 else ""} of over {BIG} changes: {", ".join(map(str, big))}', file=sys.stderr)
+    return sorted(i for i, c in out.items() if i not in big)
+
+
 def main(argv):
-    ids = [int(x) for x in argv if x.isdigit()]
-    if not ids:
-        raise SystemExit(__doc__)
     cache = os.environ.get('FLAGSTOP_CACHE') or os.path.join(ROOT, 'cache')   # a sandbox run keeps its files apart
     newest = lambda pat: max(glob.glob(os.path.join(cache, pat)), key=os.path.getmtime)
+    ids = [int(x) for x in argv if x.isdigit()]
+    if '--since-base' in argv:
+        # the data's own time, and its area: every changeset since, over it
+        p = newest('*-osm-pt.json')
+        base = (json.load(open(p)).get('osm3s') or {}).get('timestamp_osm_base')
+        box = json.load(open(p + '.bbox')) if os.path.exists(p + '.bbox') else None
+        if not base or not box:
+            raise SystemExit(f'patch: {os.path.basename(p)} has no time or no area (.bbox) to catch up from')
+        ids = since(base, box)
+        print(f'patch: {len(ids)} changeset{"s" if len(ids) != 1 else ""} over the area since {base}', file=sys.stderr)
+        if not ids:
+            return
+    if not ids:
+        raise SystemExit(__doc__)
     # the stops-and-routes data, and every roads file: the whole area's (if any) and each route's (cache/roads/)
     pt_path = newest('*-osm-pt.json')
     road_paths = glob.glob(os.path.join(cache, '*-osm-roads.json')) + glob.glob(os.path.join(cache, 'roads', '*.json'))
     pt = json.load(open(pt_path))
+    # each changeset read once, several at a time: the API is the slow part, not the patching
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(6) as ex:
+        list(ex.map(changes, ids))
     n = 0
-    for i, rp in enumerate(road_paths or [None]):
-        roads = json.load(open(rp)) if rp else {'elements': []}
-        n += apply(pt, roads, ids) if i == 0 else apply({'elements': []}, roads, ids)
-        if rp:
-            json.dump(roads, open(rp + '.tmp', 'w')); os.replace(rp + '.tmp', rp)
+    every = []   # every roads file's elements once patched: where a route's roads are found, before asking the API
+    for rp in road_paths:
+        roads = json.load(open(rp))
+        n += apply({'elements': []}, roads, ids, fill=False)
+        every += roads['elements']
+        json.dump(roads, open(rp + '.tmp', 'w')); os.replace(rp + '.tmp', rp)
+    n += apply(pt, {'elements': every}, ids)
     json.dump(pt, open(pt_path + '.tmp', 'w')); os.replace(pt_path + '.tmp', pt_path)
     print(f'patched {n} elements from changeset{"s" if len(ids) > 1 else ""} {", ".join(map(str, ids))}', file=sys.stderr)
 
