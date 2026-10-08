@@ -1642,6 +1642,17 @@ const CARRY = {
   // agency's codes and routes go on by the share or the move. Kept only if ticked.
   stop: () => false,
 };
+/** How much a tag matters when it's lost: 2, worth a look (a fact someone surveyed: wheelchair, a shelter, opening hours,
+ *  a phone; anything flagstop doesn't know, to be safe); 1, worth knowing (names, codes, who runs it); 0, low (what the
+ *  agency's feed gives back anyway: its ids, a route's timetable and colour, a service day's name). */
+const tagWeight = (k, v, tags = {}) => {
+  const route = tags.type === 'route' || tags.type === 'route_master';
+  if (/^gtfs:|^(type|route|route_master|public_transport:version|roundtrip|colour|interval(:conditional)?)$/.test(k) || (route && k === 'opening_hours')) return 0;
+  if (/^(name|alt_name|old_name)$/.test(k) && /\b(weekdays?|saturdays?|sundays?|weekends?)\b/i.test(v || '')) return 0;
+  if (/^(name|alt_name|old_name|official_name|short_name|ref|local_ref|from|to|via|network|operator|route_ref|description|highway|public_transport|bus|amenity)$|wikidata$|wikipedia$/.test(k)) return 1;
+  return 2;
+};
+const WEIGHT_WORDS = ['low', 'worth knowing', 'worth a look'];
 const Carry = {
   rows(from, into, def, rename = {}) {
     const a = Edits.answers[from.id] || {}, it = into.tags || {};
@@ -1649,8 +1660,8 @@ const Carry = {
       const to = rename[k] && !(rename[k] in it) && it[k] != null && it[k] !== v ? rename[k] : k, now = it[to];
       if (now === v) return {k, to, v, same: true};
       const ans = a['keep:' + k];
-      return {k, to, v, now, on: ans ? ans === 'yes' : !!def(k, v, now)};
-    });
+      return {k, to, v, now, on: ans ? ans === 'yes' : !!def(k, v, now), w: tagWeight(k, v, from.tags)};
+    }).sort((x, y) => (y.w ?? -1) - (x.w ?? -1));   // what matters most first
   },
   /** The tags that go onto the one that stays: {key: value}. */
   tags(from, into, def, rename) { return Object.fromEntries(this.rows(from, into, def, rename).filter(r => r.on).map(r => [r.to, r.v])); },
@@ -1659,10 +1670,12 @@ const Carry = {
     const set = (k, on) => { Edits.answer(from.id, 'keep:' + k, on ? 'yes' : 'no'); render(); draw(); };
     return el('div', {class: 'carry small'},
       el('div', {}, el('b', {}, title || `${from.tags.name || from.id}'s tags`), ` — it's deleted; ticked goes onto ${into.tags.name || into.id || 'the one that stays'}:`),
-      ...diff.map(r => el('div', {}, el('label', {}, el('input', {type: 'checkbox', checked: r.on ? '' : null, onchange: e => set(r.k, e.target.checked)}), ` ${r.to}=${r.v}`,
+      ...diff.map(r => el('div', {class: r.w === 0 ? 'muted' : ''}, el('label', {style: r.w === 2 && !r.on ? 'color:var(--miss)' : ''}, el('input', {type: 'checkbox', checked: r.on ? '' : null, onchange: e => set(r.k, e.target.checked)}), ` ${r.to}=${r.v}`,
         r.to !== r.k ? el('span', {class: 'muted'}, ` (its ${r.k})`) : r.now != null ? el('span', {class: 'muted'}, ` (instead of ${r.now})`) : null))),
       same.length ? el('div', {class: 'muted'}, `The same on both already: ${same.map(r => `${r.k}=${r.v}`).join(', ')}.`) : null,
-      el('div', {class: 'muted'}, lost.length ? `Lost with it: ${lost.map(r => `${r.k}=${r.v}`).join(', ')}.` : 'Nothing of it is lost.'));
+      lost.length ? el('div', {}, 'Lost with it: ', ...[2, 1, 0].map(w => lost.filter(r => r.w === w)).filter(g => g.length).flatMap((g, i) => [i ? '; ' : '',
+        el('span', {style: g[0].w === 2 ? 'color:var(--miss);font-weight:600' : '', class: g[0].w === 2 ? '' : 'muted'}, `${g.map(r => `${r.k}=${r.v}`).join(', ')} (${WEIGHT_WORDS[g[0].w]})`)]), '.')
+        : el('div', {class: 'muted'}, 'Nothing of it is lost.'));
   },
   /** Onto the one that stays (into an edit already in Changes, if there is one). */
   onto(from, into, def, rename) {
@@ -1722,7 +1735,11 @@ function changesetComment() {
   const extraSt = ops.filter(o => /second station|same station as/.test(o.note || '')).length;
   if (extraSt) parts.push(`${n(extraSt, 'second station point')} sorted out`);   // a station's changes, said once under its name
   // a route that only lost a stop that's gone is said with the stop ("1 removed"), not as a rebuilt relation
-  const rels = ops.filter(o => o.type === 'relation' && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
+  // tags put back as they were before an earlier changeset (What uploads took away): said as that
+  const back = ops.filter(o => o.putBack);
+  for (const o of back) if (o.type === 'relation' && o.tags.type === 'route' && o.tags.ref) routes.add(o.tags.ref);
+  if (back.length) parts.push(`${list([...new Set(back.flatMap(o => Edits.diff(o).map(x => x.k)))])} put back as before changeset ${list([...new Set(back.map(o => String(o.putBack)))])}${back.length > 1 ? ` on ${back.length} objects` : ''}`);
+  const rels = ops.filter(o => o.type === 'relation' && !o.putBack && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
   for (const o of rels) {
     const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
     if (r) routes.add(r);
@@ -1741,7 +1758,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.putBack && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));

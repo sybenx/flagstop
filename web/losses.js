@@ -73,6 +73,21 @@ const Losses = {
     return {deleted, removed};
   },
 
+  /** A tag a changeset took away, back into Changes: read as OSM has the object now, and only if nobody has changed
+   *  that tag since (else said, and left alone). */
+  async putBack(it) {
+    const t = it.target.type, id = it.target.id;
+    const r = await fetch(`${OSM_API}/api/0.6/${t}/${id}.json`);
+    if (!r.ok) return toast(`${t} ${id}: OSM said ${r.status}`, 6000);
+    const o = (await r.json()).elements[0], tags = o.tags || {};
+    if (!it.onto && (tags[it.k] ?? null) !== (it.now ?? null)) return toast(`${it.k} on ${t} ${id} has changed since (it's ${tags[it.k] ?? 'gone'} now): left as it is`, 8000);
+    const base = {version: o.version, tags, ...(t === 'node' ? {lat: o.lat, lon: o.lon} : t === 'way' ? {nodes: o.nodes} : {members: o.members})};
+    const key = Edits.modify(t, id, base, {tags: {[it.k]: it.value}}, `${tags.name || `${t} ${id}`}: ${it.k} put back as it was before changeset ${it.c.id}`);
+    Edits.ops[key].putBack = it.c.id;   // said so in the changeset comment
+    Edits.save();
+    toast(`${it.k}=${it.value} on ${tags.name || `${t} ${id}`}: in Changes`, 5000); render();
+  },
+
   /** The Changes tab's section: a way to look, then what was found. */
   render(d) {
     const L = S.losses, me = Edits.auth.user();
@@ -88,8 +103,36 @@ const Losses = {
         `${rem.reduce((n, x) => n + Object.keys(x.removed).length, 0)} tags removed and ${rem.reduce((n, x) => n + Object.keys(x.changed).length, 0)} changed on what stayed.`));
       const kv = t => Object.entries(t).sort().map(([k, v]) => `${k}=${v}`).join('  ');
       const link = (t, id, label) => el('a', {href: `${OSM_WWW}/${t}/${id}/history`, target: '_blank'}, label || `${t} ${id}`);
+      // every tag that went, ranked: a surveyed fact (wheelchair, hours) first, what the feed gives back anyway last
+      const items = [];
       for (const c of L.list) {
-        const sec = el('details', {class: 'small', open: c.deleted.some(x => !x.into || (x.lost && Object.keys(x.lost).length)) || c.removed.some(x => Object.keys(x.removed).length) ? '' : null},
+        for (const x of c.deleted) {
+          if (x.type === 'node' && !Object.keys(x.tags).length) continue;
+          for (const [k, v] of Object.entries(x.into ? x.lost : x.tags)) items.push({c, x, k, what: `${k}=${v}`, how: x.into ? `not carried onto ${x.into.type} ${x.into.id}` : 'deleted with it', w: tagWeight(k, v, x.tags),
+            ...(x.into ? {target: x.into, value: v, onto: true} : {})});
+        }
+        for (const x of c.removed) {
+          for (const [k, v] of Object.entries(x.removed)) items.push({c, x, k, what: `${k}=${v}`, how: 'removed', w: tagWeight(k, v, {}), target: x, value: v, now: undefined});
+          // a name changed only by its service day going (a merge) is low; changed otherwise, it's the new name that counts
+          const bare = v => (v || '').replace(SERVICE_DAY, '').replace(/\s*[-–,]\s*$/, '').trim();
+          // put back: as it was, but a name without the service day it had (the relations it named are one now)
+          for (const [k, [p, n]] of Object.entries(x.changed)) items.push({c, x, k, what: `${k}: ${p} → ${n}`, how: 'changed', w: /name$/.test(k) && bare(p) !== n ? Math.max(1, tagWeight(k, n, {})) : tagWeight(k, p, {}),
+            target: x, value: /name$/.test(k) && bare(p) && bare(p) !== n ? bare(p) : p, now: n});
+        }
+      }
+      const line = it => el('div', {style: 'margin:2px 0'}, el('b', {}, it.what), ` · ${it.how} · `, link(it.x.type, it.x.id, `${it.x.type[0]}${it.x.id}`), ` "${(it.x.tags || {}).name || it.x.name || ''}" · `,
+        el('a', {href: `${OSM_WWW}/changeset/${it.c.id}`, target: '_blank'}, it.c.id), el('span', {class: 'muted'}, ` ${it.c.date} `),
+        it.target && it.w ? el('button', {class: 'b tiny', title: 'Into Changes, after checking OSM has it as this changeset left it', onclick: () => this.putBack(it)},
+          it.onto ? `Put ${it.k}=${it.value} onto ${it.target.type} ${it.target.id}` : `Put back: ${it.k}=${it.value}`) : null);
+      for (const w of [2, 1, 0]) {
+        const g = items.filter(it => it.w === w);
+        const title = `${WEIGHT_WORDS[w][0].toUpperCase()}${WEIGHT_WORDS[w].slice(1)}: ${g.length}` + (w === 2 ? ' (facts someone surveyed: wheelchair, a shelter, hours, a phone)' : w === 1 ? ' (names, codes, who runs it)' : " (the feed gives these back: its ids, a route's timetable, a service day's name)");
+        box.append(el('details', {class: 'small', open: w === 2 && g.length ? '' : null, style: w === 2 && g.length ? 'color:var(--miss)' : ''}, el('summary', {}, el('b', {}, title)),
+          ...(g.length ? g.map(line) : [el('div', {class: 'muted'}, 'None.')])));
+      }
+      box.append(el('div', {class: 'k', style: 'margin-top:8px'}, 'By changeset'));
+      for (const c of L.list) {
+        const sec = el('details', {class: 'small'},
           el('summary', {}, el('a', {href: `${OSM_WWW}/changeset/${c.id}`, target: '_blank'}, c.id), ` ${c.date} · ${c.comment.slice(0, 90)}`,
             el('span', {class: 'muted'}, ` · ${c.deleted.length ? `${c.deleted.length} deleted` : ''}${c.deleted.length && c.removed.length ? ', ' : ''}${c.removed.length ? `${c.removed.length} retagged` : ''}`)));
         // a deleted way's points, untagged: said in one line, not one each
@@ -99,10 +142,10 @@ const Losses = {
           el('div', {}, el('b', {}, 'deleted '), link(x.type, x.id), ` "${x.tags.name || ''}"`, el('span', {class: 'muted'}, ` (last edited by ${x.by})`)),
           el('div', {class: 'mono muted'}, kv(x.tags) || '(no tags)'),
           x.into ? el('div', {}, '→ into ', link(x.into.type, x.into.id, `${x.into.type} ${x.into.id}`), ` "${x.into.name || ''}"${x.into.d != null ? `, ${Math.round(x.into.d)} m away` : ''}: `,
-            Object.keys(x.lost).length ? el('span', {style: 'color:var(--miss)'}, `not there: ${kv(x.lost)}`) : el('span', {style: 'color:var(--ok)'}, 'all its tags are there'))
+            Object.keys(x.lost).length ? el('span', {style: Object.entries(x.lost).some(([k, v]) => tagWeight(k, v, x.tags) === 2) ? 'color:var(--miss)' : '', class: Object.entries(x.lost).some(([k, v]) => tagWeight(k, v, x.tags) === 2) ? '' : 'muted'}, `not there: ${kv(x.lost)}`) : el('span', {style: 'color:var(--ok)'}, 'all its tags are there'))
             : el('div', {style: 'color:var(--amb)'}, 'nothing of its kind kept by this changeset nearby: all of it is gone')));
         for (const x of c.removed) sec.append(el('div', {style: 'margin:3px 0'}, link(x.type, x.id), ` "${x.name || ''}": `,
-          ...Object.entries(x.removed).map(([k, v]) => el('span', {style: 'color:var(--miss)'}, ` −${k}=${v}`)),
+          ...Object.entries(x.removed).map(([k, v]) => el('span', {style: tagWeight(k, v, {}) === 2 ? 'color:var(--miss)' : ''}, ` −${k}=${v}`)),
           ...Object.entries(x.changed).map(([k, [a, b]]) => el('span', {}, ` ${k}: ${a} → ${b};`))));
         box.append(sec);
       }

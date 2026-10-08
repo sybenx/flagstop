@@ -24,7 +24,8 @@ What it answers (what the tool asks, in the shapes the real servers give):
     /api/0.6/node/{id}/{ways,relations}.json          /api/0.6/map.json?bbox=l,b,r,t
     /api/0.6/changeset/create (PUT)                   /api/0.6/changeset/{id}/upload (POST osmChange -> diffResult)
     /api/0.6/changeset/{id}/close (PUT)               /api/0.6/changeset/{id}[.json][?include_discussion]  /download
-    /api/0.6/changesets.json?user=                    /api/0.6/user/details.json        /api/0.6/notes.json
+    /api/0.6/changesets.json?user= or ?display_name=  /api/0.6/user/details.json        /api/0.6/notes.json
+    /api/0.6/{node,way,relation}/{id}/{version}[.json]  one version, as it was
     /oauth2/authorize -> back with a code             /oauth2/token -> a token
     /api/interpreter (Overpass): the tool's own query shapes (tool/osm.py, web/app.js), answered from the data;
                                  any other query is a 400 naming it, so a new query is a gap here, not a wrong answer
@@ -749,6 +750,16 @@ class Handler(BaseHTTPRequestHandler):
             if missing:
                 return self._text(f'{t} {missing[0]} not found', 404)
             return self._osm_json([api_json(st.el[t][i]) for i in ids])
+        mm = re.match(r'^(node|way|relation)/(\d+)/(\d+)(\.json)?$', rest)   # one version, as it was
+        if mm and method == 'GET':
+            t, i, v = mm.group(1), int(mm.group(2)), int(mm.group(3))
+            vs = [x for x in (st.earlier(t, i) + st.hist.get((t, i), [])) if x['version'] == v] if (t, i) in st.hist else []
+            if not vs:
+                cur = st.el[t].get(i)
+                vs = [cur] if cur and cur['version'] == v else []
+            if not vs:
+                return self._text(f'{t} {i} version {v} not found', 404)
+            return self._osm_json([api_json(vs[0])]) if mm.group(4) else self._xml(xml_element(vs[0]))
         mm = re.match(r'^(node|way|relation)/(\d+)(?:/(full|history|ways|relations))?(\.json)?$', rest)
         if mm and method == 'GET':
             t, i, sub, js = mm.group(1), int(mm.group(2)), mm.group(3), mm.group(4)
@@ -782,6 +793,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._text(str(st.create_changeset(tags)))
         if rest == 'changesets.json':
             uid = q.get('user', [None])[0]
+            name = q.get('display_name', [None])[0]   # by name too, as OSM takes it
+            if name is not None and name != USER['display_name']:
+                return self._text(f'Object not found', 404)
             limit = int(q.get('limit', ['100'])[0])
             cs = [changeset_json(c) for c in sorted(st.changesets.values(), key=lambda c: -c['id']) if uid is None or str(c['uid']) == uid]
             return self._json({'version': '0.6', 'changesets': cs[:limit]})
