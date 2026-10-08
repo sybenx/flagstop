@@ -60,6 +60,8 @@ const Merge = {
     const shares = new Set(stops.filter(x => x.o && (x.s.match || {}).shared && x.s.match.shared.id === x.o.id).map(x => x.s.match.shared.own));
     // (and a stop that could still be either, its question unanswered: not leaving yet)
     for (const q of decide) if (q.kind === 'which' && !(ans[q.s.id] || {}).pick) for (const c of q.cands) shares.add(c.id);
+    // (nor the other network's stop, when the agency keeps its own: it's theirs, not this route's to remove)
+    for (const q of decide) if (q.kind === 'which' && q.s.match.shared) shares.add(q.s.match.shared.id);
     const gone = [...new Map([...stale.filter(o => !claim[o.id] && !shares.has(o.id)), ...unpicked.filter(o => !shares.has(o.id))].filter(o => o && o.lon != null && !picked.has(o.id)).map(o => [o.id, o])).values()];
     // on a detour (and not told to map it): the kept relation's stops and roads stay as they are, the regular route;
     // so nothing is left off it, nothing split, and the detour's temporary stops aren't asked about
@@ -120,8 +122,12 @@ const Merge = {
           changes ? el('div', {class: 'why'}, "Moving it also gives it the agency's address and codes.") : null);
       }
       const sh = q.kind === 'which' && q.s.match.shared;
-      if (sh) row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${(D.osm_stops[sh.id] || {tags: {}}).tags.name || sh.id} (${sh.dist} m); OSM's stop with its code is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`), look(),
-        el('div', {class: 'btns'}, ...q.cands.map(c => btn(c.id === sh.id ? `One stop: ${c.o.tags.name || c.id}` : `Its own: ${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
+      if (sh) {
+        const own = D.osm_stops[sh.own], ownName = (own && own.tags.name) || sh.own;
+        row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${(D.osm_stops[sh.id] || {tags: {}}).tags.name || sh.id} (${sh.dist} m); OSM's stop with its code, ${ownName}, is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`), look(),
+          el('div', {class: 'btns'}, btn(`One stop: ${(D.osm_stops[sh.id] || {tags: {}}).tags.name || sh.id}`, 'pick', sh.id),
+            btn(`Keep ${ownName} where it is`, 'keep', sh.own), btn(`Move ${ownName} here`, 'move', sh.own)));
+      }
       else if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
         el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
       if (q.kind === 'missing') row.append(look(), el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
@@ -255,6 +261,12 @@ const Merge = {
           const pick = (S.merge.answers[q.s.id] || {}).pick, sh = q.s.match.shared;
           if (sh && pick === sh.id && D.osm_stops[sh.own]) { const kept = await shareStop(q.s, D.osm_stops[pick], D.osm_stops[sh.own]); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
           else Edits.decisions[q.s.id] = pick;
+          if (sh && pick === sh.own && q.answer === 'move') {   // its own stop, moved to the agency's spot (with what that choice changes)
+            const o = D.osm_stops[pick], tags = {}, diff = q.s.match.diff || {};
+            for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
+            if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
+            markUndo(Edits.modify('node', osmNumId(o), nodeBase(o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`), q.s);
+          }
         }
         if (q.kind === 'missing' && q.answer === 'add') { const [lon, lat] = newStopSpot(q.s, p).at; added[q.s.id] = Edits.createNode(lat, lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`); }
       }

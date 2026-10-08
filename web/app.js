@@ -1395,7 +1395,13 @@ function renderStop(P, s) {
           toast(kept.length ? `Shared; the old one not removed, something else uses it: ${kept.join('; ')}` : `Shared, and ${own.tags.name || own.id} removed: in Changes`, 6000);
           render(); draw();
         }}, `One stop: ${a.tags.name || a.id}, both networks (remove ${own.tags.name || own.id})`),
-        el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = own.id; Edits.save(); render(); draw(); }}, `Its own stop: ${own.tags.name || own.id} (${sh.own_dist} m)`)));
+        el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = own.id; Edits.save(); toast('Its own stop, where it is: moving it is below', 5000); render(); draw(); }}, `Keep ${own.tags.name || own.id} where it is`),
+        el('button', {class: 'b', onclick: () => {
+          Edits.hold(`${s.name}: moved`);
+          try { Edits.decisions[s.id] = own.id; markUndo(Edits.modify('node', osmNumId(own), nodeBase(own), {...moveLL(s), tags: choiceTags(s, own.id)}, `${s.ref} ${s.name}: moved ${sh.own_dist} m`), s); }
+          finally { Edits.release(); }
+          toast('Node move added to changes'); render(); draw();
+        }}, `Move ${own.tags.name || own.id} here (${sh.own_dist} m)`)));
     } else if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
     const cands = Edits.decisions[s.id] ? [{id: Edits.decisions[s.id], dist: Math.round(m([o.lon, o.lat], [s.lon, s.lat])), how: 'chosen'}] : s.match.osm;
     for (const c of cands) if (D.osm_stops[c.id]) d.append(osmStopBox(s, D.osm_stops[c.id], c, st === 'ambiguous'));
