@@ -99,7 +99,8 @@ const routedOf = p => (S.pattern === p.id && S.routed) ? S.routed : (p.routed ||
 /** Has the reviewer re-routed this itinerary (via points, roads the bus uses or doesn't)? */
 const constrainedRouting = p => { const r = Edits.routingOf(p.id); return !!(r.vias.length || r.avoid.length || r.require.length); };
 // ---------- a route's roads, and routing it here in the page (web/router.js) ----------
-const OVERPASS = typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.overpass ? [FLAGSTOP_OSM.overpass] : ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// public Overpass servers that answer a page (CORS); which one is up changes by the minute
+const OVERPASS = typeof FLAGSTOP_OSM !== 'undefined' && FLAGSTOP_OSM.overpass ? [FLAGSTOP_OSM.overpass] : ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 const ROAD_CLASSES = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|busway|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road';
 /** The Overpass query for the roads within a tile or so of a route's line (tool/osm.py's fetch_roads_near). */
 function roadsQuery(p) {
@@ -134,16 +135,24 @@ async function roadsFor(p) {
     } catch (e) { /* no server (a published copy of the page), or the connection dropped */ }
   }
   let last = null;
-  for (const url of OVERPASS) {
-    try {
-      const r = await fetch(url, {method: 'POST', body: new URLSearchParams({data: roadsQuery(p)})});
-      if (!r.ok) { last = new Error(`Overpass ${r.status}`); continue; }
-      const j = await r.json();
-      // a 200 that gave up part way ('runtime error: Query timed out'): part of the roads, taken as all of them,
-      // would route the bus around roads that are there. Not an answer: the next server.
-      if (/error|timed out/i.test(j.remark || '')) { last = new Error(`Overpass gave up part way: ${j.remark.trim().slice(0, 120)}`); continue; }
-      return j;
-    } catch (e) { last = e; }
+  // each server, then again after a pause (a busy one is often free a few seconds on); the one that answers is
+  // asked first next time
+  for (let round = 0; round < 2; round++) {
+    if (round) await new Promise(r => setTimeout(r, 5000));
+    for (const url of [...OVERPASS]) {
+      try {
+        // a minute at most: a busy server can hold a query for its whole timeout, and the next may be free
+        const stop = new AbortController(), t = setTimeout(() => stop.abort(), 60000);
+        const r = await fetch(url, {method: 'POST', body: new URLSearchParams({data: roadsQuery(p)}), signal: stop.signal}).finally(() => clearTimeout(t));
+        if (!r.ok) { last = new Error(`Overpass ${r.status}`); continue; }
+        const j = await r.json();
+        // a 200 that gave up part way ('runtime error: Query timed out'): part of the roads, taken as all of them,
+        // would route the bus around roads that are there. Not an answer: the next server.
+        if (/error|timed out/i.test(j.remark || '')) { last = new Error(`Overpass gave up part way: ${j.remark.trim().slice(0, 120)}`); continue; }
+        OVERPASS.splice(OVERPASS.indexOf(url), 1); OVERPASS.unshift(url);
+        return j;
+      } catch (e) { last = e; }
+    }
   }
   throw last || new Error('no roads');
 }
@@ -198,11 +207,16 @@ async function bringIn(changesets) {
 }
 /** Route every itinerary in the background, one at a time, so the list fills in while you work. */
 async function routeAll() {
+  let fails = 0;
   for (const p of D.patterns) {
     if (p.routed || p.temporary) continue;
-    const ok = await ensureRouted(p);
+    let ok = await ensureRouted(p);
+    // Overpass busy: a minute's rest and once more; three routes in a row without roads, stop asking (opening
+    // a route tries again)
+    if (!ok && fails < 2) { await new Promise(r => setTimeout(r, 60000)); ok = await ensureRouted(p); }
     if (ok && S.tab === 'routes' && !S.pattern) render();
-    if (!ok) break;   // Overpass not answering: stop asking; opening a route tries again
+    fails = ok ? 0 : fails + 1;
+    if (fails >= 3) break;
   }
 }
 const FAR = () => (D.positions && D.positions.far) || 25;   // m: closer than this, the same spot (from the feed)

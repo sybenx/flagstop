@@ -10,7 +10,8 @@ import json, os, sys, time, urllib.parse, urllib.request
 
 # the main public server, then others: one busy server shouldn't stall a refresh
 OVERPASS = [u for u in [os.environ.get('OVERPASS_URL')] if u] + ['https://overpass-api.de/api/interpreter',
-            'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter']
+            'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+            'https://maps.mail.ru/osm/tools/overpass/api/interpreter']
 
 # Stops and routes, with every member way's geometry so an existing relation can be drawn and scored.
 PT_QUERY = """[out:json][timeout:180];
