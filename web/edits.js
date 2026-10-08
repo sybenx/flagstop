@@ -79,14 +79,14 @@ const Edits = {
     try { localStorage.setItem(this.key, now); localStorage.setItem(this.key + '.at', String(at)); } catch (e) {}
     // and to the local server (cache/state/), so another browser or cleared site data doesn't lose it
     clearTimeout(this.pushing);
-    this.pushing = setTimeout(() => fetch('/api/state', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: this.key, state: now, at})}).catch(() => {}), 400);
+    this.pushing = setTimeout(() => fetch('api/state', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: this.key, state: now, at})}).catch(() => {}), 400);
     this.listeners.forEach(f => f());
   },
   /** The server's copy, if it's newer than this browser's (saved from another browser, or this one before its
       site data was cleared). -> true when it was taken. */
   async sync() {
     try {
-      const r = await (await fetch('/api/state?key=' + encodeURIComponent(this.key))).json();
+      const r = await (await fetch('api/state?key=' + encodeURIComponent(this.key))).json();
       let mine = 0; try { mine = +localStorage.getItem(this.key + '.at') || 0; } catch (e) {}
       if (!r.state && Object.keys(this.ops).length) this.persist();   // the server has none yet: give it this browser's
       if (!r.state || !(r.at > mine) || r.state === this.state()) return false;

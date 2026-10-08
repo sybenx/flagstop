@@ -242,6 +242,8 @@ def main():
             s = feed.stops[sid]
             m.update(status='moved', osm=[{'id': o['id'], 'dist': round(stopmatch.dist(s.lat, s.lon, o['lat'], o['lon'])), 'score': 1.0, 'how': 'moved'}])
             claimed.add(o['id'])
+            if o['id'] in extra:
+                extra.remove(o['id'])   # the stop it was: not 'OSM only' any more
     for sid, m in match.items():   # what counts as a different position, now that it's known
         if m and m['status'] in ('matched', 'moved') and m['osm'] and m['osm'][0]['id'] in osm_stops:
             m['diff'] = stopmatch.diff(feed, feed.stops[sid], osm_stops[m['osm'][0]['id']])

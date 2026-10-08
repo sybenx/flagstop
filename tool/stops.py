@@ -241,7 +241,10 @@ def match(feed, osm_stops, across=None):
                 results[sid]['status'] = 'ambiguous'
                 results[sid]['shared_with'] = [x for x in sids if x != sid]
 
-    used = {c['id'] for r in results.values() for c in r['osm'][:1] if r['status'] == 'matched'}
+    # OSM stops the feed's stops claim, so not 'OSM only' (offered for removal on the page): the one a stop matched,
+    # the one it moved from, and every one an ambiguous stop could be (a second candidate of a matched stop may
+    # well be a pole no route uses any more; one an unanswered question could pick is not)
+    used = {c['id'] for r in results.values() for c in (r['osm'][:1] if r['status'] in ('matched', 'moved') else r['osm'] if r['status'] == 'ambiguous' else [])}
     extra = []
     gt = [(s.lat, s.lon) for s in feed.stops.values()]
     ggrid = {}

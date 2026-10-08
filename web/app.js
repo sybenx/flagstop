@@ -125,15 +125,19 @@ function roadsQuery(p) {
 /** A route's roads: from the local server's day-old copy when there is one (tool/serve.py), else Overpass. */
 async function roadsFor(p) {
   try {
-    const r = await fetch(`/api/roads?pattern=${encodeURIComponent(p.id)}`);
+    const r = await fetch(`api/roads?pattern=${encodeURIComponent(p.id)}`);
     if (r.ok) return await r.json();
   } catch (e) { /* no server: a published copy of the page */ }
   let last = null;
   for (const url of OVERPASS) {
     try {
       const r = await fetch(url, {method: 'POST', body: new URLSearchParams({data: roadsQuery(p)})});
-      if (r.ok) return await r.json();
-      last = new Error(`Overpass ${r.status}`);
+      if (!r.ok) { last = new Error(`Overpass ${r.status}`); continue; }
+      const j = await r.json();
+      // a 200 that gave up part way ('runtime error: Query timed out'): part of the roads, taken as all of them,
+      // would route the bus around roads that are there. Not an answer: the next server.
+      if (/error|timed out/i.test(j.remark || '')) { last = new Error(`Overpass gave up part way: ${j.remark.trim().slice(0, 120)}`); continue; }
+      return j;
     } catch (e) { last = e; }
   }
   throw last || new Error('no roads');
@@ -179,10 +183,10 @@ async function liveCheck(p) {
 /** Bring a route's changes on OSM in: those changesets, from OSM's API, then the review rebuilt (seconds). */
 async function bringIn(changesets) {
   try {
-    let st = await (await fetch('/api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
+    let st = await (await fetch('api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
     if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
     toast('Reading those edits from OSM and rebuilding…', 60000);
-    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('/api/refresh')).json(); }
+    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('api/refresh')).json(); }
     if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
     location.reload();
   } catch (e) { toast('Needs tool/serve.py running (' + e.message + ')', 6000); }
@@ -622,10 +626,10 @@ async function refreshOSM() {
     // your uploads the data doesn't have yet: read straight from OSM (seconds), not Overpass (minutes, and behind)
     const ups = myUploads('uploads') || [];
     const changesets = ups.filter(u => !D.osm_base || new Date(u.at) > new Date(D.osm_base)).map(u => u.id);
-    let st = await (await fetch('/api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
+    let st = await (await fetch('api/refresh', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({changesets})})).json();
     if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
     toast(changesets.length ? `Reading your upload${changesets.length > 1 ? 's' : ''} from OSM and rebuilding the review…` : 'Fetching OSM again and rebuilding the review: a minute or two…', 120000);
-    while (st.running) { await new Promise(r => setTimeout(r, 3000)); st = await (await fetch('/api/refresh')).json(); }
+    while (st.running) { await new Promise(r => setTimeout(r, 3000)); st = await (await fetch('api/refresh')).json(); }
     if (st.error) return toast(`Refresh failed: ${st.error}`, 8000);
     location.reload();
   } catch (e) { toast('Refreshing needs tool/serve.py running (' + e.message + ')', 6000); }
@@ -1274,13 +1278,20 @@ function renderExtra(P) {
  *  way (a sidewalk) loses only its stop tags, so the way keeps its shape; the rest are deleted.
  *  mine: relation ids this edit is rewriting anyway (their membership doesn't count). -> [kept, why] */
 const STOP_KEYS = /^(highway|public_transport|bus|name|ref|local_ref|route_ref|network|network:wikidata|operator|operator:wikidata|description|shelter|bench|bin|lit|tactile_paving|departures_board|wheelchair|gtfs:.*)$/;
+/** A route relation of this agency's: paired with one of its itineraries, or carrying its network or operator. */
+function ours(e) {
+  const t = e.tags || {}, c = D.conventions || {};
+  return D.patterns.some(p => p.relations.some(a => a.id === e.id)) || ['network:wikidata', 'network', 'operator'].some(k => t[k] && c[k] && t[k] === c[k]);
+}
 async function removeStops(list, mine = new Set(), why = 'stop gone') {
   const kept = [];
   for (const o of list) {
     if (o.id[0] !== 'n') { kept.push(`${o.tags.name || o.id} (drawn as a shape: remove it in iD)`); continue; }
     const n = osmNumId(o);
     const rels = (await (await fetch(`${OSM_API}/api/0.6/node/${n}/relations.json`)).json()).elements.filter(e => !mine.has(e.id));
-    const pt = e => (e.tags || {}).type === 'route' || (e.tags || {}).public_transport === 'stop_area';
+    // a route of this agency's, or a stop area, lets it go; anything else that lists it (another agency's route
+    // still stopping there, a relation of another kind) keeps it, and it's left alone
+    const pt = e => (e.tags || {}).public_transport === 'stop_area' || ((e.tags || {}).type === 'route' && ours(e));
     const other = rels.filter(e => !pt(e));
     if (other.length) { kept.push(`${o.tags.name || o.id} (also in ${other.map(e => (e.tags || {}).name || 'r' + e.id).join(', ')})`); continue; }
     for (const e of rels) {   // out of the routes and stop areas that list it, as they are in Changes if edited there
@@ -1471,10 +1482,10 @@ function download(name, text, type) {
 async function resetSandbox() {
   if (!confirm('Reset the sandbox? Every upload to it is forgotten, the map is the snapshot again, and this page starts with an empty basket, no decisions and no answers.')) return;
   try {
-    let st = await (await fetch('/api/sandbox/reset', {method: 'POST'})).json();
+    let st = await (await fetch('api/sandbox/reset', {method: 'POST'})).json();
     if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
     toast('Sandbox reset: building the review again from the snapshot…', 60000);
-    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('/api/refresh')).json(); }
+    while (st.running) { await new Promise(r => setTimeout(r, 1500)); st = await (await fetch('api/refresh')).json(); }
     if (st.error) return toast(`Couldn't: ${st.error}`, 8000);
     location.reload();
   } catch (e) { toast('Needs tool/sandbox.py run (' + e.message + ')', 6000); }
@@ -1508,7 +1519,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 // tool/serve.py running here? A published copy (GitHub Pages) has no server: no refresh or bring-in, and the
 // data is rebuilt there on a schedule instead.
 let SERVER = false;
-fetch('/api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j && 'running' in j); if (D) render(); }).catch(() => {});
+fetch('api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j && 'running' in j); if (D) render(); }).catch(() => {});
 fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name, typeof FLAGSTOP_OSM !== 'undefined' ? FLAGSTOP_OSM.world : '');   // a sandbox's generation: its own basket

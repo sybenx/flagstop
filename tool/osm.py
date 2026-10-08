@@ -59,7 +59,14 @@ def fetch(query, tries=3):
         for url in OVERPASS:
             try:
                 with urllib.request.urlopen(urllib.request.Request(url, data=data, headers={'User-Agent': 'flagstop (GTFS/OSM route review)'}), timeout=90) as r:
-                    return json.load(r)
+                    j = json.load(r)
+                # Overpass can answer 200 having given up part way ('runtime error: Query timed out', 'out of
+                # memory'): what came back is part of the answer, and taken as all of it, stops OSM has would
+                # read as missing. Not an answer: the next server.
+                remark = j.get('remark') or ''
+                if 'error' in remark.lower() or 'timed out' in remark.lower():
+                    raise RuntimeError(f'gave up part way: {remark.strip()[:200]}')
+                return j
             except Exception as e:   # 429 / 504 / timeouts when a public server is busy
                 last = e
                 print(f'overpass: {url.split("/")[2]}: {e}', file=sys.stderr)
