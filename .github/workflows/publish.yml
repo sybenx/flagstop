@@ -9,8 +9,6 @@ on:
   workflow_dispatch: {}
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -37,23 +35,27 @@ jobs:
           path: cache
           key: flagstop-${{ github.run_id }}
           restore-keys: flagstop-
+      # variables reach the shell as environment, never pasted into the script
       - name: the feed
-        run: python3 tool/catalog.py "${{ vars.FEED_QUERY || 'cache valley' }}" --get
+        env:
+          FEED_QUERY: ${{ vars.FEED_QUERY || 'cache valley' }}
+        run: python3 tool/catalog.py "$FEED_QUERY" --get
       # FEED_ALSO (a variable, optional): another agency sharing stops, as review.py --also takes it
       # (a GTFS URL, or passio:<system id>:<agency name> for a campus shuttle on Passio GO)
       - name: the review (stops and routes; each route's roads load in the page)
-        run: |
-          ALSO="${{ vars.FEED_ALSO }}"
-          python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh ${ALSO:+--also "$ALSO"}
-      # the relation files that review just wrote (the snapshot is of the CVTD build: not checked against another feed's)
-      - name: tests (the built relation files)
-        run: python3 -m unittest discover -s tests -p 'test_relations.py'
+        env:
+          ALSO: ${{ vars.FEED_ALSO }}
+        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh ${ALSO:+--also "$ALSO"}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # only the deploy publishes: the build, which reads other people's feeds, can't
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

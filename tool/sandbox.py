@@ -579,6 +579,10 @@ class Overpass:
         return self.out(els)
 
 
+LOCAL_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
+LOCAL_ORIGIN = re.compile(r'^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
+
+
 class Handler(BaseHTTPRequestHandler):
     store = None
     overpass = None
@@ -600,7 +604,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cors(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
+        # the page (another port on this machine) reads it; another site open in the browser doesn't
+        o = self.headers.get('Origin') or ''
+        self.send_header('Access-Control-Allow-Origin', o if LOCAL_ORIGIN.match(o) else 'http://127.0.0.1')
+        self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
         self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
 
@@ -617,7 +624,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, text, 'text/plain; charset=utf-8')
 
     def _body(self):
-        return self.rfile.read(int(self.headers.get('Content-Length') or 0)).decode()
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > 64 * 1024 * 1024:
+            raise Conflict(413, 'request too large')
+        return self.rfile.read(n).decode()
 
     def _signed_in(self):
         if not (self.headers.get('Authorization') or '').startswith('Bearer '):
@@ -627,6 +640,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204); self._cors(); self.send_header('Access-Control-Max-Age', '600'); self.end_headers()
 
     def _route(self, method):
+        # this machine by name only (not a site that points its own name here), and nothing but reading from
+        # another site open in the browser: a reset or an upload comes from flagstop's page or a script here
+        if not LOCAL_HOST.match(self.headers.get('Host', '')):
+            return self._text('the sandbox answers only to 127.0.0.1 and localhost', 403)
+        o = self.headers.get('Origin')
+        if method != 'GET' and o and not LOCAL_ORIGIN.match(o):
+            return self._text('not from a page on this machine', 403)
         try:
             self._handle(method)
         except Conflict as c:

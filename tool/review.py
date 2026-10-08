@@ -4,11 +4,11 @@
     python3 tool/review.py FEED.zip [--osm-pt cache/osm-pt.json] [--osm-roads cache/osm-roads.json] [--out web/data]
 
 Without --osm-* files the OSM data is fetched from Overpass for the feed's bounding box and cached in
-cache/. Writes web/data/review.json and one proposed relation per pattern, web/data/rel-<id>.osm, for
-JOSM to import.
+cache/. Writes web/data/review.json, and each itinerary's agency line as web/data/shape-<id>.gpx (an overlay
+in RapiD and iD).
 """
 import math, re, argparse, datetime, json, os, sys, time
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gtfs, osm, stops as stopmatch, routes as routing, compare, feeddiff, others, positions
@@ -366,8 +366,9 @@ def main():
     }
     os.makedirs(a.out, exist_ok=True)
     # files from itineraries that aren't in this run (two halves now joined into a loop, a route gone)
-    keep = {f'rel-{safe(p.id)}.osm' for p in feed.patterns} | {f'shape-{safe(p.id)}.gpx' for p in feed.patterns}
+    keep = {f'shape-{safe(p.id)}.gpx' for p in feed.patterns}
     for f in os.listdir(a.out):
+        # (rel-*.osm: proposed relations for JOSM, from before the page made them; none are written now)
         if (f.startswith('rel-') and f.endswith('.osm') or f.startswith('shape-') and f.endswith('.gpx')) and f not in keep:
             os.remove(os.path.join(a.out, f))
     json.dump(out, open(os.path.join(a.out, 'review.json'), 'w'), separators=(',', ':'))
@@ -381,7 +382,7 @@ def write_gpx(path, feed, p):
     pts = ''.join(f'      <trkpt lat="{lat:.6f}" lon="{lon:.6f}"/>\n' for lon, lat in feed.shapes.get(p.shape_id, []))
     with open(path, 'w') as f:
         f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="flagstop" xmlns="http://www.topografix.com/GPX/1/1">\n'
-                f'  <trk><name>{r.short} {p.headsign or p.direction_name}</name><desc>GTFS shape {p.shape_id}</desc><trkseg>\n{pts}    </trkseg></trk>\n</gpx>\n')
+                f'  <trk><name>{escape(f'{r.short} {p.headsign or p.direction_name}')}</name><desc>GTFS shape {escape(str(p.shape_id))}</desc><trkseg>\n{pts}    </trkseg></trk>\n</gpx>\n')
 
 
 def round_pts(pts):
@@ -417,30 +418,6 @@ def summary(feed, match, extra, patterns, unpaired):
         if (p.get('routed') or {}).get('divergences'):
             pat['map divergences'] += 1
     return {'stops': dict(st), 'stop_diffs': dict(diffs), 'extra_osm_stops': len(extra), 'patterns': dict(pat), 'unpaired_relations': len(unpaired)}
-
-
-def write_relation_osm(path, feed, p, tr, match, osm_stops, conv=None):
-    """A PTv2 route relation for JOSM: platforms (existing OSM nodes where matched, new nodes otherwise)
-    then the routed ways in order. Existing objects are referenced by id; JOSM fetches them when the
-    page loads them first (remote control load_object), or on 'download incomplete members'."""
-    tags = compare.proposed_relation_tags(feed, p, match, conv)
-    nid = -1
-    nodes, members = [], []
-    for sid in p.stops:
-        s = feed.stops[sid]
-        m = match.get(sid)
-        if m and m['status'] == 'matched' and m['osm'] and m['osm'][0]['id'].startswith('n'):
-            members.append(('node', int(m['osm'][0]['id'][1:]), 'platform'))
-        else:
-            t = stopmatch.proposed_tags(feed, s, conv)
-            nodes.append(f'  <node id="{nid}" lat="{s.lat:.6f}" lon="{s.lon:.6f}" version="0">\n' + ''.join(f'    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>\n' for k, v in t.items()) + '  </node>\n')
-            members.append(('node', nid, 'platform')); nid -= 1
-    for w in tr['ways']:
-        members.append(('way', w, ''))
-    rel = f'  <relation id="-1" version="0">\n' + ''.join(f'    <member type="{t}" ref="{r}" role="{role}"/>\n' for t, r, role in members) + ''.join(f'    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>\n' for k, v in tags.items()) + '  </relation>\n'
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<osm version="0.6" generator="flagstop" upload="true">\n' + ''.join(nodes) + rel + '</osm>\n')
 
 
 if __name__ == '__main__':

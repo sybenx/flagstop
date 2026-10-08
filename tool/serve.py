@@ -15,7 +15,6 @@ of a pattern through extra via points the reviewer drops on the map:
                                                                stop positions), from its own roads, fetched when first asked
     GET /api/trace?pattern=<id>&via=<lon>,<lat>&via=...     -> the same shape as review.json's routed{}
           &avoid=<way id>&require=<way id>...                  (avoid: roads the bus doesn't use; require: roads it does)
-    GET /api/relation?pattern=<id>&via=...&avoid=...&require=...  -> the proposed relation as .osm
     POST /api/refresh                                       -> fetch OSM again and rebuild the review (after an upload);
                                                                GET /api/refresh says whether it's still running
     POST /api/trace {pattern, vias, avoid, require, ways: {id: {nodes, tags}}, nodes: {id: [lon, lat]}}
@@ -174,7 +173,34 @@ def way_ids(values):
     return out
 
 
+# Who may talk to this server: requests addressed to this machine by name (a page on another site that points its
+# own name at 127.0.0.1, DNS rebinding, addresses it by that name and is refused), and for anything that changes
+# something, sent from flagstop's own page (another site open in the browser can send a POST here too).
+LOCAL_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
+LOCAL_ORIGIN = re.compile(r'^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
+MAX_BODY = 64 * 1024 * 1024   # bytes: a saved basket or a road patch is far less
+
+
 class Handler(SimpleHTTPRequestHandler):
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if not LOCAL_HOST.match(self.headers.get('Host', '')):
+            self.send_error(403, 'flagstop answers only to 127.0.0.1 and localhost')
+            return False
+        return True
+
+    def _body(self):
+        """The request's body, at most MAX_BODY: b'' for none; None (after answering 413) for too much."""
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > MAX_BODY:
+            self._json({'error': 'request too large'}, 413, cors=False)
+            return None
+        return self.rfile.read(n)
+
     def __init__(self, *a, **k):
         super().__init__(*a, directory=WEB, **k)
 
@@ -186,7 +212,10 @@ class Handler(SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
     def end_headers(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
+        # the page's data may be read from other sites (RapiD opening a route's line); what's saved here may not
+        if not getattr(self, '_private', False):
+            self.send_header('Access-Control-Allow-Origin', '*')
+        self._private = False
         self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
 
@@ -250,34 +279,26 @@ class Handler(SimpleHTTPRequestHandler):
         p, res = trace_with_vias(pid, vias, require=require, avoid=avoid)
         if u.path == '/api/trace':
             return self._json(trace_json(res, vias, avoid, require))
-        if u.path == '/api/relation':
-            path = os.path.join(cache_dir(), f'rel-{review.safe(pid)}-via.osm')
-            review.write_relation_osm(path, STATE['feed'], p, res, STATE['match'], STATE['osm_stops'])
-            body = open(path, 'rb').read()
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/xml')
-            self.send_header('Content-Length', str(len(body)))
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(body)
-            return
         self._json({'error': 'no such call'}, 404)
 
     def _own(self):
-        """Only flagstop's own page may read or write the saved state: not another site open in the browser."""
+        """Only flagstop's own page may read the saved state or change anything: not another site open in the
+        browser. (The Host was checked already: it's this machine by name.)"""
         o = self.headers.get('Origin')
-        host = self.headers.get('Host', '')
-        return o is None or o in (f'http://{host}', f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}')
+        return o is None or o in (f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}', f'http://[::1]:{self.server.server_port}')
 
     def _state_path(self, key):
         return os.path.join(os.environ.get('FLAGSTOP_STATE_DIR') or os.path.join(cache_dir(), 'state'), re.sub(r'[^\w.-]+', '_', key or 'default')[:120] + '.json')
 
     def do_POST(self):
+        if not self._own():
+            return self._json({'error': 'not from this page'}, 403, cors=False)
         if urllib.parse.urlparse(self.path).path == '/api/state':
-            if not self._own():
-                return self._json({'error': 'not from this page'}, 403, cors=False)
+            raw = self._body()
+            if raw is None:
+                return
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                body = json.loads(raw or b'{}')
             except ValueError:
                 return self._json({'error': 'not JSON'}, 400, cors=False)
             path = self._state_path(body.get('key'))
@@ -302,8 +323,11 @@ class Handler(SimpleHTTPRequestHandler):
             ROUTED.clear(); GRAPHS.clear()
             return self._json({**start_refresh(), 'generation': gen})
         if urllib.parse.urlparse(self.path).path == '/api/refresh':
+            raw = self._body()
+            if raw is None:
+                return
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                body = json.loads(raw or b'{}')
             except ValueError:
                 body = {}
             return self._json(start_refresh([int(x) for x in body.get('changesets', []) if str(x).isdigit()][:20]))
@@ -311,8 +335,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({'error': 'no such call'}, 404)
         if 'graph' not in STATE:
             return self._json({'error': 'server started without --feed/--osm-roads; re-routing is off'}, 503)
+        raw = self._body()
+        if raw is None:
+            return
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            body = json.loads(raw or b'{}')
         except ValueError:
             return self._json({'error': 'not JSON'}, 400)
         pid = body.get('pattern')
@@ -338,8 +365,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
-        if cors:
-            self.send_header('Access-Control-Allow-Origin', '*')
+        self._private = not cors   # end_headers says whether other sites may read it
         self.end_headers()
         self.wfile.write(body)
 
