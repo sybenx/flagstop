@@ -329,11 +329,16 @@ def main():
                 near_, far_ = osm_stops[m['osm'][0]['id']], osm_stops[m['merged_with']['id']]
                 m['decide']['position'] = {'pick': 'ask', 'why': f"The agency has one stop here where OSM has two, either side: '{near_['tags'].get('name') or near_['id']}' ({m['osm'][0]['dist']} m) and '{far_['tags'].get('name') or far_['id']}' ({m['merged_with']['dist']} m). Probably merged into this one: move the nearer here (it takes the agency's name and codes) and remove the other"}
             m['side'] = sides.get(sid)
-    # a shared pole or the agency's own (shared_poles): what each would change, the page shows the one picked
-    for sid in shared:
-        m, st = match[sid], feed.stops[sid]
+    # a stop asked between OSM stops (a shared pole or its own, or several that fit): what each would change, so
+    # the one picked gets the agency's codes as a matched stop would; the page shows the picked one's
+    for sid, m in match.items():
+        if not m or m['status'] != 'ambiguous' or not m.get('osm'):
+            continue
+        st = feed.stops[sid]
         m['choices'] = {}
         for c in m['osm']:
+            if c['id'] not in osm_stops:
+                continue
             o = osm_stops[c['id']]
             df = stopmatch.diff(feed, st, o)
             df.update(stopmatch.network_diff(feed, o, conv, aliases))

@@ -34,7 +34,7 @@ const Merge = {
       else if (!o) q = {kind: 'missing', s};
       if (q && o && Edits.get('n' + osmNumId(o)) && Edits.diff(Edits.get('n' + osmNumId(o))).some(x => x.k === 'position')) q = null;   // already moved in Changes
       if (q && !decide.some(x => x.s.id === sid)) decide.push({...q, answer: a ? a.choice : null});   // a loop's terminal comes twice
-      if (q && q.kind === 'missing') { if (a && a.choice === 'add') stops.push({s, add: true}); continue; }
+      if (q && (q.kind === 'missing' || (q.kind === 'which' && a && a.choice === 'add'))) { if (a && a.choice === 'add') stops.push({s, add: true}); continue; }
       if (o) stops.push({s, o});
     }
     const open = decide.filter(x => !x.answer).length;
@@ -118,7 +118,8 @@ const Merge = {
         row.append(el('div', {class: 'why'}, (on && on !== q.s.name ? `OSM calls it "${on}", ${dist} m away. ` : `OSM has it ${dist} m away. `) +
             (nameQ.pick === 'ask' && /address says/.test(nameQ.why || '') ? nameQ.why.replace(/, and they're \d+ m apart/, '') : q.why)),
           look(),
-          el('div', {class: 'btns'}, btn(mergedWith(q.s) ? `Move it here, remove ${mergedWith(q.s).tags.name || 'the other'}` : 'Move it here', 'move'), btn('Keep it', 'keep')),
+          el('div', {class: 'btns'}, btn(mergedWith(q.s) ? `Move it here, remove ${mergedWith(q.s).tags.name || 'the other'}` : 'Move it here', 'move'),
+            mergedWith(q.s) ? btn(`Move it here, keep ${mergedWith(q.s).tags.name || 'the other'}`, 'move-keep') : null, btn('Keep it', 'keep')),
           changes ? el('div', {class: 'why'}, "Moving it also gives it the agency's address and codes.") : null);
       }
       const sh = q.kind === 'which' && q.s.match.shared;
@@ -129,7 +130,8 @@ const Merge = {
             btn(`Keep ${ownName} where it is`, 'keep', sh.own), btn(`Move ${ownName} here`, 'move', sh.own)));
       }
       else if (q.kind === 'which') row.append(el('div', {class: 'why'}, `OSM has ${q.cands.length} stops that could be it. Which?`), look(),
-        el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id))));
+        el('div', {class: 'btns'}, ...q.cands.map(c => btn(`${c.o.tags.name || c.id} (${c.dist} m)`, 'pick', c.id)), btn("None of these: add the agency's", 'add')),
+        el('div', {class: 'why'}, "The one picked also gets the agency's address and codes, where it is."));
       if (q.kind === 'missing') row.append(look(), el('div', {class: 'why'}, 'Not in OSM yet.' + ((q.s.match && q.s.match.temporary) || /\b(temp(orary)?|detour)\b/i.test(q.s.name) ?
           " The feed calls it temporary, but runs it as part of this route now: add it to map the route as it runs, or leave it out if the detour will be over soon." : '')), el('div', {class: 'btns'}, btn(newStopSpot(q.s, patternById(S.merge.pid)).kerb ? "Add it, at the kerb by the agency's point" : "Add it at the agency's spot", 'add'), btn('Leave it out of the relation', 'skip')));
       box.append(row);
@@ -249,24 +251,20 @@ const Merge = {
       // the stop decisions: moves, a stop picked out of several, stops added
       const added = {};
       for (const q of x.decide) {
-        if (q.kind === 'where' && q.answer === 'move') {
+        if (q.kind === 'where' && (q.answer === 'move' || q.answer === 'move-keep')) {
           const tags = {}, diff = q.s.match.diff || {};
           for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
           if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !q.o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
           markUndo(Edits.modify('node', osmNumId(q.o), nodeBase(q.o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: ${q.s.match.move_how === 'restore' ? 'put back where it was' : "moved to the agency's spot"}`), q.s);
-          const gone = mergedWith(q.s);   // two stops made one: the other goes
+          const gone = q.answer === 'move' && mergedWith(q.s);   // two stops made one: the other goes, unless kept
           if (gone) { const kept = await removeStops([gone], new Set(x.rels.map(a => a.id)), `merged into ${q.s.name}`); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
         }
         if (q.kind === 'which') {
           const pick = (S.merge.answers[q.s.id] || {}).pick, sh = q.s.match.shared;
-          if (sh && pick === sh.id && D.osm_stops[sh.own]) { const kept = await shareStop(q.s, D.osm_stops[pick], D.osm_stops[sh.own]); if (kept.length) say(`Not removed: ${kept.join('; ')}`); }
-          else Edits.decisions[q.s.id] = pick;
-          if (sh && pick === sh.own && q.answer === 'move') {   // its own stop, moved to the agency's spot (with what that choice changes)
-            const o = D.osm_stops[pick], tags = {}, diff = q.s.match.diff || {};
-            for (const [k, on] of Object.entries(this.moveTags(q))) if (on) tags[k] = diff[k].gtfs;
-            if (tags['gtfs:stop_id'] && q.s.proposed_tags['gtfs:stop_code'] && !o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = q.s.proposed_tags['gtfs:stop_code'];
-            markUndo(Edits.modify('node', osmNumId(o), nodeBase(o), {...moveLL(q.s), tags}, `${q.s.ref} ${q.s.name}: moved to the agency's spot`), q.s);
-          }
+          if (q.answer === 'add') { const [lon, lat] = newStopSpot(q.s, p).at; added[q.s.id] = Edits.createNode(lat, lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`); continue; }
+          // the picked node, with what that choice changes: shared, kept where it is, or moved here
+          const kept = await pickStop(q.s, pick, sh && pick === sh.id ? 'share' : q.answer === 'move' ? 'move' : 'keep', x.r.short);
+          if (kept.length) say(`Not removed: ${kept.join('; ')}`);
         }
         if (q.kind === 'missing' && q.answer === 'add') { const [lon, lat] = newStopSpot(q.s, p).at; added[q.s.id] = Edits.createNode(lat, lon, q.s.proposed_tags, `${q.s.ref} ${q.s.name}`); }
       }

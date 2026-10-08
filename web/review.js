@@ -38,6 +38,7 @@ const Review = {
     const pk = this.pick(st), diff = (st.s.match && st.s.match.diff) || {}, tags = {};
     let move = false;
     for (const [k, v] of Object.entries(pk)) {
+      if (k === 'position' && v === 'move-keep') { move = true; continue; }   // two stops made one: moved, the other kept
       if (v !== 'agency') continue;
       if (k === 'position') move = true;
       else if (k === 'tagging') Object.assign(tags, {highway: 'bus_stop', public_transport: 'platform', bus: 'yes'});
@@ -45,7 +46,9 @@ const Review = {
     }
     // the stop code travels with the GTFS id
     if (tags['gtfs:stop_id'] && st.s.proposed_tags['gtfs:stop_code'] && !(st.o.tags['gtfs:stop_code'])) tags['gtfs:stop_code'] = st.s.proposed_tags['gtfs:stop_code'];
-    return {tags, move, any: move || Object.keys(tags).length > 0};
+    // two stops made one: the other goes with the move, unless kept
+    const removeOther = move && pk.position === 'agency' && !!mergedWith(st.s);
+    return {tags, move, removeOther, any: move || Object.keys(tags).length > 0};
   },
   open(pid) { S.review = pid; S.reviewStop = null; render(); draw(); },
   close() { S.review = null; S.reviewStop = null; render(); draw(); },
@@ -117,7 +120,8 @@ const Review = {
             el('div', {}, el('b', {}, `? ${what}`), k === 'position' ? '' : ` ${from} → ${to}`), el('div', {class: 'why'}, dk.why),
             k === 'position' ? el('div', {style: 'margin:4px 0'}, lookButtons(s, o)) : null,
             el('span', {class: 'btns'},
-              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : s.match && s.match.inroad ? 'move it to the kerb' : "move to the agency's point") : "agency's")),
+              el('button', {class: 'b tiny' + (v === 'agency' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'agency' ? null : 'agency'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'agency' ? '✓ ' : '') + (k === 'position' ? (s.match && s.match.move_how === 'shift' ? 'move it as the agency did' : s.match && s.match.inroad ? 'move it to the kerb' : "move to the agency's point") + (mergedWith(s) ? `, remove ${mergedWith(s).tags.name || 'the other'}` : '') : "agency's")),
+              k === 'position' && mergedWith(s) ? el('button', {class: 'b tiny' + (v === 'move-keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'move-keep' ? null : 'move-keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'move-keep' ? '✓ ' : '') + `move it, keep ${mergedWith(s).tags.name || 'the other'}`) : null,
               el('button', {class: 'b tiny' + (v === 'keep' ? ' chosen' : ''), ...off, onclick: () => { pk[k] = v === 'keep' ? null : 'keep'; Edits.answer(s.id, k, pk[k]); render(); draw(); }}, (v === 'keep' ? '✓ ' : '') + (k === 'position' ? 'leave it' : "keep OSM's")),
               k === 'position' && !wait ? el('a', {href: '#', class: 'muted', onclick: e => { e.preventDefault(); showStop(s.id); }}, 'or place it by hand') : null)));
         } else {
@@ -159,7 +163,7 @@ const Review = {
         Edits.ops[key].suggested = true;   // counts toward the per-upload cap
         Edits.ops[key].route = r.short;    // and the changeset comment names the route that was checked
         // two stops the agency made one: the one moved here stays, the other goes
-        if (c.move && mergedWith(s)) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
+        if (c.removeOther) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
       }
       Edits.save();
     } finally { Edits.release(); }

@@ -270,7 +270,8 @@ class Store:
             log = json.load(f)
         for cs in log:
             self.create_changeset(cs['tags'], cs['created_at'])
-            self.upload(cs['id'], cs['osc'])
+            if cs.get('osc'):   # an upload refused leaves its changeset empty, as OSM does
+                self.upload(cs['id'], cs['osc'])
             self.close_changeset(cs['id'], cs['closed_at'])
             self.changesets[cs['id']]['comments'] = cs.get('comments', [])
         return len(self.changesets)

@@ -1377,6 +1377,12 @@ function renderStop(P, s) {
         } finally { Edits.release(); }
         render(); draw();
       }}, gone ? `Move it here (${c.dist} m) and remove ${gone.tags.name || gone.id}` : away ? 'Put it back where it was' : `Move that node here (${c.dist} m)`),
+      gone ? el('button', {class: 'b', onclick: () => {
+        Edits.hold(`${s.name}: moved`);
+        try { Edits.decisions[s.id] = oo.id; markUndo(Edits.modify('node', osmNumId(oo), nodeBase(oo), {...moveLL(s), tags: identityTags(s)}, `${s.ref} ${s.name}: moved ${c.dist} m`), s); }
+        finally { Edits.release(); }
+        toast(`Moved; ${gone.tags.name || gone.id} kept`); render(); draw();
+      }}, `Move it here, keep ${gone.tags.name || gone.id}`) : null,
       el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = oo.id; Edits.save(); toast('Treated as the same stop, position kept'); render(); draw(); }}, 'Same stop, keep OSM\'s position'),
       el('button', {class: 'b', onclick: () => placeNewStop(s)}, 'Different stop — add new')));
     d.append(osmStopBox(s, oo, c, false));
@@ -1395,13 +1401,8 @@ function renderStop(P, s) {
           toast(kept.length ? `Shared; the old one not removed, something else uses it: ${kept.join('; ')}` : `Shared, and ${own.tags.name || own.id} removed: in Changes`, 6000);
           render(); draw();
         }}, `One stop: ${a.tags.name || a.id}, both networks (remove ${own.tags.name || own.id})`),
-        el('button', {class: 'b', onclick: () => { Edits.decisions[s.id] = own.id; Edits.save(); toast('Its own stop, where it is: moving it is below', 5000); render(); draw(); }}, `Keep ${own.tags.name || own.id} where it is`),
-        el('button', {class: 'b', onclick: () => {
-          Edits.hold(`${s.name}: moved`);
-          try { Edits.decisions[s.id] = own.id; markUndo(Edits.modify('node', osmNumId(own), nodeBase(own), {...moveLL(s), tags: choiceTags(s, own.id)}, `${s.ref} ${s.name}: moved ${sh.own_dist} m`), s); }
-          finally { Edits.release(); }
-          toast('Node move added to changes'); render(); draw();
-        }}, `Move ${own.tags.name || own.id} here (${sh.own_dist} m)`)));
+        el('button', {class: 'b', onclick: async () => { Edits.hold(`${s.name}: its own`); try { await pickStop(s, own.id, 'keep'); } finally { Edits.release(); } toast('Its own stop, where it is', 5000); render(); draw(); }}, `Keep ${own.tags.name || own.id} where it is`),
+        el('button', {class: 'b', onclick: async () => { Edits.hold(`${s.name}: moved`); try { await pickStop(s, own.id, 'move'); } finally { Edits.release(); } toast('Node move added to changes'); render(); draw(); }}, `Move ${own.tags.name || own.id} here (${sh.own_dist} m)`)));
     } else if (st === 'ambiguous') d.append(el('div', {class: 'small muted'}, 'Several OSM stops fit. Pick one, or say none does.'));
     const cands = Edits.decisions[s.id] ? [{id: Edits.decisions[s.id], dist: Math.round(m([o.lon, o.lat], [s.lon, s.lat])), how: 'chosen'}] : s.match.osm;
     for (const c of cands) if (D.osm_stops[c.id]) d.append(osmStopBox(s, D.osm_stops[c.id], c, st === 'ambiguous'));
@@ -1581,6 +1582,22 @@ async function shareStop(s, a, own) {
     Edits.save();
     return await removeStops([own], new Set(rels.map(e => e.id)), `shared with ${a.tags.name || a.id}`);
   } finally { Edits.release(); }
+}
+/** A stop asked between OSM stops, answered: 'share' (the other network's stop, shareStop), 'keep' (that node
+ *  where it is) or 'move' (that node to the agency's spot). The picked node gets what that choice changes, as a
+ *  matched stop would (the agency's codes and routes). -> what shareStop couldn't remove, and why */
+async function pickStop(s, oid, how, route) {
+  const o = D.osm_stops[oid], sh = s.match && s.match.shared;
+  if (!o) return [];
+  if (how === 'share' && sh && D.osm_stops[sh.own]) return shareStop(s, o, D.osm_stops[sh.own]);
+  Edits.decisions[s.id] = oid;
+  const tags = choiceTags(s, oid);
+  if (tags['gtfs:stop_id'] && s.proposed_tags['gtfs:stop_code'] && !o.tags['gtfs:stop_code']) tags['gtfs:stop_code'] = s.proposed_tags['gtfs:stop_code'];   // the code travels with the id
+  if (how !== 'move' && !Object.keys(tags).length) { Edits.save(); return []; }
+  const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags, ...(how === 'move' ? moveLL(s) : {})}, `${s.ref} ${s.name}` + (how === 'move' ? ": moved to the agency's spot" : ''));
+  if (how === 'move') markUndo(key, s);
+  if (route) { Edits.ops[key].suggested = true; Edits.ops[key].route = route; }
+  return [];
 }
 /** A relation a gone stop can leave: a route of this agency's, or a stop area. */
 const ptRel = e => (e.tags || {}).public_transport === 'stop_area' || ((e.tags || {}).type === 'route' && ours(e));
@@ -1850,6 +1867,10 @@ fetch('data/review.json', {signal: dataTimeout.signal}).then(r => { if (!r.ok) t
   if (Edits.auth.user()) Edits.verifyUploaded().then(n => { if (n) { toast(`${n} upload${n > 1 ? 's' : ''} this browser remembered aren't on OSM: forgotten`, 6000); render(); draw(); } });
   // the reviewer's say over the open route changed under it (undo, redo, another browser's copy): route again
   Edits.listeners.push(() => { if (S.pattern && S.routedWith != null && JSON.stringify(Edits.routingOf(S.pattern)) !== S.routedWith) liveRoute(); });
+  // road edits taken out of Changes (removed, Remove all, undone): the open route runs on the roads as they are again,
+  // not on pieces of a split that's gone
+  let roadSig = JSON.stringify(roadPatches());
+  Edits.listeners.push(() => { const sig = JSON.stringify(roadPatches()); if (sig !== roadSig) { roadSig = sig; if (S.pattern && S.routedBy === 'changes') liveRoute(); } });
   Edits.listeners.push(() => { const b = $('#tabs button[data-tab=changes]'); if (b) b.textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes'; undoBar(); Roads.undoCtl(); if (Roads.on && !Roads.drag && !Roads.pick && !Roads.loading) Roads.status(); });
   undoBar();
   $('#agency').textContent = `${d.agency.agency_name} · feed ${(d.feed.feed_version || '').slice(0, 40)} · OSM ${d.osm_fetched.replace('T', ' ')} `;

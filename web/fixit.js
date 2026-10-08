@@ -39,6 +39,7 @@ const FixIt = {
   answerCurrent(v) {
     const p = patternById(S.fixit.pid), qs = this.asked(p), q = qs[S.fixit.q];
     if (!q) return;
+    if (q.kind === 'which' && q.s.match.shared) { toast('One stop for both networks, or its own: pick on the list', 4000); return; }
     if (q.kind === 'which') {
       // a key picks only what needs no judgement: the one candidate at the agency's point (within what counts as the
       // same spot here); with several, or none, the choice is a click on the list
@@ -70,7 +71,8 @@ const FixIt = {
       if (st.status === 'ambiguous') {
         const cands = (m.osm || []).map(c => ({...c, o: D.osm_stops[c.id]})).filter(c => c.o), a = ans[s.id + ':which'];
         decide.push({kind: 'which', s, cands, answer: a});
-        if (a === 'none') stops.push({st, add: true}); else if (a) stops.push({st, pick: a});
+        // a pick: that node ('move:<id>': moved to the agency's spot; the other network's, when shared: shared)
+        if (a === 'none') stops.push({st, add: true}); else if (a) stops.push({st, pick: a.replace(/^move:/, ''), how: a.startsWith('move:') ? 'move' : m.shared && a === m.shared.id ? 'share' : 'keep'});
         continue;
       }
       if (!st.o && detoured(p) && s.match && s.match.temporary) { done.push(`${s.name}: the detour's, left out`); continue; }   // the regular route is kept
@@ -159,7 +161,13 @@ const FixIt = {
     }
     const s = q.s, key = s.id + ':' + (q.kind === 'which' ? 'which' : q.k);
     row.append(el('div', {}, el('b', {}, s.name), el('span', {class: 'muted'}, q.kind === 'which' ? ' · which OSM stop is it?' : q.kind === 'where' ? ' · where does it go?' : ` · ${KEY_WORDS[q.k] || q.k}`)));
-    if (q.kind === 'which') {
+    const sh = q.kind === 'which' && s.match.shared, own = sh && D.osm_stops[sh.own], their = sh && D.osm_stops[sh.id];
+    if (sh && own && their) {
+      const b = (v, label) => el('button', {class: 'b tiny' + (q.answer === v ? ' chosen' : ''), onclick: () => set(key, v)}, (q.answer === v ? '✓ ' : '') + label);
+      row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${their.tags.name || sh.id} (${sh.dist} m); OSM's stop with its code, ${own.tags.name || sh.own}, is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`),
+        el('div', {style: 'margin:4px 0'}, lookButtons(s, null)),
+        el('div', {class: 'btns'}, b(sh.id, `one stop: ${their.tags.name || sh.id}`), b(sh.own, `keep ${own.tags.name || sh.own} where it is`), b('move:' + sh.own, `move ${own.tags.name || sh.own} here`)));
+    } else if (q.kind === 'which') {
       row.append(el('div', {class: 'why'}, 'More than one OSM stop could be the agency\'s. Look at them on the map.'), el('div', {style: 'margin:4px 0'}, lookButtons(s, null)));
       const b = el('div', {class: 'btns'});
       for (const c of q.cands) b.append(el('button', {class: 'b tiny' + (q.answer === c.id ? ' chosen' : ''), onclick: () => set(key, c.id)}, `${q.answer === c.id ? '✓ ' : ''}${c.o.tags.name || c.id} (${c.dist} m)`));
@@ -169,7 +177,8 @@ const FixIt = {
       const wait = !looked(s.id), off = wait ? {disabled: '', title: 'Look at it on the map first'} : {};
       row.append(el('div', {class: 'why'}, q.why), el('div', {style: 'margin:4px 0'}, lookButtons(s, q.o)),
         el('div', {class: 'btns'},
-          el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + (q.s.match && q.s.match.inroad ? "move OSM's stop to the kerb" : "move OSM's stop to the agency's point")),
+          el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + (q.s.match && q.s.match.inroad ? "move OSM's stop to the kerb" : "move OSM's stop to the agency's point") + (mergedWith(s) ? `, remove ${mergedWith(s).tags.name || 'the other'}` : '')),
+          mergedWith(s) ? el('button', {class: 'b tiny' + (q.answer === 'move-keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'move-keep')}, (q.answer === 'move-keep' ? '✓ ' : '') + `move it, keep ${mergedWith(s).tags.name || 'the other'}`) : null,
           el('button', {class: 'b tiny' + (q.answer === 'keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'keep')}, (q.answer === 'keep' ? '✓ ' : '') + 'leave it where it is')));
     } else {
       const diff = (s.match && s.match.diff) || {}, from = (diff[q.k] && diff[q.k].osm) || '—', to = (diff[q.k] && diff[q.k].gtfs) || '';
@@ -194,14 +203,14 @@ const FixIt = {
       for (const q of x.decide) if (q.kind === 'where' && q.answer && q.o) Edits.decisions[q.s.id] = q.o.id;
       for (const y of x.stops) {
         const s = y.st.s;
-        if (y.pick) Edits.decisions[s.id] = y.pick;
+        if (y.pick) { kept.push(...await pickStop(s, y.pick, y.how, r.short)); continue; }
         if (y.add) { const [lon, lat] = newStopSpot(s, p).at; const k = Edits.createNode(lat, lon, s.proposed_tags, `${s.ref} ${s.name}`); Edits.ops[k].suggested = true; Edits.ops[k].route = r.short; continue; }
         if (y.change) {
           const o = y.st.o, c = y.change;
           const key = Edits.modify('node', osmNumId(o), nodeBase(o), {tags: c.tags, ...(c.move ? moveLL(s) : {})}, `${s.ref} ${s.name}`);
           if (c.move) markUndo(key, s);
           Edits.ops[key].suggested = true; Edits.ops[key].route = r.short;
-          if (c.move && mergedWith(s)) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
+          if (c.removeOther) kept.push(...await removeStops([mergedWith(s)], new Set(), `merged into ${s.name}`));
         }
       }
       Edits.save();
