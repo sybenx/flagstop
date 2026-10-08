@@ -538,7 +538,14 @@ function render() {
   else renderAbout(P);
   syncHash();
 }
-const tile = (n, label, cls = '') => el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
+/** A count at the top of a list; with `go`, a way into what it counts (nothing to go to at 0). */
+const tile = (n, label, cls = '', go = null, on = false) => go && n
+  ? el('button', {class: `tile go ${cls}${on ? ' on' : ''}`, title: on ? 'Showing only these: click to show all' : `Show only these: ${label}`, onclick: go}, el('b', {}, n), el('span', {}, label))
+  : el('div', {class: 'tile ' + cls}, el('b', {}, n), el('span', {}, label));
+/** Open the Stops tab with one of its filters. */
+const stopsWith = f => { S.tab = 'stops'; S.stop = null; S.filter = f; S.q = ''; render(); draw(); $('#panel').scrollTop = 0; };
+/** Itineraries the Routes list can be narrowed to, by the tiles over it. */
+const ROUTE_FILTERS = {norel: ['no OSM relation', p => !p.temporary && !p.relations.length], twice: ['mapped twice', p => !p.temporary && p.relations.some(r => r.duplicate)]};
 const refBadge = r => el('span', {class: 'ref', style: r.color ? `background:#${r.color};color:#${r.text_color || '000'}` : ''}, r.short);
 
 /** What's waiting in Changes for an itinerary (not uploaded yet): a merge, its relation, its stops. With
@@ -599,13 +606,15 @@ function feedChanges() {
 }
 function renderRoutes(P) {
   const s = D.summary;
+  const rf = ROUTE_FILTERS[S.routeFilter] ? S.routeFilter : null, only = f => () => { S.routeFilter = S.routeFilter === f ? null : f; render(); };
   P.append(el('div', {class: 'tiles'},
-    tile(D.patterns.filter(p => !p.temporary).length, 'itineraries'), tile(s.patterns['no relation'] || 0, 'no OSM relation', s.patterns['no relation'] ? 'bad' : ''), tile((s.patterns['duplicate relations'] || 0), 'mapped twice', s.patterns['duplicate relations'] ? 'warn' : ''),
-    tile(s.stops.matched || 0, 'stops matched'), tile((s.stops.ambiguous || 0) + (s.stops.moved || 0), 'to decide', 'warn'), tile(s.stops.missing || 0, 'not in OSM', s.stops.missing ? 'bad' : '')));
+    tile(D.patterns.filter(p => !p.temporary).length, 'itineraries', '', rf ? only(null) : null), tile(s.patterns['no relation'] || 0, 'no OSM relation', s.patterns['no relation'] ? 'bad' : '', only('norel'), rf === 'norel'), tile((s.patterns['duplicate relations'] || 0), 'mapped twice', s.patterns['duplicate relations'] ? 'warn' : '', only('twice'), rf === 'twice'),
+    tile(s.stops.matched || 0, 'stops matched', '', () => stopsWith('matched')), tile((s.stops.ambiguous || 0) + (s.stops.moved || 0), 'to decide', 'warn', () => stopsWith('decide')), tile(s.stops.missing || 0, 'not in OSM', s.stops.missing ? 'bad' : '', () => stopsWith('missing'))));
   const fc = feedChanges();
   if (fc) P.append(fc);
-  P.append(el('h2', {}, 'Itineraries, worst first'), el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
-  const rows = D.patterns.map(p => ({p, g: patternGrade(p), sc: p.routed ? (p.routed.score ? p.routed.score.shape_covered : 0) : 1}));
+  P.append(el('h2', {}, rf ? `Itineraries: ${ROUTE_FILTERS[rf][0]}` : 'Itineraries, worst first'), rf ? el('div', {class: 'hint'}, el('a', {href: '#', onclick: e => { e.preventDefault(); S.routeFilter = null; render(); }}, 'show all')) : null,
+    el('div', {class: 'hint'}, 'The percentage is how much of the agency\'s line a bus can drive on OSM\'s roads as mapped. Below 100%, something on the map is in the way.'));
+  const rows = D.patterns.filter(p => !rf || ROUTE_FILTERS[rf][1](p)).map(p => ({p, g: patternGrade(p), sc: p.routed ? (p.routed.score ? p.routed.score.shape_covered : 0) : 1}));
   rows.sort((a, b) => a.g.order - b.g.order || a.sc - b.sc || b.p.trips - a.p.trips);
   for (const {p, g, sc} of rows) {
     const r = routeOf(p), nd = routedOf(p).divergences.length;
@@ -618,7 +627,7 @@ function renderRoutes(P) {
       pendingChip(p),
       el('span', {class: 'chip ' + g.cls}, g.chip)));
   }
-  if (D.unpaired_relations.length) {
+  if (D.unpaired_relations.length && !rf) {
     P.append(el('h2', {}, 'OSM bus relations not in this feed'));
     for (const u of D.unpaired_relations) {
       P.append(el('div', {class: 'row', onclick: () => { set('rel', u.geometry.map(g => line(g))); fit(u.geometry.flat()); }},
@@ -1278,6 +1287,8 @@ function proposeMaster(r) {
 function stopFilter(s) {
   const st = stopStatus(s);
   if (S.filter === 'todo' && !(st === 'missing' || st === 'ambiguous' || st === 'moved')) return false;
+  if (S.filter === 'decide' && !(st === 'ambiguous' || st === 'moved')) return false;
+  if (S.filter === 'matched' && st !== 'matched') return false;
   if (S.filter === 'missing' && st !== 'missing') return false;
   if (S.filter === 'moved' && st !== 'moved') return false;
   if (S.filter === 'ambiguous' && st !== 'ambiguous') return false;
@@ -1294,7 +1305,7 @@ function stopFilter(s) {
 function renderStops(P) {
   const f = el('div', {class: 'filters'});
   const sel = el('select', {class: 'b', onchange: e => { S.filter = e.target.value; render(); draw(); }});
-  for (const [v, l] of [['all', 'all stops'], ['todo', 'to decide'], ['missing', 'not in OSM'], ['moved', 'probably moved'], ['ambiguous', 'ambiguous'], ['diff', 'tags differ'], ['name', 'name differs'], ['position', 'position differs'], ['desc', 'has announcement']]) sel.append(el('option', {value: v, selected: S.filter === v ? '' : null}, l));
+  for (const [v, l] of [['all', 'all stops'], ['matched', 'matched'], ['decide', 'to decide (which, or moved)'], ['todo', 'to decide, or not in OSM'], ['missing', 'not in OSM'], ['moved', 'probably moved'], ['ambiguous', 'ambiguous'], ['diff', 'tags differ'], ['name', 'name differs'], ['position', 'position differs'], ['desc', 'has announcement']]) sel.append(el('option', {value: v, selected: S.filter === v ? '' : null}, l));
   f.append(sel, el('input', {placeholder: 'search name, announcement, code', value: S.q, oninput: e => { S.q = e.target.value; render(); draw(); }}));
   P.append(f);
   const places = Station.places();
