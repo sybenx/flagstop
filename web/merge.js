@@ -162,7 +162,10 @@ const Merge = {
       el('div', {class: 'fixstep want'}, el('div', {class: 'k'}, 'flagstop would'),
         el('ul', {class: 'mergelist'},
           el('li', {}, 'keep ', el('a', {href: `https://www.openstreetmap.org/relation/${keep.id}`, target: '_blank'}, `r${keep.id}`), ` (the older; its history carries on), named "${x.name}"`),
-          el('li', {}, `give it the feed's ${x.stops.length} stops in order` + (x.stale.length ? `; ${x.stale.length} it has now aren't on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
+          el('li', {}, (x.stops.length < p.stops.length
+            // (a stop OSM hasn't got counts once it's added, below)
+            ? `give it ${x.stops.length} of the feed's ${p.stops.length} stops in order, and ${p.stops.length - x.stops.length > 1 ? 'those' : 'the one'} not in OSM if you add ${p.stops.length - x.stops.length > 1 ? 'them' : 'it'} below`
+            : `give it the feed's ${x.stops.length} stops in order`) + (x.stale.length ? `; ${x.stale.length} it has now ${x.stale.length > 1 ? "aren't" : "isn't"} on the route any more: ${x.stale.slice(0, 6).map(o => o.tags.name || o.id).join(', ')}${x.stale.length > 6 ? ', …' : ''}` : '')),
           el('li', {}, 'list its roads in driving order, so they join up end to end' + (x.splits.length ? `, splitting ${x.splits.length} where the bus turns partway along: ${[...new Set(x.splits.map(b => this.roadName(p, b)))].join('; ')}` : '')),
           ...drop.map(a => el('li', {}, `delete r${a.id} "${a.name}"` + (x.master ? `, and take it out of the route master "${x.master.tags.name}"` : ''))),
           Object.keys(x.timetable).length ? el('li', {}, el('label', {}, el('input', {type: 'checkbox', checked: this.hours(x) ? '' : null, onchange: e => { S.merge.hours = e.target.checked; }}),
