@@ -40,6 +40,14 @@ class Names(unittest.TestCase):
     def test_same_address_spelled_out_is_no_difference(self):
         self.assertEqual(name_pick('296 East Center St', '296 East Center Street'), (None, None))
 
+    def test_a_feed_in_capitals_says_nothing_about_case(self):
+        # OSM's well-cased name stays; a new stop gets the name in ordinary case, spelled out
+        self.assertEqual(name_pick('MAIN ST & 1ST AVE', 'Main Street & 1st Avenue'), (None, None))
+        self.assertEqual(name_pick('USU TAGGART STUDENT CENTER', 'USU Taggart Student Center'), (None, None))
+        self.assertEqual(stops.spelled('2470 N MAIN ST, N LOGAN'), '2470 North Main Street, North Logan')
+        self.assertEqual(stops.spelled('BUILDING E'), 'Building E')
+        self.assertEqual(stops.spelled('St Thomas & Main St'), 'St Thomas & Main Street')
+
     def test_abbreviated_osm_name_gets_spelled_out_agency_name(self):
         pick, d = name_pick('1111 North 800 East', '1111 N 800 E')
         self.assertEqual(pick, 'agency')
@@ -378,3 +386,30 @@ class Web(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Search(unittest.TestCase):
+    """Where flagstop looks for a stop's OSM node: as far east and west as north and south, and by whole ids."""
+
+    def feed_with(self, stop):
+        f = Feed()
+        stop.location_type = '0'
+        f.stops = {stop.id: stop}
+        return f
+
+    def test_a_moved_stop_is_found_due_east_as_due_west(self):
+        import math
+        lon0 = -111.8329   # near a grid cell's edge: one ring of cells reached ~166 m east-west here
+        dlon = 290 / (111320 * math.cos(math.radians(41.74)))
+        for sign in (1, -1):
+            with self.subTest(side='east' if sign > 0 else 'west'):
+                s = Stop('100 North Main St', lon=lon0, code='', id='77')
+                o = osm('120 North Main Street', lon=lon0 + sign * dlon)
+                res, _ = stops.match(self.feed_with(s), {'n1': {**o, 'type': 'node'}})
+                self.assertEqual(res['77']['status'], 'moved')
+
+    def test_a_stop_id_is_matched_whole_not_inside_another(self):
+        s = Stop('100 North Main St', id='12', code='12')
+        o = osm('Elsewhere Road', lat=41.74 + 150 / 110540, **{'gtfs:stop_id': '1234'})
+        res, _ = stops.match(self.feed_with(s), {'n1': {**o, 'type': 'node'}})
+        self.assertEqual(res['12']['status'], 'missing')

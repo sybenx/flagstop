@@ -35,6 +35,12 @@ def calibrate(results):
         TYPICAL = ds[len(ds) // 2]
         FAR = max(10, 3 * TYPICAL)
     return TYPICAL, FAR
+def rings(lat, r, cell):
+    """How many grid cells of `cell` degrees out a search of r metres at this latitude has to look: (north-south,
+    east-west)."""
+    return math.ceil(r / (cell * 110540)), math.ceil(r / (cell * 111320 * max(0.05, math.cos(math.radians(lat)))))
+
+
 TEMP = re.compile(r'\b(temp(orary)?|detour|closed)\b', re.I)
 
 
@@ -121,8 +127,11 @@ def match(feed, osm_stops, across=None):
     def near(lat, lon, r):
         ci, cj = int(lat / cell), int(lon / cell)
         out = []
-        for i in (ci - 1, ci, ci + 1):
-            for j in (cj - 1, cj, cj + 1):
+        # as many cells out as r needs: a cell is ~220 m north-south, and less east-west the further from the
+        # equator (166 m at 42°): one ring of neighbours misses stops due east or west
+        ni, nj = rings(lat, r, cell)
+        for i in range(ci - ni, ci + ni + 1):
+            for j in range(cj - nj, cj + nj + 1):
                 for o in grid.get((i, j), []):
                     d = dist(lat, lon, o['lat'], o['lon'])
                     if d <= r:
@@ -144,12 +153,15 @@ def match(feed, osm_stops, across=None):
     def other_network(o):
         return bool(nets) and o['tags'].get('network') and o['tags']['network'] not in nets
 
+    codes = {s.code for s in feed.stops.values() if s.code}
     results, claimed = {}, {}
     for s in feed.stops.values():
         if s.location_type not in ('0', ''):
             continue  # stations, entrances: not a platform to match
         cands, notes = [], []
-        ids = by_gtfs_id.get(s.id, []) + by_ref.get(s.code, []) + (by_ref.get(s.id, []) if s.id != s.code else [])
+        # OSM's ref is the stop code; a stop_id in it counts too (some mappers put that there), unless the id is
+        # also another stop's code, when the ref is that stop's
+        ids = by_gtfs_id.get(s.id, []) + by_ref.get(s.code, []) + (by_ref.get(s.id, []) if s.id != s.code and s.id not in codes else [])
         for o in filter(platform, ids):
             d = dist(s.lat, s.lon, o['lat'], o['lon'])
             if across(s.id, o):
@@ -196,7 +208,7 @@ def match(feed, osm_stops, across=None):
             if o['id'] in claimed or o['type'] != 'node' or not platform(o) or across(s.id, o):
                 continue
             t = o['tags']
-            byref = bool(s.ref) and (t.get('ref') == s.ref or s.id in (t.get('gtfs:stop_id') or ''))
+            byref = bool(s.ref) and (t.get('ref') == s.ref or s.id in [v.strip() for v in (t.get('gtfs:stop_id') or '').split(';')])
             sim = alike(_gtfs_text(s), _osm_text(o))
             same_street = street(s.name) and street(s.name) == street(t.get('name', ''))
             if byref or sim >= 0.5 or same_street:
@@ -254,7 +266,8 @@ def match(feed, osm_stops, across=None):
         if o['id'] in used or not platform(o):
             continue
         ci, cj = int(o['lat'] / 0.004), int(o['lon'] / 0.004)
-        close = any(dist(o['lat'], o['lon'], la, lo) <= FOOTPRINT for i in (ci - 1, ci, ci + 1) for j in (cj - 1, cj, cj + 1) for la, lo in ggrid.get((i, j), []))
+        ni, nj = rings(o['lat'], FOOTPRINT, 0.004)
+        close = any(dist(o['lat'], o['lon'], la, lo) <= FOOTPRINT for i in range(ci - ni, ci + ni + 1) for j in range(cj - nj, cj + nj + 1) for la, lo in ggrid.get((i, j), []))
         if close:
             extra.append(o['id'])
     return results, extra
@@ -367,7 +380,8 @@ def diff(feed, s, o):
     t = o['tags']
     out = {}
     name = spelled(s.name, lang_of(feed))   # the agency's address, written the OSM way
-    if (t.get('name') or '') != name:
+    # (a feed in capitals says nothing about case: OSM's name that differs from it only there is no difference)
+    if (t.get('name') or '') != name and not (shouting(s.name) and (t.get('name') or '').lower() == name.lower()):
         out['name'] = {'gtfs': name, 'osm': t.get('name', '')}
     if t.get('ref', '') != s.ref:
         out['ref'] = {'gtfs': s.ref, 'osm': t.get('ref', '')}
@@ -408,12 +422,29 @@ ALWAYS = {'hwy': 'Highway', 'pkwy': 'Parkway', 'blvd': 'Boulevard'}
 AT_END = {'st': 'Street', 'dr': 'Drive', 'ave': 'Avenue', 'av': 'Avenue', 'rd': 'Road', 'ln': 'Lane', 'cir': 'Circle', 'ct': 'Court', 'pl': 'Place', 'ctr': 'Center'}
 
 
+def shouting(name):
+    """A name all in capitals ('MAIN ST & 1ST AVE'), as some feeds write every name: it says nothing about case."""
+    letters = [c for c in name or '' if c.isalpha()]
+    return len(letters) >= 4 and all(c.isupper() for c in letters)
+
+
+def calm(name):
+    """A name in capitals, in ordinary case: each word capitalised ('1ST' -> '1st', "MCDONALD'S" -> "Mcdonald's"); a
+    lone letter stays as it is (N, Building E). An acronym can't be told from a word ('USU' -> 'Usu'): where OSM
+    has the name already, differing only in case, OSM's stays."""
+    return re.sub(r"\d*[A-Za-z]+(?:'[A-Za-z]+)?", lambda m: m.group(0) if len(m.group(0)) == 1 else m.group(0).lower() if m.group(0)[0].isdigit() else m.group(0).capitalize(), name)
+
+
 def spelled(name, lang='en'):
     """A stop name with its abbreviations spelled out, as OSM writes names: '2470 N Main St, N Logan' ->
     '2470 North Main Street, North Logan'. English only (the list is). Careful with the ambiguous ones: a
     lone letter is a direction only next to a number or before a place name ('1600 N', 'N Logan', not
     'Building E'); St, Dr and the like only at the end of the street ('Main St,', not 'St Thomas')."""
-    if not (lang or 'en').lower().startswith('en') or not name:
+    if not name:
+        return name
+    if shouting(name):
+        name = calm(name)
+    if not (lang or 'en').lower().startswith('en'):
         return name
     toks = re.findall(r"[A-Za-z]+\.?|\d+\w*|[^\w\s]+|\s+", name)
     words = [i for i, t in enumerate(toks) if not t.isspace()]
@@ -425,7 +456,7 @@ def spelled(name, lang='en'):
         w = t.rstrip('.').lower()
         prev = toks[words[n - 1]] if n else None
         nxt = toks[words[n + 1]] if n + 1 < len(words) else None
-        end = nxt is None or nxt[0] in ',-(/;'
+        end = nxt is None or nxt[0] in ',-(/;&@'   # the street's name ends there ('Main St & 1st Ave')
         num = lambda x: bool(x) and x[0].isdigit()
         if w in DIRECTIONS and len(t.rstrip('.')) == 1 and t[0].isupper() and (num(prev) or num(nxt) or (nxt and nxt[0].isupper())):
             out[i] = DIRECTIONS[w]
