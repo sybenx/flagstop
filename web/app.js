@@ -1736,10 +1736,11 @@ function changesetComment() {
   if (extraSt) parts.push(`${n(extraSt, 'second station point')} sorted out`);   // a station's changes, said once under its name
   // a route that only lost a stop that's gone is said with the stop ("1 removed"), not as a rebuilt relation
   // tags put back as they were before an earlier changeset (What uploads took away): said as that
-  const back = ops.filter(o => o.putBack);
+  const back = ops.filter(o => o.putBack), fromName = ops.filter(o => o.fromOldName);
+  if (fromName.length) parts.push(`${list([...new Set(fromName.flatMap(o => Edits.diff(o).map(x => `${x.k}=${x.after}`)))])} on ${n(fromName.length, 'stop')}, as ${fromName.length > 1 ? 'their names' : 'its name'} said before changeset ${list([...new Set(fromName.map(o => String(o.fromOldName)))])}`);
   for (const o of back) if (o.type === 'relation' && o.tags.type === 'route' && o.tags.ref) routes.add(o.tags.ref);
   if (back.length) parts.push(`${list([...new Set(back.flatMap(o => Edits.diff(o).map(x => x.k)))])} put back as before changeset ${list([...new Set(back.map(o => String(o.putBack)))])}${back.length > 1 ? ` on ${back.length} objects` : ''}`);
-  const rels = ops.filter(o => o.type === 'relation' && !o.putBack && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
+  const rels = ops.filter(o => o.type === 'relation' && !o.putBack && !o.fromOldName && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
   for (const o of rels) {
     const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
     if (r) routes.add(r);
@@ -1758,7 +1759,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !o.putBack && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));

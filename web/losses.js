@@ -27,7 +27,7 @@ const Losses = {
       const one = async c => {
         const r = await this.audit(c.id);
         n++; if (S.losses) { S.losses.loading = `changeset ${n} of ${all.length}…`; render(); }
-        if (r.deleted.length || r.removed.length) out.push({...r, id: c.id, comment: (c.tags || {}).comment || '', date: (c.created_at || '').slice(0, 10)});
+        if (r.deleted.length || r.removed.length) out.push({...r, id: c.id, comment: (c.tags || {}).comment || '', date: (c.created_at || '').slice(0, 10), tool: (c.tags || {}).created_by || ''});
       };
       for (let i = 0; i < all.length; i += 4) await Promise.all(all.slice(i, i + 4).map(one));   // four at a time: kind to the API
       out.sort((a, b) => b.id - a.id);
@@ -61,29 +61,82 @@ const Losses = {
         let into = null;
         if (e.type === 'node' && stop(t)) into = kept.filter(k => k.type === 'node' && stop(k.tags) && k.lat != null).map(k => ({k, d: m([k.lon, k.lat], [was.lon, was.lat])})).sort((a, b) => a.d - b.d).find(x => x.d <= 150);
         else if (e.type === 'relation') { const k = kept.find(k => k.type === 'relation' && k.tags.ref === t.ref && k.tags.type === t.type); into = k && {k}; }
-        if (into) { d.into = {type: into.k.type, id: into.k.id, name: into.k.tags.name, d: into.d}; d.lost = Object.fromEntries(Object.entries(t).filter(([k, v]) => into.k.tags[k] !== v)); }
+        if (into) { d.into = {type: into.k.type, id: into.k.id, name: into.k.tags.name, d: into.d, tags: into.k.tags}; d.lost = Object.fromEntries(Object.entries(t).filter(([k, v]) => into.k.tags[k] !== v)); }
         deleted.push(d);
       } else if (e.action === 'modify' && e.version > 1) {
         const t = (await this.version(e.type, e.id, e.version - 1)).tags || {};
         const gone = Object.fromEntries(Object.entries(t).filter(([k]) => !(k in e.tags)));
         const changed = Object.fromEntries(Object.entries(t).filter(([k, v]) => k in e.tags && e.tags[k] !== v).map(([k, v]) => [k, [v, e.tags[k]]]));
-        if (Object.keys(gone).length || Object.keys(changed).length) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed});
+        if (Object.keys(gone).length || Object.keys(changed).length) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed, tags: e.tags});
       }
     }));
     return {deleted, removed};
   },
 
+  /** What to do about a tag that went, and why: {act: 'putback' | 'onto' | 'describe', why, value?} or {none: why}.
+   *  From what took it (flagstop, or a mapper by hand) and what it was. */
+  verdict(it) {
+    const {k, how, x, c} = it, rel = x.type === 'relation';
+    if (!/^flagstop/.test(c.tool || '')) return {none: `edited by hand${c.tool ? ` (${c.tool.split(' ')[0]})` : ''}: as you meant it, presumably`};
+    if (how === 'deleted with it') return {none: rel ? 'a relation deleted whole' : x.tags.highway === 'bus_stop' || x.tags.public_transport ? "the stop is gone from the agency's data; its pole's details went with it" : 'deleted whole'};
+    if (it.onto) {
+      const kept = (x.into.tags || {})[k];
+      if (it.w === 0) return {none: /name/.test(k) ? "a service day's name: the relations it named are one now" : "the agency's feed sets this"};
+      if (kept != null) return {none: `${x.into.type} ${x.into.id} has its own: ${k}=${kept}`};
+      if (!rel && it.w === 2) return {none: 'it described the pole that went, not this one'};
+      if (!rel) return {none: "this stop's own name and codes are the agency's"};
+      return {act: 'onto', why: `only the deleted relation had it: it belongs on the one kept`};
+    }
+    if (it.w === 0) return {none: /name/.test(k) ? "a service day's name: the relations it named are one now" : "the agency's feed sets this"};
+    if (how === 'removed') return {act: 'putback', why: 'flagstop took it off; nothing replaced it'};
+    // changed
+    if (/^(ref|gtfs:stop_code)$/.test(k)) return {none: "the agency's code for the stop, in place of an old one"};
+    if (/^(network|operator)(:wikidata)?$/.test(k)) return {none: "the agency's current name"};
+    if (k === 'route_ref') return {none: 'the routes calling there, per the timetable'};
+    if (k === 'wheelchair' && it.old === 'designated' && it.now === 'yes') return {act: 'putback', why: 'designated says more than yes (a stop built for wheelchairs); flagstop only adds yes where OSM has nothing'};
+    if (/name$/.test(k)) {
+      if (rel) {
+        // the route master's name is the local style a merge names a route by: that's no loss
+        const master = ((typeof D !== 'undefined' && D && D.masters) || []).find(mm => mm.tags.ref && mm.tags.ref === (x.tags || {}).ref);
+        if (master && master.tags.name === it.now) return {none: `the route master's name for it, the local style ("${master.tags.name}")`};
+        return {act: 'putback', value: master && master.tags.name ? master.tags.name : it.value, why: `a mapper's name for the route${master ? `, as its route master has it` : ''}; flagstop keeps those now (this was an early upload)`};
+      }
+      // "On Request" in a name is a fact with a tag of its own
+      if (/\bon request\b|\brequest stop\b/i.test(it.old || '') && !/\bon request\b/i.test(it.now || '') && (x.tags || {}).request_stop !== 'yes')
+        return {act: 'tag', key: 'request_stop', value: 'yes', why: `the old name said "on request": buses stop there only when asked, and OSM says so with request_stop=yes (if it's still so)`};
+      const num = v => +(((v || '').match(/^\d+/) || [])[0] || NaN);
+      if (Math.abs(num(it.old) - num(it.now)) > 50) return {none: `the stop moved: its old landmark may not be by it now (${num(it.old)} → ${num(it.now)})`};
+      // a landmark or note in the old name ("700 West 200 North - The Meadows - TIMEPOINT"): not a name, but worth keeping
+      const m = (it.old || '').match(/\((.*?)\)/) || (it.old || '').match(/\s+-\s+(.*)$/);
+      const mark = m && m[1].split(/\s+-\s+/).filter(w => !/^(timepoint|route\b.*|\(?\d+\)?)$/i.test(w.trim())).join(' - ').trim();
+      const desc = (x.tags || {}).description || '';
+      // already said in description (the agency's announcement for it, maybe spelt another way): nothing to add
+      const words = t => (t || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2), dw = new Set(words(desc));
+      const said = mark && words(mark).filter(w => dw.has(w) || [...dw].some(d => d.slice(0, 4) === w.slice(0, 4))).length * 2 >= words(mark).length;
+      if (mark && said) return {none: `description says it already ("${desc}")`};
+      if (mark && !(it.now || '').includes(mark)) return {act: 'describe', value: desc ? `${desc}; ${mark}` : mark, why: `"${mark}" isn't part of the address, but it says where the stop is: description keeps it`};
+      return {none: "the agency's address for the stop"};
+    }
+    if (it.w === 2) return {act: 'putback', why: 'flagstop changed a fact someone surveyed; the agency\'s data says nothing about it'};
+    return {none: 'flagstop\'s change, as it does now'};
+  },
+
   /** A tag a changeset took away, back into Changes: read as OSM has the object now, and only if nobody has changed
    *  that tag since (else said, and left alone). */
   async putBack(it) {
+    const v = it.v || {};
+    if (v.act === 'describe') it = {...it, target: it.x, k: 'description', value: v.value, now: (it.x.tags || {}).description};
+    else if (v.act === 'tag') it = {...it, target: it.x, k: v.key, value: v.value, now: (it.x.tags || {})[v.key]};
+    else if (v.act === 'putback' && v.value) it = {...it, value: v.value};
     const t = it.target.type, id = it.target.id;
     const r = await fetch(`${OSM_API}/api/0.6/${t}/${id}.json`);
     if (!r.ok) return toast(`${t} ${id}: OSM said ${r.status}`, 6000);
     const o = (await r.json()).elements[0], tags = o.tags || {};
     if (!it.onto && (tags[it.k] ?? null) !== (it.now ?? null)) return toast(`${it.k} on ${t} ${id} has changed since (it's ${tags[it.k] ?? 'gone'} now): left as it is`, 8000);
     const base = {version: o.version, tags, ...(t === 'node' ? {lat: o.lat, lon: o.lon} : t === 'way' ? {nodes: o.nodes} : {members: o.members})};
-    const key = Edits.modify(t, id, base, {tags: {[it.k]: it.value}}, `${tags.name || `${t} ${id}`}: ${it.k} put back as it was before changeset ${it.c.id}`);
-    Edits.ops[key].putBack = it.c.id;   // said so in the changeset comment
+    const added = v.act === 'tag' || v.act === 'describe';   // new, from what an old name said; not as it was
+    const key = Edits.modify(t, id, base, {tags: {[it.k]: it.value}}, `${tags.name || `${t} ${id}`}: ${it.k} ${added ? `from its name before changeset ${it.c.id}` : `put back as it was before changeset ${it.c.id}`}`);
+    Edits.ops[key][added ? 'fromOldName' : 'putBack'] = it.c.id;   // said so in the changeset comment
     Edits.save();
     toast(`${it.k}=${it.value} on ${tags.name || `${t} ${id}`}: in Changes`, 5000); render();
   },
@@ -117,19 +170,24 @@ const Losses = {
           const bare = v => (v || '').replace(SERVICE_DAY, '').replace(/\s*[-–,]\s*$/, '').trim();
           // put back: as it was, but a name without the service day it had (the relations it named are one now)
           for (const [k, [p, n]] of Object.entries(x.changed)) items.push({c, x, k, what: `${k}: ${p} → ${n}`, how: 'changed', w: /name$/.test(k) && bare(p) !== n ? Math.max(1, tagWeight(k, n, {})) : tagWeight(k, p, {}),
-            target: x, value: /name$/.test(k) && bare(p) && bare(p) !== n ? bare(p) : p, now: n});
+            target: x, value: /name$/.test(k) && bare(p) && bare(p) !== n ? bare(p) : p, now: n, old: p});
         }
       }
-      const line = it => el('div', {style: 'margin:2px 0'}, el('b', {}, it.what), ` · ${it.how} · `, link(it.x.type, it.x.id, `${it.x.type[0]}${it.x.id}`), ` "${(it.x.tags || {}).name || it.x.name || ''}" · `,
-        el('a', {href: `${OSM_WWW}/changeset/${it.c.id}`, target: '_blank'}, it.c.id), el('span', {class: 'muted'}, ` ${it.c.date} `),
-        it.target && it.w ? el('button', {class: 'b tiny', title: 'Into Changes, after checking OSM has it as this changeset left it', onclick: () => this.putBack(it)},
-          it.onto ? `Put ${it.k}=${it.value} onto ${it.target.type} ${it.target.id}` : `Put back: ${it.k}=${it.value}`) : null);
-      for (const w of [2, 1, 0]) {
-        const g = items.filter(it => it.w === w);
-        const title = `${WEIGHT_WORDS[w][0].toUpperCase()}${WEIGHT_WORDS[w].slice(1)}: ${g.length}` + (w === 2 ? ' (facts someone surveyed: wheelchair, a shelter, hours, a phone)' : w === 1 ? ' (names, codes, who runs it)' : " (the feed gives these back: its ids, a route's timetable, a service day's name)");
-        box.append(el('details', {class: 'small', open: w === 2 && g.length ? '' : null, style: w === 2 && g.length ? 'color:var(--miss)' : ''}, el('summary', {}, el('b', {}, title)),
-          ...(g.length ? g.map(line) : [el('div', {class: 'muted'}, 'None.')])));
-      }
+      // each with what to do about it, and why: the suggestions first, the rest said and folded away
+      for (const it of items) it.v = this.verdict(it);
+      const head = it => [el('b', {style: it.w === 2 ? 'color:var(--miss)' : ''}, it.what), ` · ${it.how} · `, link(it.x.type, it.x.id, `${it.x.type[0]}${it.x.id}`), ` "${(it.x.tags || {}).name || it.x.name || ''}" · `,
+        el('a', {href: `${OSM_WWW}/changeset/${it.c.id}`, target: '_blank'}, it.c.id), el('span', {class: 'muted'}, ` ${it.c.date} · ${WEIGHT_WORDS[it.w]}`)];
+      const act = it => it.v.act === 'onto' ? `Put ${it.k}=${it.value} onto ${it.x.into.type} ${it.x.into.id}` : it.v.act === 'describe' ? `Put "${it.v.value}" in description` : it.v.act === 'tag' ? `Add ${it.v.key}=${it.v.value}` : `Put back: ${it.k}=${it.v.value || it.value}`;
+      const sugg = items.filter(it => it.v.act).sort((a, b) => b.w - a.w), rest = items.filter(it => !it.v.act);
+      box.append(el('details', {class: 'small', open: sugg.length ? '' : null}, el('summary', {}, el('b', {}, `Suggested: ${sugg.length}`)),
+        ...(sugg.length ? sugg.map(it => el('div', {class: 'carry'}, el('div', {}, ...head(it)), el('div', {}, el('b', {}, 'Suggest: '), act(it), el('span', {class: 'muted'}, ` — ${it.v.why}`)),
+          el('button', {class: 'b tiny primary', onclick: () => this.putBack(it)}, act(it)))) : [el('div', {class: 'muted'}, 'Nothing: what went, went as it should.')])));
+      const why = new Map();
+      const kind = t => t.replace(/\s*\(.*\)\s*$/, '').replace(/^(relation|node|way) \d+ has its own: .*/, 'what it went into has its own value');   // the reason, without its particulars
+      for (const it of rest) why.set(kind(it.v.none), [...(why.get(kind(it.v.none)) || []), it]);
+      box.append(el('details', {class: 'small'}, el('summary', {}, el('b', {}, `Nothing to do: ${rest.length}`), el('span', {class: 'muted'}, ' (each says why)')),
+        ...[...why].sort((a, b) => Math.max(...b[1].map(x => x.w)) - Math.max(...a[1].map(x => x.w))).map(([w, its]) => el('details', {}, el('summary', {}, `${w}: ${its.length}`),
+          ...its.sort((a, b) => b.w - a.w).map(it => el('div', {style: 'margin:2px 0 2px 12px'}, ...head(it), kind(it.v.none) !== it.v.none ? el('span', {class: 'muted'}, ` — ${it.v.none}`) : null, ' ', it.target && it.w ? el('button', {class: 'b tiny', title: "Not suggested, but yours to do", onclick: () => this.putBack(it)}, act(it)) : null))))));
       box.append(el('div', {class: 'k', style: 'margin-top:8px'}, 'By changeset'));
       for (const c of L.list) {
         const sec = el('details', {class: 'small'},
