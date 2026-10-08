@@ -198,3 +198,6 @@ button.b.chosen:hover { color: var(--panel); opacity: .85; }
 /* a merge's tag list: every tag of the one that goes, each with a keep option */
 .carry { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
 .carry label { cursor: pointer; overflow-wrap: anywhere; }
+/* a line that shows its object on the map */
+.go-row { cursor: pointer; border-radius: 4px; }
+.go-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }

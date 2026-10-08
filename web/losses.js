@@ -56,18 +56,18 @@ const Losses = {
     await Promise.all(ch.map(async e => {
       if (e.action === 'delete') {
         const was = await this.version(e.type, e.id, e.version - 1), t = was.tags || {};
-        const d = {type: e.type, id: e.id, tags: t, by: `${was.user}, ${(was.timestamp || '').slice(0, 10)}`};
+        const d = {type: e.type, id: e.id, tags: t, by: `${was.user}, ${(was.timestamp || '').slice(0, 10)}`, lat: was.lat, lon: was.lon};
         // where it went, if anywhere: what the changeset kept of its kind close by (a stop), or of its route (a relation)
         let into = null;
         if (e.type === 'node' && stop(t)) into = kept.filter(k => k.type === 'node' && stop(k.tags) && k.lat != null).map(k => ({k, d: m([k.lon, k.lat], [was.lon, was.lat])})).sort((a, b) => a.d - b.d).find(x => x.d <= 150);
         else if (e.type === 'relation') { const k = kept.find(k => k.type === 'relation' && k.tags.ref === t.ref && k.tags.type === t.type); into = k && {k}; }
-        if (into) { d.into = {type: into.k.type, id: into.k.id, name: into.k.tags.name, d: into.d, tags: into.k.tags}; d.lost = Object.fromEntries(Object.entries(t).filter(([k, v]) => into.k.tags[k] !== v)); }
+        if (into) { d.into = {type: into.k.type, id: into.k.id, name: into.k.tags.name, d: into.d, tags: into.k.tags, lat: into.k.lat, lon: into.k.lon}; d.lost = Object.fromEntries(Object.entries(t).filter(([k, v]) => into.k.tags[k] !== v)); }
         deleted.push(d);
       } else if (e.action === 'modify' && e.version > 1) {
         const t = (await this.version(e.type, e.id, e.version - 1)).tags || {};
         const gone = Object.fromEntries(Object.entries(t).filter(([k]) => !(k in e.tags)));
         const changed = Object.fromEntries(Object.entries(t).filter(([k, v]) => k in e.tags && e.tags[k] !== v).map(([k, v]) => [k, [v, e.tags[k]]]));
-        if (Object.keys(gone).length || Object.keys(changed).length) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed, tags: e.tags});
+        if (Object.keys(gone).length || Object.keys(changed).length) removed.push({type: e.type, id: e.id, name: e.tags.name || t.name, removed: gone, changed, tags: e.tags, lat: e.lat, lon: e.lon});
       }
     }));
     return {deleted, removed};
@@ -119,6 +119,35 @@ const Losses = {
     }
     if (it.w === 2) return {act: 'putback', why: 'flagstop changed a fact someone surveyed; the agency\'s data says nothing about it'};
     return {none: 'flagstop\'s change, as it does now'};
+  },
+
+  /** Show what an item is about on the map: a point flown to and marked (even one deleted since: where it was), a
+   *  route fitted whole (the feed's line for it, else the relation as OSM has it now). */
+  async show(x) {
+    const label = (x.tags || {}).name || x.name || `${x.type} ${x.id}`;
+    if (this.marker) this.marker.remove();
+    if (x.type === 'node' && x.lat != null) {
+      this.marker = new maplibregl.Marker({color: '#d6336c'}).setLngLat([x.lon, x.lat]).setPopup(new maplibregl.Popup({offset: 24}).setText(label)).addTo(map);
+      this.marker.togglePopup();
+      map.flyTo({center: [x.lon, x.lat], zoom: Math.max(map.getZoom(), 18), duration: 600});
+      return;
+    }
+    const p = x.type === 'relation' && D.patterns.find(q => q.relations.some(a => a.id === x.id));
+    const geo = p && (p.shape && p.shape.length ? p.shape : p.routed && p.routed.geometry);
+    if (geo && geo.length) { set('rel', [line(geo)]); return fit(geo, 40); }   // drawn, and in view
+    try {   // not one of the feed's routes, or a way: its points, from OSM
+      const r = await fetch(`${OSM_API}/api/0.6/${x.type}/${x.id}/full.json`);
+      if (!r.ok) return toast(`${label}: ${r.status === 410 ? 'deleted, and it has no position to show' : `OSM said ${r.status}`}`, 5000);
+      const pts = (await r.json()).elements.filter(e => e.type === 'node').map(e => [e.lon, e.lat]);
+      if (pts.length) fit(pts, 40); else toast(`${label}: nothing to show on the map`, 4000);
+    } catch (e) { toast(`${label}: ${e.message}`, 5000); }
+  },
+  /** A row that shows its object on the map when clicked (its links and buttons do their own thing). */
+  clickable(row, x) {
+    row.classList.add('go-row');
+    row.title = 'Show it on the map';
+    row.addEventListener('click', e => { if (!e.target.closest('a, button, input, summary')) this.show(x); });
+    return row;
   },
 
   /** A tag a changeset took away, back into Changes: read as OSM has the object now, and only if nobody has changed
@@ -180,14 +209,14 @@ const Losses = {
       const act = it => it.v.act === 'onto' ? `Put ${it.k}=${it.value} onto ${it.x.into.type} ${it.x.into.id}` : it.v.act === 'describe' ? `Put "${it.v.value}" in description` : it.v.act === 'tag' ? `Add ${it.v.key}=${it.v.value}` : `Put back: ${it.k}=${it.v.value || it.value}`;
       const sugg = items.filter(it => it.v.act).sort((a, b) => b.w - a.w), rest = items.filter(it => !it.v.act);
       box.append(el('details', {class: 'small', open: sugg.length ? '' : null}, el('summary', {}, el('b', {}, `Suggested: ${sugg.length}`)),
-        ...(sugg.length ? sugg.map(it => el('div', {class: 'carry'}, el('div', {}, ...head(it)), el('div', {}, el('b', {}, 'Suggest: '), act(it), el('span', {class: 'muted'}, ` — ${it.v.why}`)),
-          el('button', {class: 'b tiny primary', onclick: () => this.putBack(it)}, act(it)))) : [el('div', {class: 'muted'}, 'Nothing: what went, went as it should.')])));
+        ...(sugg.length ? sugg.map(it => this.clickable(el('div', {class: 'carry'}, el('div', {}, ...head(it)), el('div', {}, el('b', {}, 'Suggest: '), act(it), el('span', {class: 'muted'}, ` — ${it.v.why}`)),
+          el('button', {class: 'b tiny primary', onclick: () => this.putBack(it)}, act(it))), it.x)) : [el('div', {class: 'muted'}, 'Nothing: what went, went as it should.')])));
       const why = new Map();
       const kind = t => t.replace(/\s*\(.*\)\s*$/, '').replace(/^(relation|node|way) \d+ has its own: .*/, 'what it went into has its own value');   // the reason, without its particulars
       for (const it of rest) why.set(kind(it.v.none), [...(why.get(kind(it.v.none)) || []), it]);
       box.append(el('details', {class: 'small'}, el('summary', {}, el('b', {}, `Nothing to do: ${rest.length}`), el('span', {class: 'muted'}, ' (each says why)')),
         ...[...why].sort((a, b) => Math.max(...b[1].map(x => x.w)) - Math.max(...a[1].map(x => x.w))).map(([w, its]) => el('details', {}, el('summary', {}, `${w}: ${its.length}`),
-          ...its.sort((a, b) => b.w - a.w).map(it => el('div', {style: 'margin:2px 0 2px 12px'}, ...head(it), kind(it.v.none) !== it.v.none ? el('span', {class: 'muted'}, ` — ${it.v.none}`) : null, ' ', it.target && it.w ? el('button', {class: 'b tiny', title: "Not suggested, but yours to do", onclick: () => this.putBack(it)}, act(it)) : null))))));
+          ...its.sort((a, b) => b.w - a.w).map(it => this.clickable(el('div', {style: 'margin:2px 0 2px 12px'}, ...head(it), kind(it.v.none) !== it.v.none ? el('span', {class: 'muted'}, ` — ${it.v.none}`) : null, ' ', it.target && it.w ? el('button', {class: 'b tiny', title: "Not suggested, but yours to do", onclick: () => this.putBack(it)}, act(it)) : null), it.x))))));
       box.append(el('div', {class: 'k', style: 'margin-top:8px'}, 'By changeset'));
       for (const c of L.list) {
         const sec = el('details', {class: 'small'},
@@ -196,15 +225,15 @@ const Losses = {
         // a deleted way's points, untagged: said in one line, not one each
         const bare = c.deleted.filter(x => x.type === 'node' && !Object.keys(x.tags).length);
         if (bare.length) sec.append(el('div', {class: 'muted', style: 'margin:3px 0'}, `${bare.length} untagged point${bare.length > 1 ? 's' : ''} deleted (a deleted way's): `, ...bare.flatMap((x, i) => [i ? ', ' : '', link(x.type, x.id, `n${x.id}`)])));
-        for (const x of c.deleted.filter(x => !bare.includes(x))) sec.append(el('div', {class: 'carry'},
+        for (const x of c.deleted.filter(x => !bare.includes(x))) sec.append(this.clickable(el('div', {class: 'carry'},
           el('div', {}, el('b', {}, 'deleted '), link(x.type, x.id), ` "${x.tags.name || ''}"`, el('span', {class: 'muted'}, ` (last edited by ${x.by})`)),
           el('div', {class: 'mono muted'}, kv(x.tags) || '(no tags)'),
           x.into ? el('div', {}, '→ into ', link(x.into.type, x.into.id, `${x.into.type} ${x.into.id}`), ` "${x.into.name || ''}"${x.into.d != null ? `, ${Math.round(x.into.d)} m away` : ''}: `,
             Object.keys(x.lost).length ? el('span', {style: Object.entries(x.lost).some(([k, v]) => tagWeight(k, v, x.tags) === 2) ? 'color:var(--miss)' : '', class: Object.entries(x.lost).some(([k, v]) => tagWeight(k, v, x.tags) === 2) ? '' : 'muted'}, `not there: ${kv(x.lost)}`) : el('span', {style: 'color:var(--ok)'}, 'all its tags are there'))
-            : el('div', {style: 'color:var(--amb)'}, 'nothing of its kind kept by this changeset nearby: all of it is gone')));
-        for (const x of c.removed) sec.append(el('div', {style: 'margin:3px 0'}, link(x.type, x.id), ` "${x.name || ''}": `,
+            : el('div', {style: 'color:var(--amb)'}, 'nothing of its kind kept by this changeset nearby: all of it is gone')), x));
+        for (const x of c.removed) sec.append(this.clickable(el('div', {style: 'margin:3px 0'}, link(x.type, x.id), ` "${x.name || ''}": `,
           ...Object.entries(x.removed).map(([k, v]) => el('span', {style: tagWeight(k, v, {}) === 2 ? 'color:var(--miss)' : ''}, ` −${k}=${v}`)),
-          ...Object.entries(x.changed).map(([k, [a, b]]) => el('span', {}, ` ${k}: ${a} → ${b};`))));
+          ...Object.entries(x.changed).map(([k, [a, b]]) => el('span', {}, ` ${k}: ${a} → ${b};`))), x));
         box.append(sec);
       }
       if (!L.list.length) box.append(el('div', {class: 'muted small'}, 'Nothing deleted, removed or changed.'));
