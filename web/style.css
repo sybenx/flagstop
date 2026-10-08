@@ -78,7 +78,15 @@ li.item.click:hover { background: color-mix(in srgb, var(--accent) 7%, transpare
 .about { padding: 0 16px; font-size: 13px; }
 .about code { font-family: var(--mono); font-size: 12px; background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 1px 4px; border-radius: 3px; }
 .small { font-size: 12px; }
-@media (max-width: 800px) { body { grid-template-columns: 1fr; grid-template-rows: 50vh 50vh; } #side, #map { height: 50vh; } #legend { display: none; } }
+/* a phone: the list above, the map below. minmax(0, 1fr): a grid column otherwise grows to its widest content
+   (the tiles, a long name) and the page scrolls sideways; dvh: the height left by the browser's own bars */
+@media (max-width: 800px) {
+  body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55vh 45vh; grid-template-rows: 55dvh 45dvh; }
+  #side { height: 55vh; height: 55dvh; min-width: 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  #map { height: 45vh; height: 45dvh; }
+  #legend { display: none; }
+  #toast { right: 50px; max-width: calc(100vw - 70px); }
+}
 
 button.b.tiny { font-size: 11px; padding: 2px 7px; }
 .dotc.matched { background: var(--ok); } .dotc.ambiguous, .dotc.moved { background: var(--amb); } .dotc.missing { background: var(--miss); }
