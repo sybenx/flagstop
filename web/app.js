@@ -1409,6 +1409,9 @@ function renderChanges(P) {
     ` · ${last.n} change${last.n === 1 ? '' : 's'} · ${new Date(last.at).toLocaleString()}`, el('div', {class: 'muted'}, `"${last.comment}"`),
     (last.skipped || []).length ? el('div', {style: 'color:var(--miss)'}, `OSM did not delete ${last.skipped.join(', ')}: something still uses ${last.skipped.length > 1 ? 'them' : 'it'} (a route_master, another relation, a way). Still in Changes: remove the parent's reference, then upload again.`) : null,
     ...(last.undid || []).map(u => revertNote(u, last.id)),
+    // the data here has it already (refreshed since): nothing to refresh for
+    // (last.at is this browser's clock after the upload; the data's is the changeset's close, a moment before)
+    D.osm_base && new Date(D.osm_base).getTime() >= new Date(last.at).getTime() - 60000 ? el('div', {class: 'muted small'}, 'In the data shown here.') :
     el('div', {class: 'btns'}, el('button', {class: 'b tiny', onclick: () => refreshOSM()}, 'Refresh from OSM to see it'),
       el('span', {class: 'muted small', style: 'align-self:center'}, "flagstop shows OSM as it was before; OSM's copy for this can lag a few minutes"))));
   const undoing = ops.map(([, o]) => o.undoes).filter(Boolean);
@@ -1520,7 +1523,9 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 // data is rebuilt there on a schedule instead.
 let SERVER = false;
 fetch('api/refresh').then(r => r.ok ? r.json() : null).then(j => { SERVER = !!(j && 'running' in j); if (D) render(); }).catch(() => {});
-fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
+// (a request that hangs, a server restarting under it, says so after a minute rather than 'loading…' for ever)
+const dataTimeout = new AbortController(); setTimeout(() => dataTimeout.abort(), 60000);
+fetch('data/review.json', {signal: dataTimeout.signal}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(async d => {
   D = d;
   Edits.load(d.agency.agency_name, typeof FLAGSTOP_OSM !== 'undefined' ? FLAGSTOP_OSM.world : '');   // a sandbox's generation: its own basket
   Edits.settle(d.osm_base);   // what went up and is in this data now stops being laid over it
@@ -1539,7 +1544,13 @@ fetch('data/review.json').then(r => { if (!r.ok) throw new Error(r.status); retu
   // what the address says is open, now: not when the map has loaded (a background tab may not load it for a while)
   try { applyHash(); } catch (e) { console.error(e); }
   routeAll();   // each route's roads, one at a time, so the list's percentages fill in
-}).catch(e => { $('#agency').textContent = 'no data/review.json — run tool/review.py'; console.error(e); });
+}).catch(e => {
+  console.error(e);
+  if (D) return;   // it loaded; something after failed (and said so)
+  $('#agency').textContent = '';
+  $('#agency').append(String(e.message) === '404' ? 'no data/review.json — run tool/review.py' : `the review didn't load (${e.name === 'AbortError' ? 'no answer in a minute' : e.message}) `,
+    el('a', {href: '#', onclick: ev => { ev.preventDefault(); location.reload(); }}, 'try again'));
+});
 
 window.addEventListener('hashchange', () => { if (D && map) applyHash(); });
 // the basket changed in another tab of this browser (an answer, an upload): this tab takes it, so it doesn't save

@@ -171,11 +171,22 @@ def save(obj, path):
 
 
 def cached(path, fetcher, bbox, refresh=False):
+    """What fetcher(bbox) gives, kept at path: fetched again when asked, or when the area asked for reaches outside
+    the one it was fetched for (a new feed version serving a new town: its stops would read as missing)."""
+    area = path + '.bbox'
     if not refresh and os.path.exists(path):
-        return load(path)
+        try:
+            s, w, n, e = json.load(open(area))
+            inside = s <= bbox[0] and w <= bbox[1] and n >= bbox[2] and e >= bbox[3]
+        except (OSError, ValueError):
+            inside = True   # kept before areas were: taken as it is
+        if inside:
+            return load(path)
+        print(f'overpass: {os.path.basename(path)} was fetched for a smaller area', file=sys.stderr)
     print(f'overpass: fetching {os.path.basename(path)} for {_bbox(bbox)}', file=sys.stderr)
     obj = fetcher(bbox)
     save(obj, path)
+    json.dump(list(bbox), open(area, 'w'))
     return obj
 
 

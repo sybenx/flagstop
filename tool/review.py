@@ -214,7 +214,7 @@ def main():
     osm_fetched = datetime.datetime.fromtimestamp(os.path.getmtime(a.osm_pt or os.path.join(a.cache, f'{slug}-osm-pt.json'))).isoformat(timespec='minutes')
 
     feed_changes = feeddiff.track(feed, a.cache, slug)
-    other_stops = [] if a.no_others else others.gather(box, a.cache, feed.agency.get('agency_name', ''), a.also)   # what changed since the last feed version reviewed
+    other_stops = [] if a.no_others else others.gather(box, a.cache, feed.agency.get('agency_name', ''), a.also, mine={s.id: (s.lat, s.lon) for s in feed.stops.values()})   # what changed since the last feed version reviewed
     osm_stops, rels, masters, rel_ways, coords = osm.parse_pt(pt_raw)
     print(f'{len(feed.stops)} GTFS stops, {len(feed.patterns)} patterns; OSM: {len(osm_stops)} stops, {len(rels)} route relations, {len(masters)} masters', file=sys.stderr)
 

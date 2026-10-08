@@ -377,7 +377,7 @@ def proposed_tags(feed, s, conv=None):
     # 'yes' is taken from the feed.
     if s.wheelchair == '1':
         t['wheelchair'] = 'yes'
-    if s.desc:
+    if says_more(s):
         t['description'] = s.desc
     return t
 
@@ -401,7 +401,7 @@ def diff(feed, s, o):
     w = {'1': 'yes'}.get(s.wheelchair)   # never 'no' from the feed: see proposed_tags
     if w and t.get('wheelchair') != w:
         out['wheelchair'] = {'gtfs': w, 'osm': t.get('wheelchair', '')}
-    if s.desc and (t.get('description') or '') != s.desc:
+    if says_more(s) and (t.get('description') or '') != s.desc:
         out['description'] = {'gtfs': s.desc, 'osm': t.get('description', '')}
     d = dist(s.lat, s.lon, o['lat'], o['lon'])
     if d > FAR:
@@ -427,6 +427,12 @@ ABBR = {'st': 'street', 'ave': 'avenue', 'av': 'avenue', 'dr': 'drive', 'rd': 'r
 DIRECTIONS = {'n': 'North', 's': 'South', 'e': 'East', 'w': 'West'}
 ALWAYS = {'hwy': 'Highway', 'pkwy': 'Parkway', 'blvd': 'Boulevard'}
 AT_END = {'st': 'Street', 'dr': 'Drive', 'ave': 'Avenue', 'av': 'Avenue', 'rd': 'Road', 'ln': 'Lane', 'cir': 'Circle', 'ct': 'Court', 'pl': 'Place', 'ctr': 'Center'}
+
+
+def says_more(s):
+    """stop_desc, when it adds to the name: many feeds repeat the name there, or leave a word of it."""
+    d = re.sub(r'\W+', ' ', (s.desc or '').lower()).strip()
+    return bool(d) and d not in re.sub(r'\W+', ' ', (s.name or '').lower())
 
 
 def shouting(name):

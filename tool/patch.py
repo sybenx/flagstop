@@ -54,7 +54,7 @@ def apply(pt, roads, cs_list):
     """Patch the two Overpass JSON caches in place. -> how many elements changed."""
     idx = lambda data: {(e['type'], e['id']): i for i, e in enumerate(data['elements'])}
     n, latest = 0, None
-    for cs in cs_list:
+    for cs in sorted(cs_list, key=int):   # in the order they were made
         ch, closed = changes(cs)
         latest = max(filter(None, [latest, closed]))
         for action, el in ch:
@@ -62,6 +62,9 @@ def apply(pt, roads, cs_list):
             for data, wanted in ((pt, is_pt(el) or key in idx(pt)), (roads, (el['type'] == 'way' and el['tags'].get('highway') in ROADS) or key in idx(roads)
                                                                      or (el['type'] == 'node' and any(el['id'] in w.get('nodes', []) for w in roads['elements'] if w['type'] == 'way')))):
                 i = idx(data).get(key)
+                # a changeset older than what the cache has for this object (given out of order) doesn't undo it
+                if i is not None and (data['elements'][i].get('version') or 0) >= el['version'] and action != 'delete':
+                    continue
                 if action == 'delete':
                     if i is not None:
                         data['elements'].pop(i); n += 1

@@ -291,9 +291,11 @@ const Edits = {
     clientId() { return localStorage.getItem('flagstop.osm.client_id') || (this.builtIn() ? FLAGSTOP_OSM.clientId : ''); },
     builtIn() { return typeof FLAGSTOP_OSM !== 'undefined' && !!FLAGSTOP_OSM.clientId && FLAGSTOP_OSM.redirects.includes(this.redirect()); },
     setClientId(v) { localStorage.setItem('flagstop.osm.client_id', v.trim()); },
-    token() { return localStorage.getItem('flagstop.osm.token') || ''; },
-    user() { try { return JSON.parse(localStorage.getItem('flagstop.osm.user') || 'null'); } catch (e) { return null; } },
-    signOut() { localStorage.removeItem('flagstop.osm.token'); localStorage.removeItem('flagstop.osm.user'); },
+    // a sandbox's sign-in is kept apart from OSM's own (both are pages at the same address)
+    k(what) { return 'flagstop.osm.' + what + (OSM_API === 'https://api.openstreetmap.org' ? '' : '@' + OSM_API); },
+    token() { return localStorage.getItem(this.k('token')) || ''; },
+    user() { try { return JSON.parse(localStorage.getItem(this.k('user')) || 'null'); } catch (e) { return null; } },
+    signOut() { localStorage.removeItem(this.k('token')); localStorage.removeItem(this.k('user')); },
     /** Does OSM still take the stored sign-in? Once per page load; forgets it if not. -> true/false/null (can't tell) */
     async check() {
       if (!this.token()) return false;
@@ -301,7 +303,7 @@ const Edits = {
       try {
         const r = await fetch(OSM_API + '/api/0.6/user/details.json', {headers: {Authorization: 'Bearer ' + this.token()}});
         if (r.status === 401) { this.signOut(); this.checked = false; this.lost = true; return false; }
-        if (r.ok) { localStorage.setItem('flagstop.osm.user', JSON.stringify((await r.json()).user)); this.checked = true; return true; }
+        if (r.ok) { localStorage.setItem(this.k('user'), JSON.stringify((await r.json()).user)); this.checked = true; return true; }
       } catch (e) { /* offline: can't tell */ }
       return null;
     },
@@ -312,25 +314,33 @@ const Edits = {
       const verifier = [...crypto.getRandomValues(new Uint8Array(48))].map(b => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~'[b % 66]).join('');
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
       const challenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      sessionStorage.setItem('flagstop.pkce', verifier);
+      const state = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+      sessionStorage.setItem('flagstop.pkce', verifier); sessionStorage.setItem('flagstop.oauth_state', state);
       const u = new URL(OSM_WWW + '/oauth2/authorize');
-      u.search = new URLSearchParams({response_type: 'code', client_id: id, redirect_uri: this.redirect(), scope: 'read_prefs write_api', code_challenge: challenge, code_challenge_method: 'S256'}).toString();
+      u.search = new URLSearchParams({response_type: 'code', client_id: id, redirect_uri: this.redirect(), scope: 'read_prefs write_api', code_challenge: challenge, code_challenge_method: 'S256', state}).toString();
       location.href = u.toString();
     },
     /** Call on page load: finishes a sign-in if we came back with ?code=. */
     async complete() {
-      const code = new URLSearchParams(location.search).get('code');
+      const q = new URLSearchParams(location.search), code = q.get('code');
+      if (q.get('error')) {   // turned down on OSM's page, or OSM refused the app
+        history.replaceState(null, '', location.pathname + location.hash);
+        throw new Error(q.get('error_description') || q.get('error'));
+      }
       if (!code) return false;
-      const verifier = sessionStorage.getItem('flagstop.pkce');
+      const verifier = sessionStorage.getItem('flagstop.pkce'), state = sessionStorage.getItem('flagstop.oauth_state');
+      sessionStorage.removeItem('flagstop.pkce'); sessionStorage.removeItem('flagstop.oauth_state');
       history.replaceState(null, '', location.pathname);
       if (!verifier) return false;
+      // the sign-in this page started, not one another site sent the browser back with
+      if (state && q.get('state') !== state) throw new Error("the reply wasn't for the sign-in started here");
       const r = await fetch(OSM_WWW + '/oauth2/token', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams({grant_type: 'authorization_code', code, redirect_uri: this.redirect(), client_id: this.clientId(), code_verifier: verifier})});
       if (!r.ok) throw new Error('token exchange failed: ' + r.status + ' ' + (await r.text()).slice(0, 200));
       const j = await r.json();
-      localStorage.setItem('flagstop.osm.token', j.access_token);
+      localStorage.setItem(this.k('token'), j.access_token);
       const me = await fetch(OSM_API + '/api/0.6/user/details.json', {headers: {Authorization: 'Bearer ' + j.access_token}});
-      if (me.ok) localStorage.setItem('flagstop.osm.user', JSON.stringify((await me.json()).user));
+      if (me.ok) localStorage.setItem(this.k('user'), JSON.stringify((await me.json()).user));
       return true;
     },
   },
@@ -408,6 +418,10 @@ const Edits = {
       this.unsure(null);
       if (diff !== 'empty') { this.landed(unsure.id, diff, this.keptDeletes(diff), unsure.at); this.roads = []; this.save(); this.history = []; this.future = []; return {id: unsure.id, skipped: this.keptDeletes(diff), undid: [], recovered: true}; }
     }
+    // OSM takes 255 characters at most in a tag's key and in its value (an agency's long stop description, say):
+    // one over refuses the whole upload, so it's said here, by name, before anything is sent
+    const long = Object.values(this.ops).flatMap(op => Object.entries(op.tags || {}).filter(([k, v]) => [...k].length > 255 || [...String(v ?? '')].length > 255).map(([k]) => `${op.type} ${op.id} ${k}`));
+    if (long.length) throw new Error(`OSM takes 255 characters at most in a tag; too long: ${long.join(', ')}. Shorten it (or remove that line) and upload again: nothing was sent`);
     onStatus('checking objects on OSM…');
     const {versions, conflicts} = await this.check();
     if (conflicts.length) throw Object.assign(new Error('conflicts'), {conflicts});

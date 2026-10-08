@@ -204,6 +204,17 @@ test('repair: a restriction\'s from way becomes the piece that touches its via',
   Roads.rels[20].members = [mem('way', 100, 'from'), mem('way', 301, 'via'), mem('way', 300, 'to')];
   t = Roads.tx(); Roads.split(t, 100, 2);
   assert.strictEqual((await Roads.repair(t)).length, 0);
+  // the via way itself split: both pieces are the via, in order from the from way's end
+  way(302, [5, 7, 8]); way(303, [8, 10]);
+  Roads.rels[20].members = [mem('way', 100, 'from'), mem('way', 302, 'via'), mem('way', 303, 'to')];
+  t = Roads.tx();
+  const vp = Roads.split(t, 302, 7);
+  out = await Roads.repair(t);
+  const pieces = out[0].members.filter(x => x.role === 'via').map(x => x.ref);
+  assert.strictEqual(pieces.length, 2);
+  assert.ok(t.way(pieces[0]).nodes.includes(5) && t.way(pieces[1]).nodes.includes(8), 'from the from way\'s end to the to way\'s');
+  assert.ok(pieces.includes(vp) && pieces.includes(302));
+  assert.deepStrictEqual(out[0].bad, []);
 });
 
 test('repair: any other relation gets every piece, in order, where the way was', async () => {

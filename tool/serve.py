@@ -178,6 +178,7 @@ def way_ids(values):
 # something, sent from flagstop's own page (another site open in the browser can send a POST here too).
 LOCAL_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
 LOCAL_ORIGIN = re.compile(r'^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$')
+STATE_LOCK = threading.Lock()   # one /api/state write at a time
 MAX_BODY = 64 * 1024 * 1024   # bytes: a saved basket or a road patch is far less
 
 
@@ -303,9 +304,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({'error': 'not JSON'}, 400, cors=False)
             path = self._state_path(body.get('key'))
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path + '.tmp', 'w') as f:
-                json.dump({'state': body.get('state'), 'at': body.get('at')}, f)
-            os.replace(path + '.tmp', path)
+            with STATE_LOCK:
+                # an older copy (a tab that hasn't caught up) doesn't replace a newer one
+                try:
+                    kept = json.load(open(path)).get('at') or 0
+                except (OSError, ValueError):
+                    kept = 0
+                if (body.get('at') or 0) < kept:
+                    return self._json({'ok': False, 'why': 'a newer copy is kept'}, cors=False)
+                with open(path + '.tmp', 'w') as f:
+                    json.dump({'state': body.get('state'), 'at': body.get('at')}, f)
+                os.replace(path + '.tmp', path)
             return self._json({'ok': True}, cors=False)
         if urllib.parse.urlparse(self.path).path == '/api/sandbox/reset' and STATE.get('sandbox'):
             # the sandbox forgets its uploads (a new generation), this server's review is built again from it

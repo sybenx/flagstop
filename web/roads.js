@@ -265,12 +265,21 @@ const Roads = {
         members = [...rest.slice(0, k), ...out, ...rest.slice(k)];
       } else if (r.tags.type === 'restriction') {
         const via = r.members.find(x => x.role === 'via');
-        members = r.members.map(x => {
-          if (x.type !== 'way' || !t.split[x.ref] || !['from', 'to'].includes(x.role)) return x;
-          const viaNodes = !via ? [] : via.type === 'node' ? [via.ref] : (t.way(via.ref) || {nodes: []}).nodes;
+        const nodesOf = ref => t.split[ref] ? t.orig[ref] : (t.way(ref) || {nodes: []}).nodes;   // a split way: all of it, as it was
+        const viaNodes = !via ? [] : via.type === 'node' ? [via.ref] : nodesOf(via.ref);
+        members = r.members.flatMap(x => {
+          if (x.type !== 'way' || !t.split[x.ref]) return [x];
+          if (x.role === 'via') {
+            // a via way split in pieces: all of them, in order from the end the from way meets (OSM takes several via
+            // ways); kept as it was, the restriction would turn through half a road
+            const from = r.members.find(y => y.role === 'from' && y.type === 'way'), fn = from ? nodesOf(from.ref) : [], o = t.orig[x.ref];
+            const start = fn.includes(o[o.length - 1]) && !fn.includes(o[0]) ? o[o.length - 1] : o[0];
+            return this.orderFrom(t, t.split[x.ref], start).ways.map(ref => ({type: 'way', ref, role: 'via'}));
+          }
+          if (!['from', 'to'].includes(x.role)) return [x];
           const p = t.split[x.ref].find(w => { const n = t.way(w).nodes; return viaNodes.includes(n[0]) || viaNodes.includes(n[n.length - 1]); });
           if (p == null) bad.push({after: null, before: x.ref, why: `restriction ${x.role} way no longer meets its via`});
-          return {...x, ref: p ?? x.ref};
+          return [{...x, ref: p ?? x.ref}];
         });
       } else {
         members = [];

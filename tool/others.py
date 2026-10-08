@@ -84,8 +84,10 @@ def passio_stops(raw, bbox, agency):
     return out
 
 
-def gather(bbox, cache_dir, own='', also=()):
-    """Every other agency's stops in bbox: the catalog's feeds, then any given by hand (path, URL, or passio:...)."""
+def gather(bbox, cache_dir, own='', also=(), mine=None):
+    """Every other agency's stops in bbox: the catalog's feeds, then any given by hand (path, URL, or passio:...).
+    mine: {stop_id: (lat, lon)} of the feed being reviewed: a catalogued feed whose stops here are mostly those (the
+    catalog spelling the agency another way, or a regional feed that includes it) isn't another agency."""
     d = os.path.join(cache_dir, 'others')
     os.makedirs(d, exist_ok=True)
     feeds = candidates(bbox, own)
@@ -114,6 +116,11 @@ def gather(bbox, cache_dir, own='', also=()):
                 print(f"other agencies: fetching {f['agency']} ({f['id']})", file=sys.stderr)
                 open(path, 'wb').write(catalog.get(f['url'], binary=True))
             got = stops_in(path, bbox, f['agency'])
+            if mine and got:
+                same = sum(1 for x in got if x['id'] in mine and abs(mine[x['id']][0] - x['lat']) < 5e-5 and abs(mine[x['id']][1] - x['lon']) < 5e-5)
+                if same >= len(got) / 2:
+                    print(f"other agencies: {f['agency']}: {same} of its {len(got)} stops here are this feed's own: not another agency", file=sys.stderr)
+                    continue
         except Exception as ex:
             print(f"other agencies: {f['agency']}: {ex}", file=sys.stderr)
             continue

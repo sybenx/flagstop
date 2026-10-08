@@ -278,11 +278,14 @@ class Store:
     def save_log(self):
         if not self.log:
             return
-        os.makedirs(os.path.dirname(self.log), exist_ok=True)
-        with open(self.log + '.tmp', 'w') as f:
-            json.dump([{'id': c['id'], 'tags': c['tags'], 'created_at': c['created_at'], 'closed_at': c['closed_at'], 'osc': c['osc'], 'comments': c['comments']}
-                       for c in self.changesets.values() if not c['open']], f, indent=0)
-        os.replace(self.log + '.tmp', self.log)
+        # under the lock: two uploads closing at once mustn't write over each other's file, nor read the
+        # changesets while another thread adds one
+        with self.lock:
+            os.makedirs(os.path.dirname(self.log), exist_ok=True)
+            with open(self.log + '.tmp', 'w') as f:
+                json.dump([{'id': c['id'], 'tags': c['tags'], 'created_at': c['created_at'], 'closed_at': c['closed_at'], 'osc': c['osc'], 'comments': c['comments']}
+                           for c in self.changesets.values() if not c['open']], f, indent=0)
+            os.replace(self.log + '.tmp', self.log)
 
     # --- changesets ---
     def create_changeset(self, tags, at=None):
@@ -309,7 +312,10 @@ class Store:
                 raise Conflict(404, f'changeset {cid} not found')
             if not cs['open']:
                 raise Conflict(409, f'The changeset {cid} was closed at {cs["closed_at"]}')
-            root = ET.fromstring(osc)
+            try:
+                root = ET.fromstring(osc)
+            except ET.ParseError as e:
+                raise Conflict(400, f'Cannot parse valid osmChange from xml string: {e}')
             journal, placeholders, results, applied = [], {}, [], []
             when = now()
 
@@ -326,7 +332,14 @@ class Store:
                         old_id = int(x.get('id'))
                         if str(x.get('changeset')) != str(cid):
                             raise Conflict(409, f'Changeset mismatch: Provided {x.get("changeset")} but only {cid} is allowed')
-                        tags = {k.get('k'): k.get('v') for k in x.findall('tag')}
+                        tags = {}
+                        for k in x.findall('tag'):   # as OSM checks them: a key once, 255 characters at most each side
+                            kk, vv = k.get('k') or '', k.get('v') or ''
+                            if kk in tags:
+                                raise Conflict(400, f'Element {t}/{old_id} has duplicate tags with key {kk}')
+                            if len(kk) > 255 or len(vv) > 255:
+                                raise Conflict(400, f'Element {t}/{old_id}: a tag key or value is longer than 255 characters')
+                            tags[kk] = vv
                         new = {'type': t, 'id': old_id, 'tags': tags, 'visible': True, 'timestamp': when, 'changeset': cid, 'user': USER['display_name'], 'uid': USER['id']}
                         if t == 'node':
                             if action != 'delete':
@@ -673,7 +686,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/oauth2/authorize':
             back = q.get('redirect_uri', [''])[0]
             sep = '&' if '?' in back else '?'
-            self.send_response(302); self.send_header('Location', f'{back}{sep}code=sandbox'); self.end_headers(); return
+            state = q.get('state', [''])[0]   # handed back, as OSM does
+            self.send_response(302); self.send_header('Location', f'{back}{sep}code=sandbox' + (f'&state={urllib.parse.quote(state)}' if state else '')); self.end_headers(); return
         if path == '/oauth2/token' and method == 'POST':
             return self._json({'access_token': 'sandbox-token', 'token_type': 'Bearer', 'scope': 'read_prefs write_api', 'created_at': int(time.time())})
         if path == '/api/0.6/user/details.json':
