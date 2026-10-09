@@ -61,6 +61,10 @@ jobs:
         env:
           ALSO: ${{ vars.FEED_ALSO }}
         run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --no-overpass --roads-per-route ${ALSO:+--also "$ALSO"}
+      # each publish's scripts and styles at addresses of their own (?v=the commit), so a browser that kept the last
+      # ones doesn't run them with this one's (a page stuck on loading until a forced reload)
+      - name: this publish's files, not a browser's old copies
+        run: sed -i -E "s/(src|href)=\"([a-z0-9/._-]+\.(js|css))\"/\1=\"\2?v=${GITHUB_SHA::8}\"/g" web/index.html && grep -c "?v=" web/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
