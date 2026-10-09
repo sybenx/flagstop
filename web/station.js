@@ -63,6 +63,17 @@ const Station = {
     return [p.stations.length > 1 ? `${p.stations.length} station points` : null, area ? null : 'no stop area',
       p.positions.length < p.bays.length ? `${p.positions.length} stop position${p.positions.length === 1 ? '' : 's'} for ${p.bays.length} bays` : null].filter(Boolean);
   },
+  /** Of two station points, one plainly something in the station by its name or what it says it is (a lost and found,
+   *  an office, a ticket window): the other is the station, and that one is something in it. Answered so, to change
+   *  if it's wrong; nothing answered when it isn't plain. -> {main, other} or {} */
+  likely(p) {
+    if (!p || p.stations.length !== 2) return {};
+    const inside = s => /lost\s*(and|&|\+|n)?\s*found|lost property|office|ticket|customer service|information|travel cent(er|re)/i.test(s.tags.name || '') || !!s.tags.office || !!s.tags.shop;
+    const [a, b] = p.stations, ia = inside(a), ib = inside(b);
+    if (ia === ib) return {};
+    const main = ia ? b : a, other = ia ? a : b;
+    return {main: main.id, other: {[other.id]: 'office'}, guessed: true};
+  },
   /** What a point that isn't the station becomes: a lost property office by its name, else an office (iD can make
    *  that more exact). Something it already says it is (an office, a shop, another amenity) stays. */
   notStation(s) {
@@ -73,7 +84,8 @@ const Station = {
   name(p) { const a = S.station && S.station.answers || {}; const main = p.stations.find(x => x.id === a.main) || (p.stations.length === 1 ? p.stations[0] : null); return (main || p.stations[0]).tags.name || 'the station'; },
 
   open(id) {
-    S.station = {id, answers: {stopPos: true, gone: {}, localRef: {}}, live: null};
+    // stop positions are PTv2's optional part, and many careful mappers leave them out: offered, not ticked
+    S.station = {id, answers: {stopPos: false, gone: {}, localRef: {}, ...this.likely(this.place(id))}, live: null};
     S.tab = 'stops'; S.stop = null;
     render(); draw();
     const p = this.place(id), pts = [...p.stations, ...p.bays.map(b => b.o)].map(osmPos);
@@ -178,8 +190,9 @@ const Station = {
       const pick = (label, key, val, on) => el('button', {class: 'b tiny' + (on ? ' chosen' : ''), onclick: () => { a[key] = on ? null : val; render(); draw(); }}, (on ? '✓ ' : '') + label);
       const what = s => { const t = s.tags, bits = [t.opening_hours && 'hours', (t.phone || t['contact:phone']) && 'a phone', (t.website || t['contact:website']) && 'a website', t['addr:street'] && 'an address'].filter(Boolean);
         return bits.length ? ` (has ${bits.join(', ')})` : ''; };
-      const box = el('div', {class: 'fixstep', style: 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, 'Decide first'),
-        el('div', {class: 'why'}, `${p.stations.length} station points, ${Math.round(m(osmPos(p.stations[0]), osmPos(p.stations[1])))} m apart. Which is the station?`),
+      const box = el('div', {class: 'fixstep', style: a.guessed && x.main ? '' : 'border-left-color:var(--amb)'}, el('div', {class: 'k'}, a.guessed && x.main ? 'Two station points' : 'Decide first'),
+        el('div', {class: 'why'}, `${p.stations.length} station points, ${Math.round(m(osmPos(p.stations[0]), osmPos(p.stations[1])))} m apart. Which is the station?` +
+          (a.guessed ? ` Answered by their names (one is plainly something in the station); change it if that's wrong.` : '')),
         el('div', {class: 'btns'}, ...p.stations.map(s => pick(`"${s.tags.name || s.id}"${what(s)}`, 'main', s.id, a.main === s.id))));
       if (x.main) for (const s of x.extra) {
         const o = (a.other = a.other || {}), cur = o[s.id], set = v => { o[s.id] = cur === v ? null : v; render(); };

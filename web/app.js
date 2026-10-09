@@ -898,7 +898,7 @@ function syncHash() {
   // the merge card's answers survive a reload of this tab (not shared, not for later: sessionStorage)
   try { if (S.merge) sessionStorage.setItem('flagstop.merge', JSON.stringify({merge: S.merge, looked: [...S.looked]})); } catch (e) { /* storage off */ }
   try { if (S.extraGone) sessionStorage.setItem('flagstop.extra', JSON.stringify({gone: S.extraGone, looked: [...S.looked].filter(k => k.startsWith('osm:'))})); } catch (e) { /* storage off */ }
-  try { if (S.station) sessionStorage.setItem('flagstop.station', JSON.stringify({id: S.station.id, answers: S.station.answers, looked: [...S.looked]})); } catch (e) { /* storage off */ }
+  try { if (S.station) sessionStorage.setItem('flagstop.station.2', JSON.stringify({id: S.station.id, answers: S.station.answers, looked: [...S.looked]})); } catch (e) { /* storage off */ }
   const h = S.tab === 'stops' && S.station ? linkTo({station: S.station.id}) : S.tab === 'stops' && S.stop ? linkTo({stop: S.stop}) : S.tab === 'routes' && S.merge && S.pattern ? linkTo({merge: S.pattern}) : S.tab === 'routes' && S.review ? linkTo({review: S.review}) : S.tab === 'routes' && S.pattern ? linkTo({pattern: S.pattern, div: S.div}) : S.tab !== 'routes' ? linkTo({tab: S.tab}) : '';
   if (h !== location.hash && !(h === '' && !location.hash)) history.replaceState(null, '', h || location.pathname);
 }
@@ -913,7 +913,7 @@ function applyHash() {
     Merge.open(p).then(() => { if (S.merge && saved && saved.merge && saved.merge.pid === p.id) { S.merge = saved.merge; for (const k of saved.looked || []) S.looked.add(k); render(); draw(); } });
   } else if (q.get('station') && Station.place(q.get('station'))) {
     let saved = null;
-    try { saved = JSON.parse(sessionStorage.getItem('flagstop.station') || 'null'); } catch (e) { /* storage off */ }
+    try { saved = JSON.parse(sessionStorage.getItem('flagstop.station.2') || 'null'); } catch (e) { /* storage off */ }
     Station.open(q.get('station'));
     if (saved && saved.id === q.get('station')) { S.station.answers = saved.answers; for (const k of saved.looked || []) S.looked.add(k); render(); draw(); }
   } else if (q.get('review') && patternById(q.get('review'))) { selectPattern(q.get('review')); Review.open(q.get('review')); }

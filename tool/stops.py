@@ -329,6 +329,28 @@ def match(feed, osm_stops, across=None):
                 r['status'] = 'ambiguous' if len(r['osm']) > 1 and r['osm'][1]['score'] >= r['osm'][0]['score'] - 0.12 else 'matched'
                 r['diff'] = diff(feed, feed.stops[sid], osm_stops[r['osm'][0]['id']]) if r['status'] == 'matched' else None
 
+    # An undecided stop's candidates that another stop has matched (by its code, or plainly the nearest) aren't this
+    # one's: a transit centre's bays all named "150 East 500 North - Route N", say, are each their own route's bay.
+    # What's left may be one stop, or one plainly the best: matched. Again until nothing changes (one settled frees
+    # another).
+    changed = True
+    while changed:
+        changed = False
+        for sid, r in results.items():
+            if not r or r['status'] != 'ambiguous':
+                continue
+            left = [c for c in r['osm'] if not any(x != sid for x in claimed.get(c['id'], []))]
+            if len(left) == len(r['osm']) or not left:
+                continue
+            r['osm'] = left
+            # (one of the agency's own among other networks' stops, and the best of them: it's that one)
+            own = [c for c in left if not other_network(osm_stops[c['id']])]
+            if len(left) == 1 or left[1]['score'] < left[0]['score'] - 0.12 or (len(own) == 1 and own[0] is left[0]):
+                r['status'] = 'matched'
+                claimed.setdefault(left[0]['id'], []).append(sid)
+                r['diff'] = diff(feed, feed.stops[sid], osm_stops[left[0]['id']])
+                changed = True
+
     # OSM stops the feed's stops claim, so not 'OSM only' (offered for removal on the page): the one a stop matched,
     # the one it moved from, and every one an ambiguous stop could be (a second candidate of a matched stop may
     # well be a pole no route uses any more; one an unanswered question could pick is not)

@@ -511,6 +511,20 @@ class Search(unittest.TestCase):
         res, _ = stops.match(f, {'n1': own, 'n2': mine})
         self.assertEqual(stops.shared_poles(f, res, {'n1': own, 'n2': mine}), {})
 
+    def test_a_transit_centres_bays_named_alike_each_go_to_their_own(self):
+        # CVTD's transit centre: bays "150 East 500 North - Route N" (codes 100, 800); the Green Loop's stop "150 East
+        # 500 North" (2050), its own node 3 m away and the others' 40-50 m: theirs by their codes, not candidates
+        f = Feed()
+        def stop(name, sid, code, dy):
+            s = Stop(name, id=sid, code=code, lat=41.74 + dy / 110540); s.location_type = '0'; s.routes = {'r' + code}; return s
+        for s in (stop('150 East 500 North - Route 1', '1', '100', 0), stop('150 East 500 North - Route 8', '8', '800', 45), stop('150 East 500 North', '50', '2050', 90)):
+            f.stops[s.id] = s
+        nodes = {'n1': {**osm('150 East 500 North - Route 1', ref='100'), 'id': 'n1', 'type': 'node'},
+                 'n8': {**osm('150 East 500 North - Route 8 (800)', lat=41.74 + 45 / 110540, ref='800'), 'id': 'n8', 'type': 'node'},
+                 'n50': {**osm('GREEN LOOP', lat=41.74 + 93 / 110540), 'id': 'n50', 'type': 'node'}}
+        res, _ = stops.match(f, nodes)
+        self.assertEqual({k: (r['status'], r['osm'][0]['id']) for k, r in res.items()}, {'1': ('matched', 'n1'), '8': ('matched', 'n8'), '50': ('matched', 'n50')})
+
     def test_a_stop_id_is_matched_whole_not_inside_another(self):
         s = Stop('100 North Main St', id='12', code='12')
         o = osm('Elsewhere Road', lat=41.74 + 150 / 110540, **{'gtfs:stop_id': '1234'})
