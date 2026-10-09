@@ -22,9 +22,10 @@ const isPoint = o => o.id[0] === 'n' || (o.id[0] === 'w' && Array.isArray(o.node
 const THINGS = [
   {key: 'toilets', label: 'Toilets', tags: {amenity: 'toilets'}, is: t => t.amenity === 'toilets', hours: true,
     extra: [['fee', ['no', 'yes']], ['access', ['yes', 'customers']], ['wheelchair', ['yes', 'limited', 'no']]]},
-  {key: 'lost', label: 'Lost and found', tags: {amenity: 'lost_property_office'}, is: t => t.amenity === 'lost_property_office', hours: true, operator: true, extra: []},
-  {key: 'tickets', label: 'Ticket office or customer service window', tags: {shop: 'ticket', 'tickets:public_transport': 'yes'}, is: t => t.shop === 'ticket' || t.amenity === 'ticket_office', hours: true, operator: true, extra: []},
-  {key: 'info', label: 'Information desk', tags: {tourism: 'information', information: 'office'}, is: t => t.tourism === 'information' && t.information === 'office', hours: true, operator: true, extra: []},
+  // (a window: one of these may be at another's window, the same office: then it's one point, the others in its description)
+  {key: 'lost', label: 'Lost and found', words: 'lost and found', tags: {amenity: 'lost_property_office'}, is: t => t.amenity === 'lost_property_office', hours: true, operator: true, window: true, extra: []},
+  {key: 'info', label: 'Customer service or information desk', words: 'customer service and information', tags: {tourism: 'information', information: 'office'}, is: t => t.tourism === 'information' && t.information === 'office', hours: true, operator: true, window: true, extra: []},
+  {key: 'tickets', label: 'Ticket window (sells tickets or passes)', words: 'tickets and passes', tags: {shop: 'ticket', 'tickets:public_transport': 'yes'}, is: t => t.shop === 'ticket' || t.amenity === 'ticket_office', hours: true, operator: true, window: true, extra: []},
   {key: 'machine', label: 'Ticket machine', tags: {amenity: 'vending_machine', vending: 'public_transport_tickets'}, is: t => t.amenity === 'vending_machine' && /ticket/.test(t.vending || ''), hours: false, operator: true,
     extra: [['payment:cards', ['yes', 'no']], ['payment:cash', ['yes', 'no']]]},
   {key: 'water', label: 'Drinking water', tags: {amenity: 'drinking_water'}, is: t => t.amenity === 'drinking_water', hours: false, extra: [['bottle', ['yes', 'no']]]},
@@ -253,8 +254,9 @@ const Station = {
     // (one already a lost and found in OSM as it is now, after an upload the data here doesn't have yet, isn't twice)
     const there = new Set(Object.values(live.things).flat().map(o => o.id));
     const office = (x.extra || []).filter(o => !there.has(o.id) && (a.other || {})[o.id] === 'office' && this.notStation(o).amenity === 'lost_property_office');
+    const haveOf = Object.fromEntries(THINGS.map(k => [k.key, [...(live.things[k.key] || []), ...(k.key === 'lost' ? office : [])]]));
     for (const k of THINGS) {
-      const have = [...(live.things[k.key] || []), ...(k.key === 'lost' ? office : [])];
+      const have = haveOf[k.key];
       const row = el('div', {class: 'decide'});
       if (have.length) for (const o of have) {
         const st = E[o.id] = E[o.id] || {oh: o.tags.opening_hours || '', extra: {}};
@@ -265,7 +267,15 @@ const Station = {
         const t = T[k.key] = T[k.key] || {add: false, oh: '', extra: {}};
         row.append(el('label', {}, el('input', {type: 'checkbox', checked: t.add ? '' : null, onchange: e => { t.add = e.target.checked; if (t.add && !t.at) t.at = this.spot(p, main, k); re(); }}),
           ` ${k.label}`, el('span', {class: 'muted'}, ' — not in OSM here')));
-        if (t.add) row.append(...[el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.'), k.hours ? Hours.editor(t, re) : null, this.extras(k, {}, t)].filter(Boolean));
+        // a window: at another's window, the same office? Then it's that point (one office, one point), said in its description
+        const at = k.window && t.add ? [
+          ...THINGS.filter(j => j.window && j !== k).flatMap(j => haveOf[j.key].map(o => ({v: 'id:' + o.id, label: `${j.label} (${o.tags.name || 'there'})`}))),
+          ...THINGS.filter(j => j.window && j !== k && !haveOf[j.key].length && T[j.key] && T[j.key].add && !T[j.key].same).map(j => ({v: 'kind:' + j.key, label: j.label}))] : [];
+        if (t.same && !at.some(x => x.v === t.same)) t.same = '';
+        if (at.length) row.append(el('div', {class: 'small'}, 'Is it ', el('select', {class: 'b', onchange: e => { t.same = e.target.value; re(); }},
+          el('option', {value: ''}, 'a window of its own'), ...at.map(x => el('option', {value: x.v, selected: t.same === x.v ? '' : null}, `at the same window as: ${x.label}`))), '?'));
+        if (t.add && t.same) row.append(el('div', {class: 'muted small'}, `One office, one point: no point of its own; the other's description says it does ${k.words} too, and its hours are the office's.`));
+        else if (t.add) row.append(...[el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.'), k.hours ? Hours.editor(t, re) : null, this.extras(k, {}, t)].filter(Boolean));
       }
       box.append(row);
     }
@@ -425,9 +435,9 @@ const Station = {
       return mk;
     });
     const T = (S.station && S.station.answers.things) || {};
-    for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].add)) { this.markers[k].remove(); delete this.markers[k]; }
+    for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].add && !T[k].same)) { this.markers[k].remove(); delete this.markers[k]; }
     for (const [k, t] of Object.entries(T)) {
-      if (!t.add || this.markers[k]) continue;
+      if (!t.add || t.same || this.markers[k]) continue;
       const kind = THINGS.find(x => x.key === k);
       const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat(t.at).setPopup(new maplibregl.Popup({offset: 24, closeButton: false}).setText(kind.label)).addTo(map);
       mk.on('dragend', () => { const ll = mk.getLngLat(); t.at = [ll.lng, ll.lat]; syncHash(); });
@@ -565,11 +575,28 @@ const Station = {
         const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags, removeTags}, `${o.tags.name || id}: ${kind ? kind.label.toLowerCase() : 'its hours'}`);
         Edits.ops[key].thing = kind ? `the ${kind.label.toLowerCase()}` : 'the station';
       }
+      // windows at another's window: one office, one point; its description says what else it does
+      const folded = {};
+      for (const k of THINGS) { const t = (a.things || {})[k.key]; if (t && t.add && t.same) (folded[t.same] = folded[t.same] || []).push(k); }
+      const says = (k, desc, more) => {
+        const line = [k.words, ...more.map(j => j.words)].join(', ').replace(/^./, c => c.toUpperCase());
+        return !desc ? line : desc.toLowerCase().includes(line.toLowerCase()) ? desc : `${desc}; ${line}`;
+      };
+      for (const [to, more] of Object.entries(folded)) {
+        if (!to.startsWith('id:')) continue;
+        const o = objs.get(to.slice(3));
+        if (!o || !isPoint(o)) continue;
+        const k = THINGS.find(j => j.is({...o.tags, ...((a.other || {})[o.id] === 'office' ? this.notStation(o) : {})}));
+        if (!k) continue;
+        const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags: {description: says(k, (Edits.get(typeOf(o)[0] + osmNumId(o)) || o).tags.description, more)}}, `${o.tags.name || o.id}: ${k.label.toLowerCase()}`);
+        Edits.ops[key].thing = `the ${k.label.toLowerCase()}`;
+      }
       for (const k of THINGS) {
         const t = (a.things || {})[k.key];
-        if (!t || !t.add || !t.at) continue;
+        if (!t || !t.add || t.same || !t.at) continue;
         const tags = {...k.tags, ...(k.operator && main.tags.operator ? {operator: main.tags.operator} : {}), ...(t.oh ? {opening_hours: t.oh} : {}),
           ...Object.fromEntries(Object.entries(t.extra || {}).filter(([, v]) => v))};
+        if (folded['kind:' + k.key]) tags.description = says(k, '', folded['kind:' + k.key]);
         const key = Edits.createNode(t.at[1], t.at[0], tags, `${name}: ${k.label.toLowerCase()}`);
         Edits.ops[key].thing = k.label.toLowerCase();
       }
