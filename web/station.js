@@ -64,7 +64,8 @@ const Hours = {
       el('input', {type: 'time', value: r.from, onchange: e => { r.from = e.target.value; }}), '–', el('input', {type: 'time', value: r.to, onchange: e => { r.to = e.target.value; }}),
       rows.length > 1 ? el('a', {href: '#', class: 'muted small', onclick: e => { e.preventDefault(); rows.splice(rows.indexOf(r), 1); done(); }}, 'remove') : null);
     return el('div', {class: 'small'}, el('div', {}, 'Hours ', txt, Hours.ok(state.oh) ? null : el('div', {style: 'color:var(--amb)'}, "That doesn't read as opening_hours: check it (the OSM wiki has the syntax).")),
-      el('details', {}, el('summary', {class: 'muted'}, 'build them'), ...rows.map(row),
+      // (open stays open when the card is drawn again: adding a range, taking one out)
+      el('details', {open: state.building ? '' : null, ontoggle: e => { state.building = e.target.open; }}, el('summary', {class: 'muted'}, 'build them'), ...rows.map(row),
         el('div', {class: 'btns'}, el('a', {href: '#', class: 'small', onclick: e => { e.preventDefault(); rows.push({days: ['Sa'], from: '', to: ''}); done(); }}, '+ another range'),
           el('input', {value: state.note || '', placeholder: 'note, e.g. often until 19:00', size: 22, onchange: e => { state.note = e.target.value.trim(); }}),
           el('button', {class: 'b tiny', onclick: write}, 'Use these hours'))));
