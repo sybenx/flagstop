@@ -1747,7 +1747,8 @@ function changesetComment() {
   // things in a station (station.js): what was added, and whose hours or details changed
   const thing = ops.filter(o => o.thing);
   if (thing.length) {
-    const made = [...new Set(thing.filter(o => o.kind === 'create').map(o => o.thing))], told = [...new Set(thing.filter(o => o.kind === 'modify').map(o => o.thing))];
+    const madeN = thing.filter(o => o.kind === 'create').reduce((c, o) => ({...c, [o.thing]: (c[o.thing] || 0) + 1}), {});
+    const made = Object.entries(madeN).map(([t, k]) => k > 1 ? `${k} ${t}` : t), told = [...new Set(thing.filter(o => o.kind === 'modify').map(o => o.thing))];
     parts.push([made.length ? `${list(made)} added` : null, told.length ? `hours or details on ${list(told)}` : null].filter(Boolean).join('; '));
   }
   const extraSt = ops.filter(o => /second station|same station as/.test(o.note || '')).length;

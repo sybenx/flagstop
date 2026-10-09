@@ -29,7 +29,7 @@ const THINGS = [
   {key: 'machine', label: 'Ticket machine', tags: {amenity: 'vending_machine', vending: 'public_transport_tickets'}, is: t => t.amenity === 'vending_machine' && /ticket/.test(t.vending || ''), hours: false, operator: true,
     extra: [['payment:cards', ['yes', 'no']], ['payment:cash', ['yes', 'no']]]},
   {key: 'water', label: 'Drinking water', tags: {amenity: 'drinking_water'}, is: t => t.amenity === 'drinking_water', hours: false, extra: [['bottle', ['yes', 'no']]]},
-  {key: 'bikes', label: 'Bike parking', tags: {amenity: 'bicycle_parking'}, is: t => t.amenity === 'bicycle_parking', hours: false, extra: [['covered', ['no', 'yes']], ['capacity', null]]},
+  {key: 'bikes', label: 'Bike parking', tags: {amenity: 'bicycle_parking'}, is: t => t.amenity === 'bicycle_parking', hours: false, extra: [['bicycle_parking', ['stands', 'wall_loops', 'rack', 'shed', 'lockers']], ['covered', ['no', 'yes']], ['capacity', null]]},
 ];
 
 /** opening_hours, typed or built: days and times, more than one range, a note in quotes ("often until 19:00").
@@ -184,12 +184,19 @@ const Station = {
       plan.push({bay: b, point: best.point, wid: best.wid, have: have && have.o, with: shared && shared.bay});
     }
     // what's in the station already, by kind: points and shapes within its reach
-    const things = {}, here = ll => p.stations.some(st => m(osmPos(st), ll) <= this.NEAR);
+    // what's in the station already, by kind: inside the station (its area, if it's drawn as one; else the draft round
+    // what's mapped as its own, which stops short of the neighbours), not merely near it (a store's bike rack over the way)
+    const own = this.own(p);
+    const outline = (() => { const st = p.stations.find(x => x.id[0] === 'w' && Roads.ways[osmNumId(x)]);
+      return st ? Roads.ways[osmNumId(st)].nodes.map(n => Roads.nodes[n]).filter(Boolean).map(n => [n.lon, n.lat]) : own.ring; })();
+    const things = {}, inner = outline.length >= 3 ? this.grow(this.hull(outline), 3) : null;
+    // (what's the station's own by its tags, its operator's bike shed say, is in it wherever the outline runs)
+    const ownIds = new Set(own.parts.map(w => w.id));
+    const here = (ll, o) => (o && ownIds.has(o.id)) || (inner ? this.inside(ll, inner) : p.stations.some(st => m(osmPos(st), ll) <= 40));
     const cand = [...Object.values(Roads.nodes).filter(n => n.tags && Object.keys(n.tags).length).map(n => ({id: 'n' + n.id, tags: n.tags, lat: n.lat, lon: n.lon, version: n.version})),
       ...Object.values(Roads.ways).filter(w => w.tags && Object.keys(w.tags).length).map(w => { const n0 = Roads.nodes[w.nodes[0]]; return n0 && {id: 'w' + w.id, tags: w.tags, lat: n0.lat, lon: n0.lon, nodes: w.nodes, version: w.version}; }).filter(Boolean)];
-    for (const k of THINGS) things[k.key] = cand.filter(o => k.is(o.tags) && here([o.lon, o.lat]));
-    S.station.live = {area, positions, plan, things};
-    S.station.live.own = this.own(p);
+    for (const k of THINGS) things[k.key] = cand.filter(o => k.is(o.tags) && here([o.lon, o.lat], o));
+    S.station.live = {area, positions, plan, things, own};
     render(); draw();
   },
   /** The nearest point on a line to pt: {point, index (segment), d (m)}. Flat-earth over a few hundred metres. */
@@ -256,28 +263,34 @@ const Station = {
     const there = new Set(Object.values(live.things).flat().map(o => o.id));
     const office = (x.extra || []).filter(o => !there.has(o.id) && (a.other || {})[o.id] === 'office' && this.notStation(o).amenity === 'lost_property_office');
     const haveOf = Object.fromEntries(THINGS.map(k => [k.key, [...(live.things[k.key] || []), ...(k.key === 'lost' ? office : [])]]));
+    // the new ones, each its own entry ({kind, at, oh, extra, same}): a kind can be there more than once (bike racks)
+    const fresh = k => Object.entries(T).filter(([, t]) => t.kind === k.key);
     for (const k of THINGS) {
-      const have = haveOf[k.key];
-      const row = el('div', {class: 'decide'});
-      if (have.length) for (const o of have) {
+      const have = haveOf[k.key], mine = fresh(k);
+      const row = el('div', {class: 'decide'}, el('div', {}, el('b', {}, k.label), have.length || mine.length ? '' : el('span', {class: 'muted'}, ' — none in OSM here')));
+      for (const o of have) {
         const st = E[o.id] = E[o.id] || {oh: o.tags.opening_hours || '', extra: {}};
-        row.append(el('div', {}, el('b', {}, k.label), ': there, ', el('a', {href: osmLink(o.id), target: '_blank'}, o.tags.name || o.id),
+        row.append(el('div', {style: 'margin-top:4px'}, 'There: ', el('a', {href: osmLink(o.id), target: '_blank'}, o.tags.name || o.id),
           el('span', {class: 'muted'}, o.tags.opening_hours ? ` · ${o.tags.opening_hours}` : k.hours ? ' · no hours in OSM' : '')),
           ...[k.hours ? Hours.editor(st, re) : null, this.extras(k, o.tags, st)].filter(Boolean));   // (DOM append writes 'null')
-      } else {
-        const t = T[k.key] = T[k.key] || {add: false, oh: '', extra: {}};
-        row.append(el('label', {}, el('input', {type: 'checkbox', checked: t.add ? '' : null, onchange: e => { t.add = e.target.checked; if (t.add && !t.at) t.at = this.spot(p, main, k); re(); }}),
-          ` ${k.label}`, el('span', {class: 'muted'}, ' — not in OSM here')));
-        // a window: at another's window, the same office? Then it's that point (one office, one point), said in its description
-        const at = k.window && t.add ? [
-          ...THINGS.filter(j => j.window && j !== k).flatMap(j => haveOf[j.key].map(o => ({v: 'id:' + o.id, label: `${j.label} (${o.tags.name || 'there'})`}))),
-          ...THINGS.filter(j => j.window && j !== k && !haveOf[j.key].length && T[j.key] && T[j.key].add && !T[j.key].same).map(j => ({v: 'kind:' + j.key, label: j.label}))] : [];
-        if (t.same && !at.some(x => x.v === t.same)) t.same = '';
-        if (at.length) row.append(el('div', {class: 'small'}, 'Is it ', el('select', {class: 'b', onchange: e => { t.same = e.target.value; re(); }},
-          el('option', {value: ''}, 'a window of its own'), ...at.map(x => el('option', {value: x.v, selected: t.same === x.v ? '' : null}, `at the same window as: ${x.label}`))), '?'));
-        if (t.add && t.same) row.append(el('div', {class: 'muted small'}, `One office, one point: no point of its own; the other's description says it does ${k.words} too, and its hours are the office's.`));
-        else if (t.add) row.append(...[el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.'), k.hours ? Hours.editor(t, re) : null, this.extras(k, {}, t)].filter(Boolean));
       }
+      for (const [eid, t] of mine) {
+        const sub = el('div', {style: 'margin-top:6px;padding-left:8px;border-left:2px solid var(--edit)'}, el('div', {}, 'New',
+          el('a', {href: '#', class: 'muted small', style: 'margin-left:8px', onclick: e => { e.preventDefault(); delete T[eid]; re(); }}, 'take it out')));
+        // a window: at another's window, the same office? Then it's that point (one office, one point), said in its description
+        const at = k.window ? [
+          ...THINGS.filter(j => j.window && j !== k).flatMap(j => haveOf[j.key].map(o => ({v: 'id:' + o.id, label: `${j.label} (${o.tags.name || 'there'})`}))),
+          ...Object.entries(T).filter(([id, u]) => id !== eid && !u.same && (THINGS.find(j => j.key === u.kind) || {}).window && u.kind !== k.key).map(([id, u]) => ({v: 'new:' + id, label: `${THINGS.find(j => j.key === u.kind).label} (new)`}))] : [];
+        if (t.same && !at.some(x => x.v === t.same)) t.same = '';
+        if (at.length) sub.append(el('div', {class: 'small'}, 'Is it ', el('select', {class: 'b', onchange: e => { t.same = e.target.value; re(); }},
+          el('option', {value: ''}, 'a window of its own'), ...at.map(x => el('option', {value: x.v, selected: t.same === x.v ? '' : null}, `at the same window as: ${x.label}`))), '?'));
+        if (t.same) sub.append(el('div', {class: 'muted small'}, `One office, one point: no point of its own; the other's description says it does ${k.words} too, and its hours are the office's.`));
+        else sub.append(...[el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.'), k.hours ? Hours.editor(t, re) : null, this.extras(k, {}, t)].filter(Boolean));
+        row.append(sub);
+      }
+      row.append(el('div', {style: 'margin-top:4px'}, el('a', {href: '#', class: 'small', onclick: e => { e.preventDefault();
+        const n = Object.keys(T).length + 1, eid = `${k.key}-${Date.now().toString(36)}-${n}`;
+        T[eid] = {kind: k.key, oh: '', extra: {}, at: this.spot(p, main, k, mine.length)}; re(); }}, `+ add ${mine.length || have.length ? 'another' : 'one'}`)));
       box.append(row);
     }
     return box;
@@ -409,9 +422,9 @@ const Station = {
       : el('input', {size: 4, value: st.extra[key] ?? tags[key] ?? '', onchange: e => { st.extra[key] = e.target.value.trim(); }}))));
   },
   /** Where a new thing starts: a few metres from the station point, each kind its own way round, to be dragged. */
-  spot(p, main, k) {
-    const c = osmPos(main || p.stations[0]), ang = THINGS.indexOf(k) * 2 * Math.PI / THINGS.length;
-    return [c[0] + 10 * Math.cos(ang) / (111320 * Math.cos(c[1] * Math.PI / 180)), c[1] + 10 * Math.sin(ang) / 110540];
+  spot(p, main, k, nth = 0) {
+    const c = osmPos(main || p.stations[0]), ang = THINGS.indexOf(k) * 2 * Math.PI / THINGS.length + nth * 0.35, d = 10 + nth * 4;
+    return [c[0] + d * Math.cos(ang) / (111320 * Math.cos(c[1] * Math.PI / 180)), c[1] + d * Math.sin(ang) / 110540];
   },
   /** The new things' markers on the map, draggable: one per ticked kind, gone when unticked or the card closes. */
   markers: {},
@@ -436,10 +449,10 @@ const Station = {
       return mk;
     });
     const T = (S.station && S.station.answers.things) || {};
-    for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].add && !T[k].same)) { this.markers[k].remove(); delete this.markers[k]; }
+    for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].kind && !T[k].same)) { this.markers[k].remove(); delete this.markers[k]; }
     for (const [k, t] of Object.entries(T)) {
-      if (!t.add || t.same || this.markers[k]) continue;
-      const kind = THINGS.find(x => x.key === k);
+      if (!t.kind || t.same || this.markers[k]) continue;
+      const kind = THINGS.find(x => x.key === t.kind);
       const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat(t.at).setPopup(new maplibregl.Popup({offset: 24, closeButton: false}).setText(kind.label)).addTo(map);
       mk.on('dragend', () => { const ll = mk.getLngLat(); t.at = [ll.lng, ll.lat]; syncHash(); });
       mk.togglePopup();
@@ -577,8 +590,8 @@ const Station = {
         Edits.ops[key].thing = kind ? `the ${kind.label.toLowerCase()}` : 'the station';
       }
       // windows at another's window: one office, one point; its description says what else it does
-      const folded = {};
-      for (const k of THINGS) { const t = (a.things || {})[k.key]; if (t && t.add && t.same) (folded[t.same] = folded[t.same] || []).push(k); }
+      const folded = {}, kindOf = t => THINGS.find(j => j.key === t.kind);
+      for (const t of Object.values(a.things || {})) if (t.kind && t.same) (folded[t.same] = folded[t.same] || []).push(kindOf(t));
       const says = (k, desc, more) => {
         const line = [k.words, ...more.map(j => j.words)].join(', ').replace(/^./, c => c.toUpperCase());
         return !desc ? line : desc.toLowerCase().includes(line.toLowerCase()) ? desc : `${desc}; ${line}`;
@@ -592,12 +605,12 @@ const Station = {
         const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags: {description: says(k, (Edits.get(typeOf(o)[0] + osmNumId(o)) || o).tags.description, more)}}, `${o.tags.name || o.id}: ${k.label.toLowerCase()}`);
         Edits.ops[key].thing = `the ${k.label.toLowerCase()}`;
       }
-      for (const k of THINGS) {
-        const t = (a.things || {})[k.key];
-        if (!t || !t.add || t.same || !t.at) continue;
+      for (const [eid, t] of Object.entries(a.things || {})) {
+        const k = t.kind && kindOf(t);
+        if (!k || t.same || !t.at) continue;
         const tags = {...k.tags, ...(k.operator && main.tags.operator ? {operator: main.tags.operator} : {}), ...(t.oh ? {opening_hours: t.oh} : {}),
           ...Object.fromEntries(Object.entries(t.extra || {}).filter(([, v]) => v))};
-        if (folded['kind:' + k.key]) tags.description = says(k, '', folded['kind:' + k.key]);
+        if (folded['new:' + eid]) tags.description = says(k, '', folded['new:' + eid]);
         const key = Edits.createNode(t.at[1], t.at[0], tags, `${name}: ${k.label.toLowerCase()}`);
         Edits.ops[key].thing = k.label.toLowerCase();
       }
