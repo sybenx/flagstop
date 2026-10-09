@@ -272,6 +272,27 @@ const Station = {
     return box;
   },
   // ---------- the station as an area ----------
+  /** A corner more on the outline, where it was double-clicked: in the side nearest the click. */
+  addCorner(q) {
+    const A = S.station && S.station.answers.area;
+    if (!A || !A.on || !A.ring) return;
+    const closed = [...A.ring, A.ring[0]], near = this.nearestOn(closed, q);
+    A.ring.splice(near.index + 1, 0, near.point);
+    this.syncMarkers(true); render(); draw(); syncHash();
+  },
+  /** The outline's corner at a point on screen (within 12 px), or -1. */
+  cornerAt(pt) {
+    const A = S.station && S.station.answers.area;
+    if (!A || !A.on || !A.ring) return -1;
+    return A.ring.findIndex(q => { const p = map.project(q); return Math.hypot(p.x - pt.x, p.y - pt.y) < 12; });
+  },
+  /** A corner fewer (three at least: it's an area). */
+  removeCorner(i) {
+    const A = S.station && S.station.answers.area;
+    if (!A || !A.ring || A.ring.length <= 3) return toast('An area needs three corners at least', 3000);
+    A.ring.splice(i, 1);
+    this.syncMarkers(true); render(); draw(); syncHash();
+  },
   /** Convex hull of [lon, lat] points, in order round it. */
   hull(pts) {
     const P = [...new Map(pts.map(q => [q.join(), q])).values()].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -346,7 +367,7 @@ const Station = {
       el('label', {}, el('input', {type: 'checkbox', checked: A.on ? '' : null, onchange: e => { A.on = e.target.checked; if (A.on && !A.ring) A.ring = own.ring.map(q => [...q]); re(); }}),
         ' Draw it as an area: a draft round what\'s mapped there, its corners dragged to the edge of the site (imagery helps)'));
     if (A.on) {
-      box.append(el('div', {class: 'muted small'}, `${A.ring.length} corners on the map: drag them to the edge of the site. `, el('a', {href: '#', onclick: e => { e.preventDefault(); A.ring = own.ring.map(q => [...q]); this.syncMarkers(true); re(); }}, 'start again')),
+      box.append(el('div', {class: 'muted small'}, `${A.ring.length} corners on the map: drag them to the edge of the site; double-click the line for a corner more; drop a corner on another, or double-click it, to remove it. `, el('a', {href: '#', onclick: e => { e.preventDefault(); A.ring = own.ring.map(q => [...q]); this.syncMarkers(true); re(); }}, 'start again')),
         Carry.box(this.now(main), {id: 'the area', tags: {}}, () => true, {title: `The point's tags, onto the area`}),
         el('div', {class: 'muted small'}, 'The point goes; the stop area lists the area instead.'));
     }
@@ -390,10 +411,17 @@ const Station = {
     if (again || !ring || this.corners.length !== ring.length) { for (const c of this.corners) c.remove(); this.corners = []; }
     if (ring && !this.corners.length) this.corners = ring.map((q, i) => {
       const dot = document.createElement('div');
-      dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${css('--edit')};border:2px solid #fff;box-shadow:0 0 2px #000;cursor:grab`;
+      dot.style.cssText = `width:14px;height:14px;border-radius:50%;background:${css('--edit')};border:2px solid #fff;box-shadow:0 0 2px #000;cursor:grab`;
+      dot.title = 'Drag to the edge of the site; double-click to remove';
+      dot.addEventListener('dblclick', e => { e.stopPropagation(); e.preventDefault(); this.removeCorner(i); });
       const mk = new maplibregl.Marker({element: dot, draggable: true}).setLngLat(q).addTo(map);
       mk.on('drag', () => { const ll = mk.getLngLat(); ring[i] = [ll.lng, ll.lat]; draw(); });
-      mk.on('dragend', () => syncHash());
+      // dropped onto another corner: the two are one (the one dragged goes)
+      mk.on('dragend', () => {
+        const at = map.project(mk.getLngLat()), on = ring.findIndex((r, j) => j !== i && Math.hypot(map.project(r).x - at.x, map.project(r).y - at.y) < 12);
+        if (on >= 0 && ring.length > 3) return this.removeCorner(i);
+        syncHash();
+      });
       return mk;
     });
     const T = (S.station && S.station.answers.things) || {};

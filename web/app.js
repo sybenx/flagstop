@@ -314,6 +314,13 @@ function initMap() {
     // a station card: the station points, the bays, stop positions now, and the ones it would add (green) or remove (red)
     map.addLayer({id: 'stationline', type: 'line', source: 'station', filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!=', ['get', 'kind'], 'area']], paint: {'line-color': css('--edit'), 'line-width': 1.5, 'line-dasharray': [1, 1]}});
     map.addLayer({id: 'stationarea', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'area'], paint: {'line-color': css('--edit'), 'line-width': 2.5}});   // a station drawn as an area
+    // (and wider, unseen, to double-click on: a corner more where it's clicked)
+    map.addLayer({id: 'stationareahit', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'area'], paint: {'line-color': '#000', 'line-opacity': 0, 'line-width': 16}});
+    // on a corner (within a finger's width): that corner goes; on the line: a corner more
+    map.on('dblclick', e => { const i = Station.cornerAt(e.point); if (i >= 0) { e.preventDefault(); Station.removeCorner(i); } });
+    map.on('dblclick', 'stationareahit', e => { if (Station.cornerAt(e.point) >= 0) return; e.preventDefault(); Station.addCorner([e.lngLat.lng, e.lngLat.lat]); });
+    map.on('mouseenter', 'stationareahit', () => { map.getCanvas().style.cursor = 'copy'; });
+    map.on('mouseleave', 'stationareahit', () => { map.getCanvas().style.cursor = ''; });
     map.addLayer({id: 'stationpts', type: 'circle', source: 'station', filter: ['==', ['geometry-type'], 'Point'],
       paint: {'circle-radius': ['match', ['get', 'kind'], 'station', 9, 'bay', 7, 'other', 6, 5],
         'circle-color': ['match', ['get', 'kind'], 'station', '#1c1b18', 'bay', css('--accent'), 'other', '#fff', 'new', css('--edit'), 'going', css('--miss'), '#8a857b'],
