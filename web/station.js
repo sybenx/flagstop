@@ -17,6 +17,59 @@ const typeOf = o => ({n: 'node', w: 'way', r: 'relation'})[o.id[0]];
 // a way can be edited only with its node list (else the upload would empty it); the review data has them now
 const isPoint = o => o.id[0] === 'n' || (o.id[0] === 'w' && Array.isArray(o.nodes) && o.nodes.length > 1);
 
+/** What's often in a transit station, with hours of its own: nobody's data says what this one has, so the reviewer
+ *  says (nothing is ticked), and OSM gets a point for each, inside the station. extra: the few details that matter. */
+const THINGS = [
+  {key: 'toilets', label: 'Toilets', tags: {amenity: 'toilets'}, is: t => t.amenity === 'toilets', hours: true,
+    extra: [['fee', ['no', 'yes']], ['access', ['yes', 'customers']], ['wheelchair', ['yes', 'limited', 'no']]]},
+  {key: 'lost', label: 'Lost and found', tags: {amenity: 'lost_property_office'}, is: t => t.amenity === 'lost_property_office', hours: true, operator: true, extra: []},
+  {key: 'tickets', label: 'Ticket office or customer service window', tags: {shop: 'ticket', 'tickets:public_transport': 'yes'}, is: t => t.shop === 'ticket' || t.amenity === 'ticket_office', hours: true, operator: true, extra: []},
+  {key: 'info', label: 'Information desk', tags: {tourism: 'information', information: 'office'}, is: t => t.tourism === 'information' && t.information === 'office', hours: true, operator: true, extra: []},
+  {key: 'machine', label: 'Ticket machine', tags: {amenity: 'vending_machine', vending: 'public_transport_tickets'}, is: t => t.amenity === 'vending_machine' && /ticket/.test(t.vending || ''), hours: false, operator: true,
+    extra: [['payment:cards', ['yes', 'no']], ['payment:cash', ['yes', 'no']]]},
+  {key: 'water', label: 'Drinking water', tags: {amenity: 'drinking_water'}, is: t => t.amenity === 'drinking_water', hours: false, extra: [['bottle', ['yes', 'no']]]},
+  {key: 'bikes', label: 'Bike parking', tags: {amenity: 'bicycle_parking'}, is: t => t.amenity === 'bicycle_parking', hours: false, extra: [['covered', ['no', 'yes']], ['capacity', null]]},
+];
+
+/** opening_hours, typed or built: days and times, more than one range, a note in quotes ("often until 19:00").
+ *  The OSM wiki's syntax, the common part of it; anything else can be typed. */
+const Hours = {
+  DAYS: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
+  /** Mo,Tu,We,Th,Fr -> Mo-Fr; Mo,We -> Mo,We */
+  days(ds) {
+    const i = ds.map(d => this.DAYS.indexOf(d)).filter(x => x >= 0).sort((a, b) => a - b), runs = [];
+    for (const x of i) { const r = runs[runs.length - 1]; if (r && x === r[1] + 1) r[1] = x; else runs.push([x, x]); }
+    return runs.map(([a, b]) => b - a >= 2 ? `${this.DAYS[a]}-${this.DAYS[b]}` : b > a ? `${this.DAYS[a]},${this.DAYS[b]}` : this.DAYS[a]).join(',');
+  },
+  build(rows, note) {
+    const rules = rows.filter(r => r.days.length && r.from && r.to).map(r => `${r.days.length === 7 ? 'Mo-Su' : this.days(r.days)} ${r.from}-${r.to}`);
+    if (rules.length && note) rules[rules.length - 1] += ` "${note.replace(/"/g, "'")}"`;
+    return rules.join('; ');
+  },
+  /** Plausible as opening_hours: each rule days and times, off, or 24/7, with a note in quotes if any. A warning, not a gate. */
+  ok(v) {
+    if (!v) return true;
+    const d = '(Mo|Tu|We|Th|Fr|Sa|Su|PH)', days = `${d}(-${d})?(,${d}(-${d})?)*`, t = '\\d\\d:\\d\\d-\\d\\d:\\d\\d', times = `${t}(,${t})*`;
+    const rule = new RegExp(`^((${days})\\s+)?(${times}|off|closed)(\\s+"[^"]*")?$|^24/7$`);
+    return v.split(/\s*;\s*/).every(r => rule.test(r.trim()));
+  },
+  /** The editor: the value as text, and a builder that writes it. state: {oh, rows?, note?}; done(): re-render. */
+  editor(state, done) {
+    const txt = el('input', {value: state.oh || '', placeholder: 'e.g. Mo-Fr 07:00-19:00; Sa 09:00-17:00', style: 'width:100%', onchange: e => { state.oh = e.target.value.trim(); done(); }});
+    const rows = state.rows || (state.rows = [{days: ['Mo', 'Tu', 'We', 'Th', 'Fr'], from: '', to: ''}]);
+    const write = () => { const v = this.build(rows, state.note); if (v) { state.oh = v; done(); } };
+    const row = r => el('div', {class: 'btns', style: 'align-items:center;flex-wrap:wrap'},
+      ...this.DAYS.map(dd => el('label', {class: 'small', style: 'margin-right:2px'}, el('input', {type: 'checkbox', checked: r.days.includes(dd) ? '' : null, onchange: e => { r.days = e.target.checked ? [...r.days, dd] : r.days.filter(x => x !== dd); }}), dd)),
+      el('input', {type: 'time', value: r.from, onchange: e => { r.from = e.target.value; }}), '–', el('input', {type: 'time', value: r.to, onchange: e => { r.to = e.target.value; }}),
+      rows.length > 1 ? el('a', {href: '#', class: 'muted small', onclick: e => { e.preventDefault(); rows.splice(rows.indexOf(r), 1); done(); }}, 'remove') : null);
+    return el('div', {class: 'small'}, el('div', {}, 'Hours ', txt, Hours.ok(state.oh) ? null : el('div', {style: 'color:var(--amb)'}, "That doesn't read as opening_hours: check it (the OSM wiki has the syntax).")),
+      el('details', {}, el('summary', {class: 'muted'}, 'build them'), ...rows.map(row),
+        el('div', {class: 'btns'}, el('a', {href: '#', class: 'small', onclick: e => { e.preventDefault(); rows.push({days: ['Sa'], from: '', to: ''}); done(); }}, '+ another range'),
+          el('input', {value: state.note || '', placeholder: 'note, e.g. often until 19:00', size: 22, onchange: e => { state.note = e.target.value.trim(); }}),
+          el('button', {class: 'b tiny', onclick: write}, 'Use these hours'))));
+  },
+};
+
 const Station = {
   NEAR: 80,    // m: a platform this close to a station point is one of its bays
   SAME: 60,    // m: station points this close are one place
@@ -92,7 +145,7 @@ const Station = {
     frame(pts, 19);   // close enough to tell the bays apart
     this.look(p);
   },
-  close() { S.station = null; render(); draw(); },
+  close() { S.station = null; this.syncMarkers(); render(); draw(); },
 
   /** Live OSM around the place: the roads, an existing stop area, what uses the stop positions. Then where
    *  each bay's stop position would go: the nearest point on a road the buses calling there use. */
@@ -128,7 +181,12 @@ const Station = {
       const shared = plan.find(x => x.point && m(x.point, best.point) <= 4);
       plan.push({bay: b, point: best.point, wid: best.wid, have: have && have.o, with: shared && shared.bay});
     }
-    S.station.live = {area, positions, plan};
+    // what's in the station already, by kind: points and shapes within its reach
+    const things = {}, here = ll => p.stations.some(st => m(osmPos(st), ll) <= this.NEAR);
+    const cand = [...Object.values(Roads.nodes).filter(n => n.tags && Object.keys(n.tags).length).map(n => ({id: 'n' + n.id, tags: n.tags, lat: n.lat, lon: n.lon, version: n.version})),
+      ...Object.values(Roads.ways).filter(w => w.tags && Object.keys(w.tags).length).map(w => { const n0 = Roads.nodes[w.nodes[0]]; return n0 && {id: 'w' + w.id, tags: w.tags, lat: n0.lat, lon: n0.lon, nodes: w.nodes, version: w.version}; }).filter(Boolean)];
+    for (const k of THINGS) things[k.key] = cand.filter(o => k.is(o.tags) && here([o.lon, o.lat]));
+    S.station.live = {area, positions, plan, things};
     render(); draw();
   },
   /** The nearest point on a line to pt: {point, index (segment), d (m)}. Flat-earth over a few hundred metres. */
@@ -176,6 +234,75 @@ const Station = {
         inRoutes.length ? `${inRoutes.length} route relation${inRoutes.length > 1 ? 's list' : ' lists'} the station: ${inRoutes.map(r => r.name || 'r' + r.id).join(', ')}. Fix relation puts the bay in its place.` : null));
   },
 
+  /** Things in the station: its own hours (its doors), and what's often in one (THINGS): there already, to edit; or
+   *  ticked to add, as a point placed on the map. Nothing is ticked: nobody's data says what's there. */
+  thingsBox(p, x) {
+    const a = S.station.answers, live = x.live || {}, main0 = x.main || (p.stations.length === 1 ? p.stations[0] : null), main = main0 && this.now(main0);
+    const T = a.things = a.things || {}, E = a.edits = a.edits || {};
+    const re = () => { render(); draw(); };
+    const box = el('div', {class: 'fixstep'}, el('div', {class: 'k'}, 'Things in the station'),
+      el('div', {class: 'why'}, "What's there with hours of its own. Nobody's data says, so tick only what you know is there: each goes in OSM as a point inside the station, where you put it on the map."));
+    if (!live.things) { box.append(el('div', {class: 'muted small'}, live.error ? '' : 'Looking at OSM around it…')); return box; }
+    if (main) {
+      const st = E[main.id] = E[main.id] || {oh: main.tags.opening_hours || '', extra: {}};
+      box.append(el('div', {class: 'decide'}, el('div', {}, el('b', {}, `${main.tags.name || 'The station'}: when its doors are open`),
+        main.tags.opening_hours ? el('span', {class: 'muted'}, ` (OSM: ${main.tags.opening_hours})`) : el('span', {class: 'muted'}, ' (OSM: none)')), Hours.editor(st, re)));
+    } else box.append(el('div', {class: 'muted small'}, 'Say which point is the station (above), then its hours go on it.'));
+    // a second station point said to be a lost and found in it: that's the lost and found
+    // (one already a lost and found in OSM as it is now, after an upload the data here doesn't have yet, isn't twice)
+    const there = new Set(Object.values(live.things).flat().map(o => o.id));
+    const office = (x.extra || []).filter(o => !there.has(o.id) && (a.other || {})[o.id] === 'office' && this.notStation(o).amenity === 'lost_property_office');
+    for (const k of THINGS) {
+      const have = [...(live.things[k.key] || []), ...(k.key === 'lost' ? office : [])];
+      const row = el('div', {class: 'decide'});
+      if (have.length) for (const o of have) {
+        const st = E[o.id] = E[o.id] || {oh: o.tags.opening_hours || '', extra: {}};
+        row.append(el('div', {}, el('b', {}, k.label), ': there, ', el('a', {href: osmLink(o.id), target: '_blank'}, o.tags.name || o.id),
+          el('span', {class: 'muted'}, o.tags.opening_hours ? ` · ${o.tags.opening_hours}` : k.hours ? ' · no hours in OSM' : '')),
+          ...[k.hours ? Hours.editor(st, re) : null, this.extras(k, o.tags, st)].filter(Boolean));   // (DOM append writes 'null')
+      } else {
+        const t = T[k.key] = T[k.key] || {add: false, oh: '', extra: {}};
+        row.append(el('label', {}, el('input', {type: 'checkbox', checked: t.add ? '' : null, onchange: e => { t.add = e.target.checked; if (t.add && !t.at) t.at = this.spot(p, main, k); re(); }}),
+          ` ${k.label}`, el('span', {class: 'muted'}, ' — not in OSM here')));
+        if (t.add) row.append(...[el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.'), k.hours ? Hours.editor(t, re) : null, this.extras(k, {}, t)].filter(Boolean));
+      }
+      box.append(row);
+    }
+    return box;
+  },
+  /** An OSM object as OSM has it now, where the card's live look read it (an upload since the data here was built
+   *  shows), else as the data here has it. */
+  now(o) {
+    const r = o.id[0] === 'n' ? Roads.nodes[osmNumId(o)] : o.id[0] === 'w' ? Roads.ways[osmNumId(o)] : null;
+    return r && r.tags ? {...o, tags: r.tags, version: r.version ?? o.version} : o;
+  },
+  /** A kind's few details: a choice, or a number. Left at "—" (or OSM's own, in brackets), nothing changes. */
+  extras(k, tags, st) {
+    if (!k.extra.length) return null;
+    return el('div', {class: 'btns small', style: 'align-items:center;flex-wrap:wrap'}, ...k.extra.map(([key, vals]) => el('label', {}, `${key} `, vals
+      ? el('select', {class: 'b', onchange: e => { st.extra[key] = e.target.value; }}, el('option', {value: ''}, tags[key] ? `(${tags[key]})` : '—'), ...vals.map(v => el('option', {value: v, selected: st.extra[key] === v ? '' : null}, v)))
+      : el('input', {size: 4, value: st.extra[key] ?? tags[key] ?? '', onchange: e => { st.extra[key] = e.target.value.trim(); }}))));
+  },
+  /** Where a new thing starts: a few metres from the station point, each kind its own way round, to be dragged. */
+  spot(p, main, k) {
+    const c = osmPos(main || p.stations[0]), ang = THINGS.indexOf(k) * 2 * Math.PI / THINGS.length;
+    return [c[0] + 10 * Math.cos(ang) / (111320 * Math.cos(c[1] * Math.PI / 180)), c[1] + 10 * Math.sin(ang) / 110540];
+  },
+  /** The new things' markers on the map, draggable: one per ticked kind, gone when unticked or the card closes. */
+  markers: {},
+  syncMarkers() {
+    const T = (S.station && S.station.answers.things) || {};
+    for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].add)) { this.markers[k].remove(); delete this.markers[k]; }
+    for (const [k, t] of Object.entries(T)) {
+      if (!t.add || this.markers[k]) continue;
+      const kind = THINGS.find(x => x.key === k);
+      const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat(t.at).setPopup(new maplibregl.Popup({offset: 24, closeButton: false}).setText(kind.label)).addTo(map);
+      mk.on('dragend', () => { const ll = mk.getLngLat(); t.at = [ll.lng, ll.lat]; syncHash(); });
+      mk.togglePopup();
+      this.markers[k] = mk;
+    }
+  },
+
   render(P) {
     const p = this.place(S.station.id);
     if (!p) { S.station = null; return renderStops(P); }
@@ -206,6 +333,7 @@ const Station = {
       }
       d.append(box);
     }
+    d.append(this.thingsBox(p, x));
     // what flagstop would do
     const ul = el('ul', {class: 'mergelist'});
     if (live.plan) {
@@ -246,6 +374,7 @@ const Station = {
         el('button', {class: 'b primary', disabled: x.open || !live.plan ? '' : null, onclick: () => this.accept()}, x.open ? 'Looks right (decide above first)' : 'Looks right: add to Changes'),
         el('button', {class: 'b', onclick: () => { this.close(); toast('Left as OSM has it'); }}, 'Not right')));
     P.append(d);
+    this.syncMarkers();
   },
 
   /** On the map: the station points, the bays, stop positions now (grey), new ones (green), ones going (red). */
@@ -282,6 +411,27 @@ const Station = {
           if (Object.values(Roads.rels).some(r => r.members.some(mm => mm.type === typeOf(s) && mm.ref === osmNumId(s)))) say(`"${s.tags.name || s.id}" is in a relation: not deleted`);
           else Edits.delete(typeOf(s), osmNumId(s), nodeBase(s), `${s.tags.name || s.id}: the same station as ${name}`);
         }
+      }
+      // things in the station: the doors' hours on the station, what's there with its hours and details, what's added
+      const objs = new Map([...x.extra.map(o => this.now(o)), ...Object.values(live.things || {}).flat(), ...(main ? [this.now(main)] : [])].map(o => [o.id, o]));
+      for (const [id, st] of Object.entries(a.edits || {})) {
+        const o = objs.get(id);
+        if (!o || !isPoint(o)) continue;
+        const tags = {}, removeTags = [];
+        if ((st.oh || '') !== (o.tags.opening_hours || '')) { if (st.oh) tags.opening_hours = st.oh; else removeTags.push('opening_hours'); }
+        for (const [k, v] of Object.entries(st.extra || {})) if (v && v !== o.tags[k]) tags[k] = v;
+        if (!Object.keys(tags).length && !removeTags.length) continue;
+        const kind = main && o.id === main.id ? null : THINGS.find(k => k.is({...o.tags, ...((a.other || {})[o.id] === 'office' ? this.notStation(o) : {})}));
+        const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags, removeTags}, `${o.tags.name || id}: ${kind ? kind.label.toLowerCase() : 'its hours'}`);
+        Edits.ops[key].thing = kind ? `the ${kind.label.toLowerCase()}` : 'the station';
+      }
+      for (const k of THINGS) {
+        const t = (a.things || {})[k.key];
+        if (!t || !t.add || !t.at) continue;
+        const tags = {...k.tags, ...(k.operator && main.tags.operator ? {operator: main.tags.operator} : {}), ...(t.oh ? {opening_hours: t.oh} : {}),
+          ...Object.fromEntries(Object.entries(t.extra || {}).filter(([, v]) => v))};
+        const key = Edits.createNode(t.at[1], t.at[0], tags, `${name}: ${k.label.toLowerCase()}`);
+        Edits.ops[key].thing = k.label.toLowerCase();
       }
       for (const b of p.bays) members.push({type: typeOf(b.o), ref: osmNumId(b.o), role: 'platform'});
       for (const o of p.others) members.push({type: typeOf(o), ref: osmNumId(o), role: 'platform'});
@@ -336,6 +486,7 @@ const Station = {
       Edits.save();
       say(`${name}: in Changes`);
       S.station = null;
+      this.syncMarkers();
       render(); draw();
     } catch (e) { say(e.message); console.error(e); }
     finally { Edits.release(); }

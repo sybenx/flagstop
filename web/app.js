@@ -1732,6 +1732,12 @@ function changesetComment() {
   const areas = ops.filter(o => o.type === 'relation' && o.tags.public_transport === 'stop_area');
   for (const o of areas) parts.push(`${o.tags.name || 'a station'} grouped as a stop area`);
   const place = areas.length === 1 && areas[0].tags.name;
+  // things in a station (station.js): what was added, and whose hours or details changed
+  const thing = ops.filter(o => o.thing);
+  if (thing.length) {
+    const made = [...new Set(thing.filter(o => o.kind === 'create').map(o => o.thing))], told = [...new Set(thing.filter(o => o.kind === 'modify').map(o => o.thing))];
+    parts.push([made.length ? `${list(made)} added` : null, told.length ? `hours or details on ${list(told)}` : null].filter(Boolean).join('; '));
+  }
   const extraSt = ops.filter(o => /second station|same station as/.test(o.note || '')).length;
   if (extraSt) parts.push(`${n(extraSt, 'second station point')} sorted out`);   // a station's changes, said once under its name
   // a route that only lost a stop that's gone is said with the stop ("1 removed"), not as a rebuilt relation
@@ -1759,7 +1765,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
