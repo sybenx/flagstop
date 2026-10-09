@@ -226,6 +226,14 @@ class SandboxTest(unittest.TestCase):
         code, diff, _ = self.upload('<create>\n  <way id="-1" changeset="CS"><nd ref="1"/></way>\n</create>\n')
         self.assertEqual(code, 412)
 
+    def test_a_refused_upload_gives_out_no_ids(self):
+        # (else the log, replayed on start, gives later uploads other ids than the ones the page was told)
+        code, _, _ = self.upload('<create>\n  <node id="-1" changeset="CS" lat="41.74" lon="-111.83"/>\n  <way id="-2" changeset="CS"><nd ref="-1"/><nd ref="999"/></way>\n</create>\n')
+        self.assertEqual(code, 412)
+        code, diff, _ = self.upload('<create>\n  <node id="-1" changeset="CS" lat="41.74" lon="-111.83"/>\n</create>\n')
+        self.assertEqual(code, 200, diff)
+        self.assertEqual(ET.fromstring(diff)[0].get('new_id'), str(max(e['id'] for e in tiny_map()['elements'] if e['type'] == 'node') + 1))
+
     def test_closed_changeset_takes_no_more(self):
         code, diff, cid = self.upload('<modify>\n  <node id="1" version="1" changeset="CS" lat="41.74" lon="-111.83"/>\n</modify>\n')
         self.assertEqual(code, 200)

@@ -681,6 +681,23 @@ class Detours(unittest.TestCase):
         self.assertIsNone(review.detour_of(p, [], match), 'no relation')
 
 
+class Stations(unittest.TestCase):
+    def test_a_station_drawn_as_a_multipolygon_is_read_with_its_middle(self):
+        import osm
+        n = lambda i, lat, lon: {'type': 'node', 'id': i, 'lat': lat, 'lon': lon}
+        raw = {'elements': [n(1, 41.740, -111.832), n(2, 41.740, -111.830), n(3, 41.742, -111.830), n(4, 41.742, -111.832),
+                            {'type': 'way', 'id': 10, 'nodes': [1, 2, 3]}, {'type': 'way', 'id': 11, 'nodes': [3, 4, 1]},
+                            {'type': 'relation', 'id': 5, 'version': 10, 'members': [{'type': 'way', 'ref': 10, 'role': 'outer'}, {'type': 'way', 'ref': 11, 'role': 'outer'}],
+                             'tags': {'type': 'multipolygon', 'amenity': 'bus_station', 'public_transport': 'station', 'name': 'Transit Center'}},
+                            {'type': 'relation', 'id': 6, 'members': [{'type': 'way', 'ref': 10, 'role': 'outer'}], 'tags': {'type': 'multipolygon', 'area': 'yes'}}]}
+        stops, *_ = osm.parse_pt(raw)
+        self.assertIn('r5', stops)
+        self.assertNotIn('r6', stops, 'an empty outline is no station')
+        st = stops['r5']
+        self.assertEqual((st['type'], st['version'], len(st['members'])), ('relation', 10, 2))
+        self.assertAlmostEqual(st['lat'], 41.741, places=3); self.assertAlmostEqual(st['lon'], -111.831, places=3)
+
+
 class Extract(unittest.TestCase):
     """OSM from a regional extract (tool/extract.py), in the shapes Overpass gives: what the published build reads."""
 

@@ -6,6 +6,8 @@ edit lands here and nowhere else.
     python3 tool/sandbox.py snapshot [--date 2026-09-27T00:00:00Z] [--feed FEED.zip]   the area as of that date,
                                                                                       from Overpass attic -> cache/sandbox/base-<date>.json
     python3 tool/sandbox.py snapshot --masters                                        add the route_master relations to a snapshot made before they were asked for
+    python3 tool/sandbox.py snapshot --add S,W,N,E                                    add everything in a small box (a station: its shelters, islands,
+                                                                                      buildings, an empty outline) as of the snapshot's date
     python3 tool/sandbox.py serve [--port 8766] [--base cache/sandbox/base-*.json]    the sandbox API; uploads go to cache/sandbox/changes.json
     python3 tool/sandbox.py run [--port 8765] [--sandbox-port 8766] [--reset] [--refresh]
                                             everything at once: the sandbox, the review built from it (its own files,
@@ -104,6 +106,33 @@ def add_masters(base, api=REAL_OSM):
     raw['elements'].extend(new)
     json.dump(raw, open(base + '.tmp', 'w')); os.replace(base + '.tmp', base)
     print(f'{os.path.basename(base)}: {len(masters)} route_masters as of {meta["date"]}, {len(new)} new', file=sys.stderr)
+    return len(new)
+
+
+AREA_QUERY = """[out:json][timeout:180][date:"{date}"];
+nwr({bbox})->.a;
+(.a; .a >;)->.b;
+rel(bw.b)->.r;
+(.b; .r; .r >;);
+out meta;
+"""
+
+
+def add_area(base, bbox, overpass='https://overpass-api.de/api/interpreter'):
+    """Everything in a small box, as of the snapshot's date, into it: the roads-and-stops snapshot leaves out what a
+    station card reads (shelters, the islands round the bays, buildings, an area with nothing but area=yes)."""
+    with open(base) as f:
+        raw = json.load(f)
+    s, w, n, e = [float(x) for x in bbox.split(',')]
+    q = AREA_QUERY.format(date=raw['sandbox']['date'], bbox=f'{s},{w},{n},{e}')
+    with urllib.request.urlopen(urllib.request.Request(overpass, data=urllib.parse.urlencode({'data': q}).encode(), headers=UA), timeout=300) as r:
+        got = json.load(r)['elements']
+    have = {(x['type'], x['id']) for x in raw['elements']}
+    new = [x for x in got if (x['type'], x['id']) not in have]
+    raw['elements'].extend(new)
+    raw['sandbox'].setdefault('added', []).append(bbox)
+    json.dump(raw, open(base + '.tmp', 'w')); os.replace(base + '.tmp', base)
+    print(f'{os.path.basename(base)}: {len(got)} in {bbox} as of {raw["sandbox"]["date"]}, {len(new)} new', file=sys.stderr)
     return len(new)
 
 
@@ -319,6 +348,7 @@ class Store:
             except ET.ParseError as e:
                 raise Conflict(400, f'Cannot parse valid osmChange from xml string: {e}')
             journal, placeholders, results, applied = [], {}, [], []
+            ids = dict(self.next_id)   # an upload refused gives out no ids: the log, replayed, gives the same ones
             when = now()
 
             def record(t, i):
@@ -399,6 +429,7 @@ class Store:
                         self.el[t].pop(i, None); self.hist.pop((t, i), None)
                     else:
                         self.el[t][i] = old; self.hist[(t, i)] = h
+                self.next_id = ids
                 self._index()
                 raise
             cs['osc'] = (cs['osc'] + '\n' + osc) if cs['osc'] else osc
@@ -1247,6 +1278,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest='cmd')
     s = sub.add_parser('snapshot'); s.add_argument('--date', default=DATE); s.add_argument('--feed'); s.add_argument('--out'); s.add_argument('--overpass', default='https://overpass-api.de/api/interpreter')
     s.add_argument('--masters', action='store_true', help='only add the route_master relations to the newest snapshot')
+    s.add_argument('--add', metavar='S,W,N,E', help='only add everything in this box to the newest snapshot, as of its date')
     s = sub.add_parser('serve'); s.add_argument('--port', type=int, default=8766); s.add_argument('--base')
     s = sub.add_parser('run'); s.add_argument('--port', type=int, default=8765); s.add_argument('--sandbox-port', type=int, default=8766); s.add_argument('--feed')
     s.add_argument('--reset', action='store_true', help='forget every upload first'); s.add_argument('--refresh', action='store_true', help='build the review again from the sandbox')
@@ -1261,6 +1293,8 @@ def main(argv=None):
         res = replay(a.url, a.changesets)
         print(json.dumps(res))
         return 0 if all(r['ok'] for r in res) else 1
+    if a.cmd == 'snapshot' and a.add:
+        return add_area(a.out or latest_base(), a.add, a.overpass)
     if a.cmd == 'snapshot' and a.masters:
         return add_masters(a.out or latest_base())
     if a.cmd == 'snapshot':

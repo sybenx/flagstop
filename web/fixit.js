@@ -169,7 +169,7 @@ const FixIt = {
       row.append(el('div', {class: 'why'}, `The agency's point is on ${sh.network}'s ${their.tags.name || sh.id} (${sh.dist} m); OSM's stop with its code, ${own.tags.name || sh.own}, is ${sh.own_dist} m away. One stop for both networks (the old one goes), or its own?`),
         el('div', {style: 'margin:4px 0'}, lookButtons(s, null)),
         el('div', {class: 'btns'}, b(sh.id, `one stop: ${their.tags.name || sh.id}`), b(sh.own, `keep ${own.tags.name || sh.own} where it is`), b('move:' + sh.own, `move ${own.tags.name || sh.own} here`)),
-        q.answer === sh.id ? shareBox(s) : null);
+        ...[q.answer === sh.id ? shareBox(s) : null].filter(Boolean));
     } else if (q.kind === 'which') {
       row.append(el('div', {class: 'why'}, 'More than one OSM stop could be the agency\'s. Look at them on the map.'), el('div', {style: 'margin:4px 0'}, lookButtons(s, null)));
       const b = el('div', {class: 'btns'});
@@ -183,7 +183,7 @@ const FixIt = {
           el('button', {class: 'b tiny' + (q.answer === 'agency' ? ' chosen' : ''), ...off, onclick: () => set(key, 'agency')}, (q.answer === 'agency' ? '✓ ' : '') + (q.s.match && q.s.match.inroad ? "move OSM's stop to the kerb" : "move OSM's stop to the agency's point") + (mergedWith(s) ? `, remove ${mergedWith(s).tags.name || 'the other'}` : '')),
           mergedWith(s) ? el('button', {class: 'b tiny' + (q.answer === 'move-keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'move-keep')}, (q.answer === 'move-keep' ? '✓ ' : '') + `move it, keep ${mergedWith(s).tags.name || 'the other'}`) : null,
           el('button', {class: 'b tiny' + (q.answer === 'keep' ? ' chosen' : ''), ...off, onclick: () => set(key, 'keep')}, (q.answer === 'keep' ? '✓ ' : '') + 'leave it where it is')),
-        q.answer === 'agency' && mergedWith(s) ? goneBox(s) : null);
+        ...[q.answer === 'agency' && mergedWith(s) ? goneBox(s) : null].filter(Boolean));   // (DOM append writes 'null')
     } else {
       const diff = (s.match && s.match.diff) || {}, from = (diff[q.k] && diff[q.k].osm) || '—', to = (diff[q.k] && diff[q.k].gtfs) || '';
       row.append(el('div', {class: 'why'}, `${from} → ${to}. ${q.why}`),

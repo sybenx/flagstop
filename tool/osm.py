@@ -276,6 +276,16 @@ def parse_pt(raw):
                 stops[f"w{w['id']}"] = {'id': f"w{w['id']}", 'osm_id': w['id'], 'type': 'way', 'lon': sum(p[0] for p in pts) / len(pts), 'lat': sum(p[1] for p in pts) / len(pts), 'tags': t,
                                         'nodes': w.get('nodes', []), 'version': w.get('version'), 'timestamp': w.get('timestamp'), 'user': w.get('user')}
 
+    # a station drawn as a multipolygon: its middle, from its outer ways' points (they come with it, by '>')
+    for r in rels.values():
+        t = r.get('tags', {})
+        if is_stop(t) and t.get('type') == 'multipolygon':
+            pts = [(nodes[i]['lon'], nodes[i]['lat']) for m in r.get('members', []) if m['type'] == 'way' and m.get('role') != 'inner' and m['ref'] in ways
+                   for i in ways[m['ref']].get('nodes', []) if i in nodes]
+            if pts:
+                stops[f"r{r['id']}"] = {'id': f"r{r['id']}", 'osm_id': r['id'], 'type': 'relation', 'lon': sum(p[0] for p in pts) / len(pts), 'lat': sum(p[1] for p in pts) / len(pts), 'tags': t,
+                                        'members': r.get('members', []), 'version': r.get('version'), 'timestamp': r.get('timestamp'), 'user': r.get('user')}
+
     routes, masters, areas = {}, {}, {}
     for r in rels.values():
         t = r.get('tags', {})

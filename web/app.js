@@ -312,13 +312,16 @@ function initMap() {
       layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1.2, 0], 'text-allow-overlap': true, 'text-max-width': 14},
       paint: {'text-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', '#1f6b38', '#6f6a60'], 'text-halo-color': '#fff', 'text-halo-width': 2.5}});
     // a station card: the station points, the bays, stop positions now, and the ones it would add (green) or remove (red)
-    map.addLayer({id: 'stationline', type: 'line', source: 'station', filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!=', ['get', 'kind'], 'area']], paint: {'line-color': css('--edit'), 'line-width': 1.5, 'line-dasharray': [1, 1]}});
-    map.addLayer({id: 'stationarea', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'area'], paint: {'line-color': css('--edit'), 'line-width': 2.5}});   // a station drawn as an area
+    const drawn = ['in', ['get', 'kind'], ['literal', ['area', 'lane']]];
+    map.addLayer({id: 'stationold', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'old'], paint: {'line-color': css('--accent'), 'line-width': 2, 'line-dasharray': [3, 2]}});   // an empty outline there
+    map.addLayer({id: 'stationline', type: 'line', source: 'station', filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!', drawn], ['!=', ['get', 'kind'], 'old']], paint: {'line-color': css('--edit'), 'line-width': 1.5, 'line-dasharray': [1, 1]}});
+    // a station drawn as an area; a lane along the bays (wider: a road)
+    map.addLayer({id: 'stationarea', type: 'line', source: 'station', filter: drawn, paint: {'line-color': css('--edit'), 'line-width': ['match', ['get', 'kind'], 'lane', 4, 2.5]}});
     // (and wider, unseen, to double-click on: a corner more where it's clicked)
-    map.addLayer({id: 'stationareahit', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'area'], paint: {'line-color': '#000', 'line-opacity': 0, 'line-width': 16}});
+    map.addLayer({id: 'stationareahit', type: 'line', source: 'station', filter: drawn, paint: {'line-color': '#000', 'line-opacity': 0, 'line-width': 16}});
     // on a corner (within a finger's width): that corner goes; on the line: a corner more
-    map.on('dblclick', e => { const i = Station.cornerAt(e.point); if (i >= 0) { e.preventDefault(); Station.removeCorner(i); } });
-    map.on('dblclick', 'stationareahit', e => { if (Station.cornerAt(e.point) >= 0) return; e.preventDefault(); Station.addCorner([e.lngLat.lng, e.lngLat.lat]); });
+    map.on('dblclick', e => { const c = Station.cornerAt(e.point); if (c) { e.preventDefault(); Station.removeCorner(c.key, c.i); } });
+    map.on('dblclick', 'stationareahit', e => { if (Station.cornerAt(e.point)) return; e.preventDefault(); Station.addCorner([e.lngLat.lng, e.lngLat.lat], e.features[0].properties.shape || 'area'); });
     map.on('mouseenter', 'stationareahit', () => { map.getCanvas().style.cursor = 'copy'; });
     map.on('mouseleave', 'stationareahit', () => { map.getCanvas().style.cursor = ''; });
     map.addLayer({id: 'stationpts', type: 'circle', source: 'station', filter: ['==', ['geometry-type'], 'Point'],
@@ -1165,7 +1168,11 @@ function relationPlan(p) {
   // The mapper's ways stay when they already run end to end along the whole line, as well as the routed path does:
   // they may follow it where the router can't (a one-way it doesn't trust, a turn it doesn't know). Via points
   // mean the reviewer wants the route; a road edit in Changes means they were read before it.
-  const keepWays = !!(reuse && !hit.length && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length &&
+  // ...and pass where the bus halts: a stop position the routed path has that they don't (on a lane by the bays,
+  // say, off the road through the middle) means the stops wouldn't be on the route's own roads
+  const onMine = new Set(reuse ? reuse.members.filter(m => m.type === 'way').flatMap(m => ((p.graph && p.graph.ways.get(m.ref)) || {}).nodes || []) : []);
+  const missesStops = !!reuse && Object.values(p.stop_positions || {}).some(n => !onMine.has(n));
+  const keepWays = !!(reuse && !hit.length && !constrainedRouting(p) && !reuse.both_directions && !reuse.ways.chain_breaks.length && !reuse.ways.off_shape.length && !missesStops &&
     reuse.cover.shape_covered >= ((rt.score || {}).shape_covered || 0));
   const breaks = p.graph ? Router.chainBreaks(rt.ways, p.graph.ways) : [];
   const dropped = reuse && !keepWays ? reuse.ways.off_shape : [];   // the mapper's roads off the agency's line: not kept
@@ -1660,6 +1667,9 @@ const CARRY = {
   // another pole (a stop shared now, two stops made one): what it says describes that pole, not this one; the
   // agency's codes and routes go on by the share or the move. Kept only if ticked.
   stop: () => false,
+  // a platform drawn round several bays, made the walkable area it is: what describes the ground stays (its surface,
+  // lighting, step-free access, a name); what describes a bay (its bench, shelter, sign, the bus) is the bays' own
+  island: k => !/^(public_transport|highway|bus|bench|bin|shelter|departures_board|passenger_information_display|tactile_paving|covered|route_ref|ref|local_ref)$/.test(k),
 };
 /** How much a tag matters when it's lost: 2, worth a look (a fact someone surveyed: wheelchair, a shelter, opening hours,
  *  a phone; anything flagstop doesn't know, to be safe); 1, worth knowing (names, codes, who runs it); 0, low (what the
@@ -1684,11 +1694,11 @@ const Carry = {
   },
   /** The tags that go onto the one that stays: {key: value}. */
   tags(from, into, def, rename) { return Object.fromEntries(this.rows(from, into, def, rename).filter(r => r.on).map(r => [r.to, r.v])); },
-  box(from, into, def, {rename, title} = {}) {
+  box(from, into, def, {rename, title, lead} = {}) {
     const rows = this.rows(from, into, def, rename), diff = rows.filter(r => !r.same), same = rows.filter(r => r.same), lost = diff.filter(r => !r.on);
     const set = (k, on) => { Edits.answer(from.id, 'keep:' + k, on ? 'yes' : 'no'); render(); draw(); };
     return el('div', {class: 'carry small'},
-      el('div', {}, el('b', {}, title || `${from.tags.name || from.id}'s tags`), ` — it's deleted; ticked goes onto ${into.tags.name || into.id || 'the one that stays'}:`),
+      el('div', {}, el('b', {}, title || `${from.tags.name || from.id}'s tags`), ` — ${lead || `it's deleted; ticked goes onto ${into.tags.name || into.id || 'the one that stays'}:`}`),
       ...diff.map(r => el('div', {class: r.w === 0 ? 'muted' : ''}, el('label', {style: r.w === 2 && !r.on ? 'color:var(--miss)' : ''}, el('input', {type: 'checkbox', checked: r.on ? '' : null, onchange: e => set(r.k, e.target.checked)}), ` ${r.to}=${r.v}`,
         r.to !== r.k ? el('span', {class: 'muted'}, ` (its ${r.k})`) : r.now != null ? el('span', {class: 'muted'}, ` (instead of ${r.now})`) : null))),
       same.length ? el('div', {class: 'muted'}, `The same on both already: ${same.map(r => `${r.k}=${r.v}`).join(', ')}.`) : null,
@@ -1753,6 +1763,13 @@ function changesetComment() {
   const place = areas.length === 1 && areas[0].tags.name;
   // a station drawn as an area, and what its buildings are (station.js)
   for (const o of ops.filter(o => o.stationArea)) parts.push(`${o.stationArea === place ? 'the station' : o.stationArea} drawn as an area (the point's tags on it)`);
+  // an outline that was the station's: its tags back on it (moved off it before, by iD's or RapiD's Extract, say)
+  for (const o of ops.filter(o => o.outline && o.outline.changeset)) parts.push(`station tags back on its outline, as before changeset ${o.outline.changeset}${o.outline.how === 'back' ? ' (the one drawn since removed)' : o.outline.how === 'shape' ? ' (in the shape drawn since)' : ''}`);
+  const isl = ops.filter(o => o.station === 'island').length;
+  if (isl) parts.push(`${n(isl, 'island')} walkable, not platforms`);
+  const goneW = ops.filter(o => o.station === 'gone' && o.type !== 'node'), stray = goneW.filter(o => /platform line/.test(o.note || '')).length, empty = goneW.filter(o => /an empty outline/.test(o.note || '') && !(o.type === 'way' && goneW.some(r => r.type === 'relation' && r.note === o.note))).length;   // (a relation's ways go with it)
+  if (stray) parts.push(`${n(stray, 'stray platform line')} removed`);
+  if (empty) parts.push(`${n(empty, 'empty outline')} removed`);
   const bld = ops.filter(o => o.building);
   if (bld.length) parts.push(`building=${list([...new Set(bld.map(o => o.building))])} on ${n(bld.length, 'building')}`);
   // an on-demand service's pickups (ondemand.js): stops added for it, and stops given it
@@ -1775,7 +1792,7 @@ function changesetComment() {
   if (fromName.length) parts.push(`${list([...new Set(fromName.flatMap(o => Edits.diff(o).map(x => `${x.k}=${x.after}`)))])} on ${n(fromName.length, 'stop')}, as ${fromName.length > 1 ? 'their names' : 'its name'} said before changeset ${list([...new Set(fromName.map(o => String(o.fromOldName)))])}`);
   for (const o of back) if (o.type === 'relation' && o.tags.type === 'route' && o.tags.ref) routes.add(o.tags.ref);
   if (back.length) parts.push(`${list([...new Set(back.flatMap(o => Edits.diff(o).map(x => x.k)))])} put back as before changeset ${list([...new Set(back.map(o => String(o.putBack)))])}${back.length > 1 ? ` on ${back.length} objects` : ''}`);
-  const rels = ops.filter(o => o.type === 'relation' && !o.putBack && !o.fromOldName && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
+  const rels = ops.filter(o => o.type === 'relation' && !o.station && !o.outline && !o.putBack && !o.fromOldName && !String(o.note || '').startsWith('master:') && !isRoad(o) && o.tags.public_transport !== 'stop_area' && !/: without /.test(o.note || '') && !o.swap);
   for (const o of rels) {
     const r = o.route || (o.kind === 'delete' ? (String(o.note || '').match(/route (\S+)/) || [])[1] : (routeOf(patternById(o.note) || {}) || {}).short);
     if (r) routes.add(r);
@@ -1794,7 +1811,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !o.service && !/: (station area|the station point, now its area)$/.test(o.note || '') && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !o.service && !o.station && !o.outline && !/: (station area|the station point, now its area)$/.test(o.note || '') && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
@@ -1814,7 +1831,7 @@ function changesetComment() {
     .replace(/\s*\((?:w|n)-?\d+\)/g, '').replace(/\s+(?:at|from) n-?\d+/g, '').replace(/,?\s*as before changeset \d+/, '')
     .replace(/^Turn (.*) back$/, 'turned $1 back').replace(/^\w/, c => c.toLowerCase())))];
   if (road.length) parts.unshift(list(road.slice(0, 3)) + (road.length > 3 ? ` and ${road.length - 3} more road edits` : ''));
-  const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && !o.building && !o.stationArea && Edits.diff(o).some(x => x.k !== 'nodes'));
+  const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && !o.building && !o.stationArea && !o.station && !o.outline && Edits.diff(o).some(x => x.k !== 'nodes'));
   if (ways.length) parts.push(`tags on ${n(ways.length, 'road')}`);
   const rs = [...routes].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
   const what = parts.map(x => place && !rs.length ? x.replace(` at ${place}`, '').replace(`${place} grouped`, 'grouped') : x);

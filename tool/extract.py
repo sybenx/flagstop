@@ -129,11 +129,11 @@ def read(path, bbox):
     for r in osmium.FileProcessor(path, osmium.osm.RELATION):
         t = tags(r)
         kind = 'route' if t.get('type') == 'route' and t.get('route') in PT_ROUTES else t.get('type') if t.get('type') in ('route_master', 'restriction') else \
-            'stop_area' if t.get('public_transport') == 'stop_area' else None
+            'stop_area' if t.get('public_transport') == 'stop_area' else 'station' if t.get('type') == 'multipolygon' and is_pt(t) else None
         if kind:
             rels[r.id] = {'kind': kind, 'type': 'relation', 'id': r.id, 'tags': t, **meta(r),
                           'members': [{'type': {'n': 'node', 'w': 'way', 'r': 'relation'}[m.type], 'ref': m.ref, 'role': m.role} for m in r.members]}
-    want_ways = {m['ref'] for x in rels.values() if x['kind'] in ('route', 'stop_area') for m in x['members'] if m['type'] == 'way'}
+    want_ways = {m['ref'] for x in rels.values() if x['kind'] in ('route', 'stop_area', 'station') for m in x['members'] if m['type'] == 'way'}
     want_nodes = {m['ref'] for x in rels.values() if x['kind'] in ('route', 'stop_area') for m in x['members'] if m['type'] == 'node'}
     # 2. nodes and ways, with every way's node positions (untagged nodes are positions only)
     nodes, ways, at = {}, {}, {}
@@ -163,6 +163,8 @@ def read(path, bbox):
     routes = {i: x for i, x in rels.items() if x['kind'] == 'route' and here(x)}
     masters = {i: x for i, x in rels.items() if x['kind'] == 'route_master' and any(m['type'] == 'relation' and m['ref'] in routes for m in x['members'])}
     areas = {i: x for i, x in rels.items() if x['kind'] == 'stop_area' and here(x)}
+    # a station drawn as a multipolygon: in the area if a corner of it is
+    areas.update({i: x for i, x in rels.items() if x['kind'] == 'station' and any(m['type'] == 'way' and m['ref'] in ways and any(r in at and inbox(*at[r]) for r in ways[m['ref']]['nodes']) for m in x['members'])})
     clean = lambda x: {k: v for k, v in x.items() if k != 'kind'}
     # the stops and routes, and down: every member, every member way's nodes (Overpass's '>;')
     top = list(routes.values()) + list(masters.values()) + list(areas.values())

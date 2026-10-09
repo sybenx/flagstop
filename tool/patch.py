@@ -166,10 +166,11 @@ def apply(pt, roads, cs_list, fill=True):
 
 
 def complete(pt, roads):
-    """Every way a route relation lists, with its nodes, in the stops-and-routes data: from the roads data,
-    else from the API."""
+    """Every way a route relation lists (and a station drawn as a multipolygon: its outline), with its nodes, in the
+    stops-and-routes data: from the roads data, else from the API."""
     have = {(e['type'], e['id']) for e in pt['elements']}
-    want = {m['ref'] for e in pt['elements'] if e['type'] == 'relation' and e.get('tags', {}).get('type') == 'route'
+    station = lambda t: t.get('type') == 'multipolygon' and (t.get('amenity') == 'bus_station' or t.get('public_transport') == 'station')
+    want = {m['ref'] for e in pt['elements'] if e['type'] == 'relation' and (e.get('tags', {}).get('type') == 'route' or station(e.get('tags', {})))
             for m in e.get('members', []) if m['type'] == 'way' and ('way', m['ref']) not in have}
     if not want:
         return
