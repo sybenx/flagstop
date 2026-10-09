@@ -89,6 +89,10 @@ Open OSM notes by a stop (within 30 m, or 150 m when the note talks about a bus 
 
 Other operators: the Mobility Database is searched for other agencies' feeds covering the area (active, no key needed), and only their stops here are read. An OSM stop one of them serves is known to be shared: its network/operator lists both without a question, and it's never offered for removal. A feed the catalog doesn't have can be given by hand: `tool/review.py feed.zip --also shuttle.zip`; `--no-others` skips the lookup.
 
+## On-demand services
+
+A service booked by app or phone in a zone, picking up at signed stops (Cache Valley's POOL), isn't in the agency's timetable. Where the agency publishes its map with Remix, flagstop reads the zone and its pickups from it (`review.py --ondemand remix:<project>:<zone>`; the published build's `FEED_ONDEMAND`, Cache Valley's POOL by default for its feed). Each pickup is a stop in OSM with the service in its `route_ref`: a bus stop it's at gains it (the agency's own stops keep it when their routes are brought up to date), and one with a sign of its own is added at the agency's point, its address as the name and its landmark as `description`, to drag onto the sign. A line over the Routes list says how many are to do; its card lists them, on the map by state.
+
 ## When two things are made one
 
 A merge deletes something: a duplicate route relation, a second station point, a stop's node when it's shared with another network or when two stops were made one. Every tag of what's deleted is listed on the card, each with a keep option that puts it onto what stays; nothing goes unsaid. What's already the same on both says so, and what's left unticked is listed as lost with it. The defaults follow OSM practice per kind: a station's second point gives the station what it lacks (its name as `alt_name`); a duplicate relation gives the one kept what only it has, but not a service day's name or timetable; another pole's details (shelter, bench, wheelchair) describe that pole, so they're off unless ticked. The kept relation's own tags the merge changes are listed too, each with keep-as-it-is. Answers are kept per object, so the same question isn't asked twice across cards.
@@ -171,6 +175,7 @@ guessed from tags. The system id is in the Passio GO app's URL for that agency.
 ```
 tool/gtfs.py      the feed → stops, routes, patterns (one per distinct itinerary; short runs folded in)
 tool/deleted.py   what a mapper's changesets deleted or retagged, with every tag as it was (read-only)
+tool/ondemand.py  an on-demand service's zone and pickups, from the agency's Remix map
 tool/osm.py       Overpass queries and parsing
 tool/stops.py     stop conflation and tag diff
 tool/routes.py    road graph, bus-legal shape-guided routing, divergences
@@ -191,6 +196,7 @@ web/fix.js        a proposed map fix shown before/after ("OSM says / should be")
 web/merge.js      two relations for one route -> one, explained and shown
 web/station.js    a station: how it's mapped, shown on it, and the parts it lacks
 web/losses.js     what uploads took away: deleted objects' tags, tags removed or changed (as tool/deleted.py)
+web/ondemand.js   an on-demand service's pickups: what OSM has at each, its route_ref, the stops to add
 tests/            unit tests for the rules; snapshot.json, what the review decided, to diff against
 ```
 

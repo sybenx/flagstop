@@ -235,6 +235,7 @@ def main():
     ap.add_argument('--refresh', action='store_true', help='fetch OSM again even if cached (roads too, if a day old)')
     ap.add_argument('--refresh-roads', action='store_true', help='fetch the roads again, however recent')
     ap.add_argument('--also', action='append', default=[], help="another operator's GTFS zip (path or URL) whose stops share this area")
+    ap.add_argument('--ondemand', action='append', default=[], help="an on-demand service's pickups, where its feed hasn't them: remix:<project id>:<zone name>")
     ap.add_argument('--no-others', action='store_true', help="don't look up other agencies' feeds in the Mobility Database")
     ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
     ap.add_argument('--no-overpass', action='store_true', help="OSM from the cache only, however old (what tool/extract.py wrote, or yesterday's): never Overpass")
@@ -319,6 +320,53 @@ def main():
             note = stopmatch.theirs(feed, feed.stops[sid], osm_stops[m['osm'][0]['id']], m['diff'], conv, aliases)
             if note:
                 m['notes'].append(note)
+    # On-demand services (a zone booked by app, picked up at signed stops): each pickup is a stop in OSM, the service in
+    # its route_ref; at a bus stop, that stop (the agency's route_ref for it gains the service, so it isn't taken out).
+    ondemand = []
+    if a.ondemand:
+        import ondemand as od
+        plats = [o for o in osm_stops.values() if stopmatch.is_platform(o) and o['tags'].get('public_transport') != 'stop_position']
+        pgrid = stopmatch.Grid([(o['lat'], o['lon']) for o in plats])
+        by_node = {m['osm'][0]['id']: sid for sid, m in match.items() if m and m['status'] in ('matched', 'moved') and m['osm']}
+        for spec in a.ondemand:
+            svc = od.fetch(spec, a.cache)
+            if not svc:
+                continue
+            ref, out = svc['name'], []
+            for q in svc['pickups']:
+                near = sorted((stopmatch.dist(q['lat'], q['lon'], plats[k]['lat'], plats[k]['lon']), plats[k]) for k in pgrid.near(q['lat'], q['lon'], 30))
+                near = [(d, o) for d, o in near if d <= 30 and stopmatch.owner(feed, o, conv, aliases) != 'other']
+                # one that says it's the service's (POOL Stop, route_ref POOL) first, else the nearest
+                says = [x for x in near if ref.lower() in (x[1]['tags'].get('name', '') + ' ' + x[1]['tags'].get('route_ref', '')).lower()]
+                d, o = (says or near or [(None, None)])[0]
+                addr, mark = (q['label'].split(' (', 1) + [''])[:2]
+                rec = {'id': q['id'], 'label': q['label'], 'lat': q['lat'], 'lon': q['lon'], 'name': stopmatch.spelled(addr.strip(), stopmatch.lang_of(feed)), 'description': mark.rstrip(')').strip()}
+                if o:
+                    refs = [x.strip() for x in (o['tags'].get('route_ref') or '').split(';') if x.strip()]
+                    rec.update(osm=o['id'], dist=round(d), stop=by_node.get(o['id']), status='there' if ref in refs else 'add_ref')
+                    sid = by_node.get(o['id'])
+                    m = match.get(sid) if sid else None
+                    if m and m.get('diff') is not None:   # the agency's stop: its route_ref with the service in it
+                        rr = m['diff'].get('route_ref')
+                        want = [x for x in (rr['gtfs'] if rr else (o['tags'].get('route_ref') or '')).split(';') if x]
+                        if ref not in want:
+                            want.append(ref)
+                        want = ';'.join(sorted(dict.fromkeys(want), key=lambda x: (len(x), x)))
+                        have = ';'.join(sorted(refs, key=lambda x: (len(x), x)))
+                        if want == have:
+                            m['diff'].pop('route_ref', None)
+                        else:
+                            m['diff']['route_ref'] = {'gtfs': want, 'osm': o['tags'].get('route_ref', '')}
+                    if o['id'] in extra:
+                        extra.remove(o['id'])   # the service's stop: not 'OSM only'
+                else:
+                    rec['status'] = 'missing'
+                out.append(rec)
+            base = {k: v for k, v in {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes', 'network': conv.get('network'),
+                                      'network:wikidata': conv.get('network:wikidata'), 'operator': conv.get('operator'), 'route_ref': ref}.items() if v}
+            ondemand.append({'name': ref, 'zone': svc['zone'], 'tags': base, 'pickups': out})
+            n = {k: sum(1 for x in out if x['status'] == k) for k in ('there', 'add_ref', 'missing')}
+            print(f"ondemand: {ref}: {len(out)} pickups; in OSM with it: {n['there']}, a stop to give it: {n['add_ref']}, not in OSM: {n['missing']}", file=sys.stderr)
     # Which side of the street each stop is on, for the buses that call there; then what to suggest per difference.
     sides = stop_sides(feed, paths, match, osm_stops)
     names = {stopmatch.address(st.name): (st.id, st.name) for st in feed.stops.values()}
@@ -466,6 +514,7 @@ def main():
         'stop_areas': list(getattr(osm.parse_pt, 'stop_areas', {}).values()),
         'feed_changes': feed_changes,
         'extra_stops': extra,
+        'ondemand': ondemand,
         # OSM stops a detour goes round, by route (an itinerary's 'detour'): they're coming back, not gone
         'detoured': {oid: sorted({feed.routes[p.route_id].ref for p in feed.patterns if (pd := next((x for x in patterns_out if x['id'] == p.id), None)) and pd['detour'] and oid in pd['detour']['skipped']})
                      for oid in {o for x in patterns_out if x['detour'] for o in x['detour']['skipped']}},

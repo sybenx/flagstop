@@ -57,10 +57,13 @@ jobs:
         continue-on-error: true
         run: python3 tool/patch.py --since-base
       # with each route's roads: the page reads them instead of asking Overpass itself
+      # FEED_ONDEMAND (a variable, optional): an on-demand service whose pickups the feed hasn't, as review.py --ondemand
+      # takes it (remix:<project>:<zone>); Cache Valley's, the default feed's, unless set
       - name: the review (stops and routes, and each route's roads)
         env:
           ALSO: ${{ vars.FEED_ALSO }}
-        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --no-overpass --roads-per-route ${ALSO:+--also "$ALSO"}
+          ONDEMAND: ${{ vars.FEED_ONDEMAND || (vars.FEED_QUERY == '' && 'remix:d203b573:POOL' || '') }}
+        run: python3 tool/review.py "$(ls -t cache/*.zip | head -1)" --refresh --no-overpass --roads-per-route ${ALSO:+--also "$ALSO"} ${ONDEMAND:+--ondemand "$ONDEMAND"}
       # each publish's scripts and styles at addresses of their own (?v=the commit), so a browser that kept the last
       # ones doesn't run them with this one's (a page stuck on loading until a forced reload)
       - name: this publish's files, not a browser's old copies

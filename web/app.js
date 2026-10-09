@@ -275,7 +275,7 @@ function initMap() {
   };
   map.on('load', () => {
     setTimeout(() => hashRead ? draw() : applyHash());   // after the layers below exist: draw what's open
-    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'constraints', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    for (const id of ['rel', 'shape', 'routed', 'div', 'divpath', 'gtfs', 'tether', 'stops', 'osmstops', 'vias', 'constraints', 'leg', 'edits', 'fixroad', 'stale', 'look', 'station', 'ondemand']) map.addSource(id, {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
     map.addLayer({id: 'rel', type: 'line', source: 'rel', paint: {'line-color': css('--rel'), 'line-width': 7, 'line-opacity': 0.35}});
     map.addLayer({id: 'routed', type: 'line', source: 'routed', paint: {'line-color': css('--routed'), 'line-width': 4}});
     map.addLayer({id: 'shape', type: 'line', source: 'shape', paint: {'line-color': css('--shape'), 'line-width': 2, 'line-dasharray': [2, 2]}});
@@ -327,6 +327,13 @@ function initMap() {
         'circle-stroke-color': ['match', ['get', 'kind'], 'other', '#8a857b', '#fff'], 'circle-stroke-width': 2}});
     map.addLayer({id: 'stationlabels', type: 'symbol', source: 'station', filter: ['==', ['geometry-type'], 'Point'],
       layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1, 0], 'text-allow-overlap': false, 'text-optional': true},
+      paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
+    // an on-demand service (ondemand.js): its zone, and its pickups by what OSM has there
+    map.addLayer({id: 'odzone', type: 'line', source: 'ondemand', filter: ['==', ['get', 'kind'], 'zone'], paint: {'line-color': css('--accent'), 'line-width': 2, 'line-dasharray': [2, 1.5], 'line-opacity': 0.7}});
+    map.addLayer({id: 'odpts', type: 'circle', source: 'ondemand', filter: ['==', ['geometry-type'], 'Point'],
+      paint: {'circle-radius': 6, 'circle-color': ['match', ['get', 'kind'], 'there', css('--ok'), 'add_ref', css('--amb'), 'added', css('--edit'), css('--miss')], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2}});
+    map.addLayer({id: 'odlabels', type: 'symbol', source: 'ondemand', filter: ['==', ['geometry-type'], 'Point'],
+      layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1, 0], 'text-optional': true},
       paint: {'text-color': '#1c1b18', 'text-halo-color': '#fff', 'text-halo-width': 2}});
     // the reviewer's say: roads the bus doesn't use hatched, roads it does solid, via points as dots, all one colour
     map.addLayer({id: 'avoid', type: 'line', source: 'constraints', filter: ['==', ['get', 'kind'], 'avoid'], paint: {'line-color': css('--div'), 'line-width': 5, 'line-dasharray': [0.6, 1.2], 'line-opacity': 0.85}});
@@ -402,6 +409,7 @@ function draw() {
   set('stale', typeof Merge !== 'undefined' ? Merge.staleFeatures() : []);
   set('look', lookFeatures());
   set('station', typeof Station !== 'undefined' ? Station.features() : []);
+  set('ondemand', typeof OnDemand !== 'undefined' ? OnDemand.features() : []);
   Roads.drawAll();
   if (p) {
     const r = routedOf(p);
@@ -542,7 +550,7 @@ function render() {
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
   $('#tabs button[data-tab=changes]').textContent = Edits.count() ? `Changes (${Edits.count()})` : 'Changes';
   if (S.tab === 'routes') S.fixit && S.pattern ? FixIt.render(P) : S.merge && S.pattern ? Merge.render(P) : S.fix && S.pattern ? Fix.render(P) : S.review && patternById(S.review) ? Review.render(P, patternById(S.review)) : S.pattern ? renderPattern(P, patternById(S.pattern)) : renderRoutes(P);
-  else if (S.tab === 'stops') S.station ? Station.render(P) : S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
+  else if (S.tab === 'stops') S.station ? Station.render(P) : S.ondemand ? OnDemand.render(P) : S.stop ? renderStop(P, D.stops[S.stop]) : renderStops(P);
   else if (S.tab === 'extra') renderExtra(P);
   else if (S.tab === 'changes') { renderChanges(P); const x = el('div', {class: 'detail'}); Losses.render(x); P.append(x); }   // and what uploads took away
   else renderAbout(P);
@@ -627,6 +635,8 @@ function renderRoutes(P) {
       el('span', {class: 'dotc ambiguous'}), el('div', {class: 'grow'}, el('div', {class: 't'}, `${pl.stations[0].tags.name || 'A station'}: ${pl.bays.length} bays`), el('div', {class: 's', style: 'white-space:normal'}, is.join(' · '))),
       el('span', {class: 'chip warn'}, 'station')));
   }
+  // an on-demand service the feed hasn't (ondemand.js): its pickups, from the agency's map
+  for (const svc of rf ? [] : D.ondemand || []) P.append(OnDemand.line(svc));
   const fc = feedChanges();
   if (fc) P.append(fc);
   P.append(el('h2', {}, rf ? `Itineraries: ${ROUTE_FILTERS[rf][0]}` : 'Itineraries, worst first'), ...(rf ? [el('div', {class: 'hint'}, el('a', {href: '#', onclick: e => { e.preventDefault(); S.routeFilter = null; render(); }}, 'show all'))] : []),
@@ -1331,6 +1341,7 @@ function renderStops(P) {
   for (const [v, l] of [['all', 'all stops'], ['matched', 'matched'], ['decide', 'to decide (which, or moved)'], ['todo', 'to decide, or not in OSM'], ['missing', 'not in OSM'], ['moved', 'probably moved'], ['ambiguous', 'ambiguous'], ['diff', 'tags differ'], ['name', 'name differs'], ['position', 'position differs'], ['desc', 'has announcement']]) sel.append(el('option', {value: v, selected: S.filter === v ? '' : null}, l));
   f.append(sel, el('input', {placeholder: 'search name, announcement, code', value: S.q, oninput: e => { S.q = e.target.value; render(); draw(); }}));
   P.append(f);
+  if (S.filter === 'all' && !S.q) for (const svc of D.ondemand || []) P.append(OnDemand.line(svc));
   const places = Station.places();
   if (places.length && S.filter === 'all' && !S.q) {
     P.append(el('h2', {}, `${places.length} station${places.length > 1 ? 's' : ''}`));
@@ -1744,6 +1755,11 @@ function changesetComment() {
   for (const o of ops.filter(o => o.stationArea)) parts.push(`${o.stationArea === place ? 'the station' : o.stationArea} drawn as an area (the point's tags on it)`);
   const bld = ops.filter(o => o.building);
   if (bld.length) parts.push(`building=${list([...new Set(bld.map(o => o.building))])} on ${n(bld.length, 'building')}`);
+  // an on-demand service's pickups (ondemand.js): stops added for it, and stops given it
+  for (const name of [...new Set(ops.filter(o => o.service).map(o => o.service))]) {
+    const made = ops.filter(o => o.service === name && o.kind === 'create').length, given = ops.filter(o => o.service === name && o.kind === 'modify').length;
+    parts.push([made ? `${n(made, `${name} stop`)} added` : null, given ? `${name} on ${n(given, 'stop')}` : null].filter(Boolean).join(', '));
+  }
   // things in a station (station.js): what was added, and whose hours or details changed
   const thing = ops.filter(o => o.thing);
   if (thing.length) {
@@ -1778,7 +1794,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !/: (station area|the station point, now its area)$/.test(o.note || '') && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !o.service && !/: (station area|the station point, now its area)$/.test(o.note || '') && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
@@ -1959,7 +1975,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   // the tab you're on, clicked again: back to its list (out of a route, a card, a stop)
   const again = S.tab === b.dataset.tab;
   S.tab = b.dataset.tab;
-  if (S.tab === 'stops' && again) S.station = null;
+  if (S.tab === 'stops' && again) { S.station = null; S.ondemand = null; }
   if (S.tab !== 'routes' || again) { S.pattern = null; S.review = null; S.fix = null; S.merge = null; S.fixit = null; S.div = null; S.routed = null; S.routedBy = null; S.viaMode = false; }
   if (S.tab !== 'stops' || again) S.stop = null;
   document.querySelectorAll('.maplibregl-popup').forEach(x => x.remove());
