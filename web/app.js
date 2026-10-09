@@ -312,7 +312,8 @@ function initMap() {
       layout: {'text-field': ['get', 'label'], 'text-size': 11, 'text-font': ['Open Sans Semibold'], 'text-anchor': 'left', 'text-offset': [1.2, 0], 'text-allow-overlap': true, 'text-max-width': 14},
       paint: {'text-color': ['match', ['get', 'kind'], 'now', css('--miss'), 'to', '#1f6b38', '#6f6a60'], 'text-halo-color': '#fff', 'text-halo-width': 2.5}});
     // a station card: the station points, the bays, stop positions now, and the ones it would add (green) or remove (red)
-    map.addLayer({id: 'stationline', type: 'line', source: 'station', filter: ['==', ['geometry-type'], 'LineString'], paint: {'line-color': css('--edit'), 'line-width': 1.5, 'line-dasharray': [1, 1]}});
+    map.addLayer({id: 'stationline', type: 'line', source: 'station', filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!=', ['get', 'kind'], 'area']], paint: {'line-color': css('--edit'), 'line-width': 1.5, 'line-dasharray': [1, 1]}});
+    map.addLayer({id: 'stationarea', type: 'line', source: 'station', filter: ['==', ['get', 'kind'], 'area'], paint: {'line-color': css('--edit'), 'line-width': 2.5}});   // a station drawn as an area
     map.addLayer({id: 'stationpts', type: 'circle', source: 'station', filter: ['==', ['geometry-type'], 'Point'],
       paint: {'circle-radius': ['match', ['get', 'kind'], 'station', 9, 'bay', 7, 'other', 6, 5],
         'circle-color': ['match', ['get', 'kind'], 'station', '#1c1b18', 'bay', css('--accent'), 'other', '#fff', 'new', css('--edit'), 'going', css('--miss'), '#8a857b'],
@@ -1732,6 +1733,10 @@ function changesetComment() {
   const areas = ops.filter(o => o.type === 'relation' && o.tags.public_transport === 'stop_area');
   for (const o of areas) parts.push(`${o.tags.name || 'a station'} grouped as a stop area`);
   const place = areas.length === 1 && areas[0].tags.name;
+  // a station drawn as an area, and what its buildings are (station.js)
+  for (const o of ops.filter(o => o.stationArea)) parts.push(`${o.stationArea === place ? 'the station' : o.stationArea} drawn as an area (the point's tags on it)`);
+  const bld = ops.filter(o => o.building);
+  if (bld.length) parts.push(`building=${list([...new Set(bld.map(o => o.building))])} on ${n(bld.length, 'building')}`);
   // things in a station (station.js): what was added, and whose hours or details changed
   const thing = ops.filter(o => o.thing);
   if (thing.length) {
@@ -1765,7 +1770,7 @@ function changesetComment() {
   if (rebuilt && !dropped) parts.push(`${n(rebuilt, 'relation')} rebuilt from the timetable`);
   if (made.length) parts.push(`${n(made.length, 'relation')} added`);
   // stops
-  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
+  const nodes = ops.filter(o => o.type === 'node' && !o.thing && !/: (station area|the station point, now its area)$/.test(o.note || '') && !o.putBack && !o.fromOldName && !isRoad(o) && !/stop position|second station|same station as|: station$/.test(o.note || ''));
   for (const o of nodes) if (o.route) routes.add(o.route);
   const added = nodes.filter(o => o.kind === 'create').length, moved = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k === 'position')).length;
   const tagged = nodes.filter(o => o.kind === 'modify' && Edits.diff(o).some(x => x.k !== 'position') && !Edits.diff(o).every(x => x.after == null));
@@ -1785,7 +1790,7 @@ function changesetComment() {
     .replace(/\s*\((?:w|n)-?\d+\)/g, '').replace(/\s+(?:at|from) n-?\d+/g, '').replace(/,?\s*as before changeset \d+/, '')
     .replace(/^Turn (.*) back$/, 'turned $1 back').replace(/^\w/, c => c.toLowerCase())))];
   if (road.length) parts.unshift(list(road.slice(0, 3)) + (road.length > 3 ? ` and ${road.length - 3} more road edits` : ''));
-  const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && Edits.diff(o).some(x => x.k !== 'nodes'));
+  const ways = ops.filter(o => o.type === 'way' && !isRoad(o) && !o.building && !o.stationArea && Edits.diff(o).some(x => x.k !== 'nodes'));
   if (ways.length) parts.push(`tags on ${n(ways.length, 'road')}`);
   const rs = [...routes].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
   const what = parts.map(x => place && !rs.length ? x.replace(` at ${place}`, '').replace(`${place} grouped`, 'grouped') : x);

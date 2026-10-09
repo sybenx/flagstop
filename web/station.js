@@ -187,6 +187,7 @@ const Station = {
       ...Object.values(Roads.ways).filter(w => w.tags && Object.keys(w.tags).length).map(w => { const n0 = Roads.nodes[w.nodes[0]]; return n0 && {id: 'w' + w.id, tags: w.tags, lat: n0.lat, lon: n0.lon, nodes: w.nodes, version: w.version}; }).filter(Boolean)];
     for (const k of THINGS) things[k.key] = cand.filter(o => k.is(o.tags) && here([o.lon, o.lat]));
     S.station.live = {area, positions, plan, things};
+    S.station.live.own = this.own(p);
     render(); draw();
   },
   /** The nearest point on a line to pt: {point, index (segment), d (m)}. Flat-earth over a few hundred metres. */
@@ -270,6 +271,98 @@ const Station = {
     }
     return box;
   },
+  // ---------- the station as an area ----------
+  /** Convex hull of [lon, lat] points, in order round it. */
+  hull(pts) {
+    const P = [...new Map(pts.map(q => [q.join(), q])).values()].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (P.length < 3) return P;
+    const k = Math.cos(P[0][1] * Math.PI / 180), cr = (o, a, b) => ((a[0] - o[0]) * k) * (b[1] - o[1]) - (a[1] - o[1]) * ((b[0] - o[0]) * k);
+    const lo = [], up = [];
+    for (const q of P) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+    for (const q of [...P].reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  },
+  /** A ring pushed out by d metres from its middle (a hull, so the middle is inside). */
+  grow(ring, d) {
+    const c = [ring.reduce((a, q) => a + q[0], 0) / ring.length, ring.reduce((a, q) => a + q[1], 0) / ring.length], k = Math.cos(c[1] * Math.PI / 180);
+    return ring.map(q => { const dx = (q[0] - c[0]) * 111320 * k, dy = (q[1] - c[1]) * 110540, L = Math.hypot(dx, dy) || 1;
+      return [q[0] + d * dx / L / (111320 * k), q[1] + d * dy / L / 110540]; });
+  },
+  inside(q, ring) {
+    let r = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > q[1]) !== (yj > q[1]) && q[0] < (xj - xi) * (q[1] - yi) / (yj - yi) + xi) r = !r;
+    }
+    return r;
+  },
+  /** What OSM has mapped as this station's, read live: its platforms (points and areas), the shelters for its buses,
+   *  the buildings among its platforms or named for whoever runs it, its bike parking. A neighbour (a theatre over
+   *  the road) isn't. -> {parts: [{id, tags, ll: [[lon, lat]...]}], buildings: [...], ring: the draft outline} */
+  own(p) {
+    const ll = n => Roads.nodes[n] && [Roads.nodes[n].lon, Roads.nodes[n].lat];
+    const ways = Object.values(Roads.ways).filter(w => w.tags && Object.keys(w.tags).length).map(w => ({id: 'w' + w.id, tags: w.tags, version: w.version, nodes: w.nodes, ll: w.nodes.map(ll).filter(Boolean)})).filter(w => w.ll.length);
+    const mid = w => [w.ll.reduce((a, q) => a + q[0], 0) / w.ll.length, w.ll.reduce((a, q) => a + q[1], 0) / w.ll.length];
+    const near = w => p.stations.some(st => m(osmPos(st), mid(w)) <= this.NEAR);
+    const plats = ways.filter(w => w.tags.public_transport === 'platform' && near(w));
+    // the core: where the buses stop (bays, platform areas) and the station points
+    const core = this.grow(this.hull([...p.bays.map(b => osmPos(b.o)), ...p.stations.map(osmPos), ...plats.flatMap(w => w.ll)]), 6);
+    const words = [...new Set(p.stations.flatMap(st => ['operator', 'network'].map(k => st.tags[k] || '')).join(' ').toLowerCase().split(/\W+/).filter(w => w.length > 3))];
+    const theirs = t => words.some(w => `${t.name || ''} ${t.operator || ''} ${t.website || ''}`.toLowerCase().includes(w));
+    const parts = [...plats, ...ways.filter(w => near(w) && !plats.includes(w) && (
+      (w.tags.amenity === 'shelter' && (w.tags.shelter_type === 'public_transport' || this.inside(mid(w), core))) ||
+      (w.tags.amenity === 'bicycle_parking' && theirs(w.tags)) ||
+      (w.tags.building && !/^(roof|house|residential|apartments)$/.test(w.tags.building) && !this.elsewhere(w.tags) && (this.inside(mid(w), core) || theirs(w.tags)))))];
+    const buildings = parts.filter(w => w.tags.building && w.tags.building !== 'roof' && w.tags.amenity !== 'shelter' && w.tags.amenity !== 'bicycle_parking');
+    // the draft outline: round all of it, but never over a neighbour's building; the part furthest out that takes it
+    // over one is left out (it's still the station's: the reviewer drags the edge round it, or not)
+    const theirsNot = ways.filter(w => w.tags.building && !parts.includes(w) && near(w)), c0 = osmPos(p.stations[0]);
+    const pool = [...parts].sort((x, y) => m(c0, mid(x)) - m(c0, mid(y)));
+    let ring;
+    for (;;) {
+      ring = this.grow(this.hull([...p.bays.map(b => osmPos(b.o)), ...p.stations.map(osmPos), ...pool.flatMap(w => w.ll)]), 4);
+      if (!pool.length || !theirsNot.some(w => w.ll.some(q => this.inside(q, ring)))) break;
+      pool.pop();
+    }
+    return {parts, buildings: buildings.map(w => ({...w, theirs: theirs(w.tags)})), ring};
+  },
+  /** A building with a purpose of its own that isn't the station's (a theatre, a clinic, a shop next door). */
+  elsewhere(t) {
+    return !!(t.shop || t.healthcare || t.leisure || t.tourism || t.craft || (t.amenity && !/^(shelter|bus_station|bicycle_parking|toilets|ticket_office|lost_property_office|waiting_room)$/.test(t.amenity)));
+  },
+  /** building=yes on a station's building, as it says it is: an office (office=*), or the station's own (named for
+   *  whoever runs it). Otherwise nothing suggested; anything more exact than yes already there stays. */
+  buildingFor(b) {
+    if (b.tags.building !== 'yes') return null;
+    if (b.tags.office) return 'office';
+    return b.theirs ? 'transportation' : null;
+  },
+  areaBox(p, x) {
+    const a = S.station.answers, main = x.main || (p.stations.length === 1 ? p.stations[0] : null), live = x.live || {};
+    if (!main || typeOf(main) !== 'node' || !live.own) return null;
+    const A = a.area = a.area || {on: false, ring: null}, B = a.buildings = a.buildings || {}, own = live.own, re = () => { render(); draw(); };
+    const box = el('div', {class: 'fixstep'}, el('div', {class: 'k'}, 'The station as an area'),
+      el('div', {class: 'why'}, `${main.tags.name || 'The station'} is a point. A station is best an area round the whole place: OSM has ${own.parts.length} things mapped as this one's (platforms, shelters, buildings) to draw it round.`),
+      el('label', {}, el('input', {type: 'checkbox', checked: A.on ? '' : null, onchange: e => { A.on = e.target.checked; if (A.on && !A.ring) A.ring = own.ring.map(q => [...q]); re(); }}),
+        ' Draw it as an area: a draft round what\'s mapped there, its corners dragged to the edge of the site (imagery helps)'));
+    if (A.on) {
+      box.append(el('div', {class: 'muted small'}, `${A.ring.length} corners on the map: drag them to the edge of the site. `, el('a', {href: '#', onclick: e => { e.preventDefault(); A.ring = own.ring.map(q => [...q]); this.syncMarkers(true); re(); }}, 'start again')),
+        Carry.box(this.now(main), {id: 'the area', tags: {}}, () => true, {title: `The point's tags, onto the area`}),
+        el('div', {class: 'muted small'}, 'The point goes; the stop area lists the area instead.'));
+    }
+    if (own.buildings.length) {
+      box.append(el('div', {style: 'margin-top:6px'}, el('b', {}, 'Its buildings')));
+      for (const b of own.buildings) {
+        const sug = this.buildingFor(b), cur = B[b.id] ?? sug ?? '';
+        box.append(el('div', {class: 'small', style: 'margin:3px 0'}, el('a', {href: osmLink(b.id), target: '_blank'}, b.tags.name || b.id), ` building=${b.tags.building} `,
+          el('select', {class: 'b', onchange: e => { B[b.id] = e.target.value; }}, ...[['', 'leave it'], ['transportation', 'transportation (the station\'s own)'], ['office', 'office'], ['commercial', 'commercial'], ['retail', 'retail'], ['service', 'service (a shed, a plant room)']]
+            .map(([v, l]) => el('option', {value: v, selected: cur === v ? '' : null}, v ? `→ ${l}` : l))),
+          sug ? el('span', {class: 'muted'}, ` (suggested: ${sug}${sug === 'office' ? ', it says office=' + b.tags.office : ''})`) : null));
+      }
+    }
+    return box;
+  },
+
   /** An OSM object as OSM has it now, where the card's live look read it (an upload since the data here was built
    *  shows), else as the data here has it. */
   now(o) {
@@ -290,7 +383,19 @@ const Station = {
   },
   /** The new things' markers on the map, draggable: one per ticked kind, gone when unticked or the card closes. */
   markers: {},
-  syncMarkers() {
+  corners: [],
+  syncMarkers(again) {
+    // the area's corners: one draggable dot each, while it's being drawn
+    const A = S.station && S.station.answers.area, ring = A && A.on && A.ring;
+    if (again || !ring || this.corners.length !== ring.length) { for (const c of this.corners) c.remove(); this.corners = []; }
+    if (ring && !this.corners.length) this.corners = ring.map((q, i) => {
+      const dot = document.createElement('div');
+      dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${css('--edit')};border:2px solid #fff;box-shadow:0 0 2px #000;cursor:grab`;
+      const mk = new maplibregl.Marker({element: dot, draggable: true}).setLngLat(q).addTo(map);
+      mk.on('drag', () => { const ll = mk.getLngLat(); ring[i] = [ll.lng, ll.lat]; draw(); });
+      mk.on('dragend', () => syncHash());
+      return mk;
+    });
     const T = (S.station && S.station.answers.things) || {};
     for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].add)) { this.markers[k].remove(); delete this.markers[k]; }
     for (const [k, t] of Object.entries(T)) {
@@ -334,6 +439,7 @@ const Station = {
       d.append(box);
     }
     d.append(this.thingsBox(p, x));
+    { const ab = this.areaBox(p, x); if (ab) d.append(ab); }
     // what flagstop would do
     const ul = el('ul', {class: 'mergelist'});
     if (live.plan) {
@@ -367,8 +473,8 @@ const Station = {
           oninput: e => { a.localRef[b.o.id] = e.target.value.trim(); syncHash(); }}))));
     d.append(signs);
     const main = x.main || (p.stations.length === 1 && p.stations[0]);
-    if (main && typeOf(main) === 'node') d.append(el('div', {class: 'small', style: 'margin:6px 0'}, 'The station is a point. Drawing it as an area round the bays is ',
-      el('a', {href: '#', onclick: e => { e.preventDefault(); openIn('rapid', {lon: main.lon, lat: main.lat, zoom: 19, select: [main.id], comment: `${name}: station as an area`}); }}, 'for RapiD'), '.'));
+    if (main && typeOf(main) === 'node') d.append(el('div', {class: 'small', style: 'margin:6px 0'}, 'Or draw the station as an area yourself, traced from imagery: ',
+      el('a', {href: '#', onclick: e => { e.preventDefault(); openIn('rapid', {lon: main.lon, lat: main.lat, zoom: 19, select: [main.id], comment: `${name}: station as an area`}); }}, 'in RapiD'), '.'));
     d.append(el('h2', {style: 'margin-left:0'}, 'Does this look right?'),
       el('div', {class: 'btns'},
         el('button', {class: 'b primary', disabled: x.open || !live.plan ? '' : null, onclick: () => this.accept()}, x.open ? 'Looks right (decide above first)' : 'Looks right: add to Changes'),
@@ -387,6 +493,7 @@ const Station = {
     for (const o of p.others) out.push(point(osmPos(o), {kind: 'other', label: o.tags.name || ''}));
     for (const y of x.live.positions || []) out.push(point(osmPos(y.o), {kind: a.gone[y.o.id] === 'remove' ? 'going' : 'pos', label: ''}));
     if (a.stopPos) for (const y of x.newPos) { out.push(point(y.point, {kind: 'new', label: ''})); out.push(line([osmPos(y.bay.o), y.point], {kind: 'new'})); }
+    if (a.area && a.area.on && a.area.ring) out.push(line([...a.area.ring, a.area.ring[0]], {kind: 'area'}));
     return out;
   },
 
@@ -398,6 +505,9 @@ const Station = {
       const main = x.main;
       const members = [{type: 'node', ref: osmNumId(main), role: ''}];
       if (typeOf(main) !== 'node') members[0].type = typeOf(main);
+      // drawn as an area: the point's tags (as ticked) go onto it, with what's folded in and the doors' hours
+      const A = a.area, areaOn = !!(A && A.on && A.ring && A.ring.length >= 3 && typeOf(main) === 'node');
+      const areaTags = areaOn ? Carry.tags(this.now(main), {tags: {}}, () => true) : null;
       // the other station points
       for (const s of x.extra) {
         const v = (a.other || {})[s.id];
@@ -407,7 +517,8 @@ const Station = {
           Edits.modify(typeOf(s), osmNumId(s), nodeBase(s), {removeTags: drop, tags}, `${s.tags.name || s.id}: not a second station, ${name}`);
         } else if (v === 'same') {
           const add = Carry.tags(s, main, CARRY.station, {name: 'alt_name'});
-          if (Object.keys(add).length) Edits.modify(typeOf(main), osmNumId(main), nodeBase(main), {tags: add}, `${name}: station`);
+          if (areaOn) Object.assign(areaTags, add);
+          else if (Object.keys(add).length) Edits.modify(typeOf(main), osmNumId(main), nodeBase(main), {tags: add}, `${name}: station`);
           if (Object.values(Roads.rels).some(r => r.members.some(mm => mm.type === typeOf(s) && mm.ref === osmNumId(s)))) say(`"${s.tags.name || s.id}" is in a relation: not deleted`);
           else Edits.delete(typeOf(s), osmNumId(s), nodeBase(s), `${s.tags.name || s.id}: the same station as ${name}`);
         }
@@ -417,6 +528,7 @@ const Station = {
       for (const [id, st] of Object.entries(a.edits || {})) {
         const o = objs.get(id);
         if (!o || !isPoint(o)) continue;
+        if (areaOn && o.id === main.id) { if (st.oh) areaTags.opening_hours = st.oh; else delete areaTags.opening_hours; continue; }   // onto the area
         const tags = {}, removeTags = [];
         if ((st.oh || '') !== (o.tags.opening_hours || '')) { if (st.oh) tags.opening_hours = st.oh; else removeTags.push('opening_hours'); }
         for (const [k, v] of Object.entries(st.extra || {})) if (v && v !== o.tags[k]) tags[k] = v;
@@ -432,6 +544,20 @@ const Station = {
           ...Object.fromEntries(Object.entries(t.extra || {}).filter(([, v]) => v))};
         const key = Edits.createNode(t.at[1], t.at[0], tags, `${name}: ${k.label.toLowerCase()}`);
         Edits.ops[key].thing = k.label.toLowerCase();
+      }
+      if (areaOn) {
+        const ids = A.ring.map(([lon, lat]) => Edits.ops[Edits.createNode(lat, lon, {}, `${name}: station area`)].id);
+        const wkey = Edits.createWay(areaTags, [...ids, ids[0]], `${name}: station area`);
+        Edits.ops[wkey].stationArea = name;
+        members[0] = {key: wkey, role: ''};
+        // the point: gone, its tags on the area; kept (and said) if another relation lists it
+        const pt = this.now(main), in_ = Object.values(Roads.rels).filter(r => r.members.some(mm => mm.type === 'node' && mm.ref === osmNumId(main)));
+        if (in_.length) say(`The station point is in ${in_.map(r => r.tags.name || 'r' + r.id).join(', ')}: kept; take it out there, then delete it`);
+        else Edits.delete('node', osmNumId(main), nodeBase(pt), `${name}: the station point, now its area`);
+      }
+      for (const bd of (live.own || {}).buildings || []) {
+        const v = (a.buildings || {})[bd.id] ?? this.buildingFor(bd);
+        if (v && v !== bd.tags.building) { const k = Edits.modify('way', osmNumId(bd), {version: bd.version, tags: bd.tags, nodes: bd.nodes}, {tags: {building: v}}, `${bd.tags.name || bd.id}: building=${v}`); Edits.ops[k].building = v; }
       }
       for (const b of p.bays) members.push({type: typeOf(b.o), ref: osmNumId(b.o), role: 'platform'});
       for (const o of p.others) members.push({type: typeOf(o), ref: osmNumId(o), role: 'platform'});
