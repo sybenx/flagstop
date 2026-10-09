@@ -58,17 +58,18 @@ const Hours = {
   editor(state, done) {
     const txt = el('input', {value: state.oh || '', placeholder: 'e.g. Mo-Fr 07:00-19:00; Sa 09:00-17:00', style: 'width:100%', onchange: e => { state.oh = e.target.value.trim(); done(); }});
     const rows = state.rows || (state.rows = [{days: ['Mo', 'Tu', 'We', 'Th', 'Fr'], from: '', to: ''}]);
+    // what's built goes into the hours as it's built: no button to forget (the button stays, for the sure-minded)
     const write = () => { const v = this.build(rows, state.note); if (v) { state.oh = v; done(); } };
     const row = r => el('div', {class: 'btns', style: 'align-items:center;flex-wrap:wrap'},
-      ...this.DAYS.map(dd => el('label', {class: 'small', style: 'margin-right:2px'}, el('input', {type: 'checkbox', checked: r.days.includes(dd) ? '' : null, onchange: e => { r.days = e.target.checked ? [...r.days, dd] : r.days.filter(x => x !== dd); }}), dd)),
-      el('input', {type: 'time', value: r.from, onchange: e => { r.from = e.target.value; }}), '–', el('input', {type: 'time', value: r.to, onchange: e => { r.to = e.target.value; }}),
+      ...this.DAYS.map(dd => el('label', {class: 'small', style: 'margin-right:2px'}, el('input', {type: 'checkbox', checked: r.days.includes(dd) ? '' : null, onchange: e => { r.days = e.target.checked ? [...r.days, dd] : r.days.filter(x => x !== dd); write(); }}), dd)),
+      el('input', {type: 'time', value: r.from, onchange: e => { r.from = e.target.value; write(); }}), '–', el('input', {type: 'time', value: r.to, onchange: e => { r.to = e.target.value; write(); }}),
       rows.length > 1 ? el('a', {href: '#', class: 'muted small', onclick: e => { e.preventDefault(); rows.splice(rows.indexOf(r), 1); done(); }}, 'remove') : null);
     return el('div', {class: 'small'}, el('div', {}, 'Hours ', txt, Hours.ok(state.oh) ? null : el('div', {style: 'color:var(--amb)'}, "That doesn't read as opening_hours: check it (the OSM wiki has the syntax).")),
       // (open stays open when the card is drawn again: adding a range, taking one out)
       el('details', {open: state.building ? '' : null, ontoggle: e => { state.building = e.target.open; }}, el('summary', {class: 'muted'}, 'build them'), ...rows.map(row),
         el('div', {class: 'btns'}, el('a', {href: '#', class: 'small', onclick: e => { e.preventDefault(); rows.push({days: ['Sa'], from: '', to: ''}); done(); }}, '+ another range'),
-          el('input', {value: state.note || '', placeholder: 'note, e.g. often until 19:00', size: 22, onchange: e => { state.note = e.target.value.trim(); }}),
-          el('button', {class: 'b tiny', onclick: write}, 'Use these hours'))));
+          el('input', {value: state.note || '', placeholder: 'note, e.g. often until 19:00', size: 22, onchange: e => { state.note = e.target.value.trim(); write(); }}),
+          el('button', {class: 'b tiny primary', onclick: write}, 'Use these hours'))));
   },
 };
 
@@ -271,7 +272,11 @@ const Station = {
       for (const o of have) {
         const st = E[o.id] = E[o.id] || {oh: o.tags.opening_hours || '', extra: {}};
         row.append(el('div', {style: 'margin-top:4px'}, 'There: ', el('a', {href: osmLink(o.id), target: '_blank'}, o.tags.name || o.id),
-          el('span', {class: 'muted'}, o.tags.opening_hours ? ` · ${o.tags.opening_hours}` : k.hours ? ' · no hours in OSM' : '')),
+          el('span', {class: 'muted'}, o.tags.opening_hours ? ` · ${o.tags.opening_hours}` : k.hours ? ' · no hours in OSM' : ''),
+          // a point that's in the wrong spot: a marker to drag it where it is
+          o.id[0] === 'n' ? el('a', {href: '#', class: 'small', style: 'margin-left:8px', onclick: e => { e.preventDefault(); st.at = st.at ? null : [o.lon, o.lat]; re(); }},
+            st.at ? 'leave it where it is' : 'move it') : null,
+          st.at ? el('div', {class: 'muted small'}, 'On the map: drag its marker to where it is.') : null),
           ...[k.hours ? Hours.editor(st, re) : null, this.extras(k, o.tags, st)].filter(Boolean));   // (DOM append writes 'null')
       }
       for (const [eid, t] of mine) {
@@ -428,6 +433,7 @@ const Station = {
   },
   /** The new things' markers on the map, draggable: one per ticked kind, gone when unticked or the card closes. */
   markers: {},
+  moving: {},
   corners: [],
   syncMarkers(again) {
     // the area's corners: one draggable dot each, while it's being drawn
@@ -448,6 +454,15 @@ const Station = {
       });
       return mk;
     });
+    // things already there, being moved: one marker each
+    const E = (S.station && S.station.answers.edits) || {};
+    for (const k of Object.keys(this.moving)) if (!(E[k] && E[k].at)) { this.moving[k].remove(); delete this.moving[k]; }
+    for (const [id, st] of Object.entries(E)) {
+      if (!st.at || this.moving[id]) continue;
+      const mk = new maplibregl.Marker({draggable: true, color: css('--edit')}).setLngLat(st.at).addTo(map);
+      mk.on('dragend', () => { const ll = mk.getLngLat(); st.at = [ll.lng, ll.lat]; syncHash(); });
+      this.moving[id] = mk;
+    }
     const T = (S.station && S.station.answers.things) || {};
     for (const k of Object.keys(this.markers)) if (!(T[k] && T[k].kind && !T[k].same)) { this.markers[k].remove(); delete this.markers[k]; }
     for (const [k, t] of Object.entries(T)) {
@@ -584,9 +599,10 @@ const Station = {
         const tags = {}, removeTags = [];
         if ((st.oh || '') !== (o.tags.opening_hours || '')) { if (st.oh) tags.opening_hours = st.oh; else removeTags.push('opening_hours'); }
         for (const [k, v] of Object.entries(st.extra || {})) if (v && v !== o.tags[k]) tags[k] = v;
-        if (!Object.keys(tags).length && !removeTags.length) continue;
+        const moved = st.at && o.id[0] === 'n' && m(st.at, [o.lon, o.lat]) >= 0.5 ? {lat: st.at[1], lon: st.at[0]} : {};
+        if (!Object.keys(tags).length && !removeTags.length && !moved.lat) continue;
         const kind = main && o.id === main.id ? null : THINGS.find(k => k.is({...o.tags, ...((a.other || {})[o.id] === 'office' ? this.notStation(o) : {})}));
-        const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags, removeTags}, `${o.tags.name || id}: ${kind ? kind.label.toLowerCase() : 'its hours'}`);
+        const key = Edits.modify(typeOf(o), osmNumId(o), nodeBase(o), {tags, removeTags, ...moved}, `${o.tags.name || id}: ${kind ? kind.label.toLowerCase() : 'its hours'}`);
         Edits.ops[key].thing = kind ? `the ${kind.label.toLowerCase()}` : 'the station';
       }
       // windows at another's window: one office, one point; its description says what else it does
