@@ -23,6 +23,18 @@
       "port": 8765
     },
     {
+      "name": "flagstop-sandbox-refresh",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "tool/sandbox.py",
+        "run",
+        "--refresh",
+        "--port",
+        "8765"
+      ],
+      "port": 8765
+    },
+    {
       "name": "flagstop-static",
       "runtimeExecutable": "python3",
       "runtimeArgs": [
