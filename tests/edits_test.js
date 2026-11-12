@@ -498,6 +498,45 @@ test('a new object already uploaded as it is, in an older copy of the basket, is
   assert.deepStrictEqual(Object.keys(Edits.ops), [k2]);
 });
 
+// ---------------------------------------------------------------------------------------------------------
+// station.js: the bays' lanes
+// ---------------------------------------------------------------------------------------------------------
+const APP = fs.readFileSync(path.join(WEB, 'app.js'), 'utf8');
+global.roadHalf = new Function(APP.match(/^function roadHalf\(t\) \{[\s\S]*?^\}$/m)[0] + '; return roadHalf;')();
+global.compass = new Function('return ' + APP.match(/^const compass = (.*);$/m)[1])();
+global.osmPos = o => [o.lon, o.lat];
+global.Roads = Roads;
+const Station = new Function(fs.readFileSync(path.join(WEB, 'station.js'), 'utf8') + '; return Station;')();
+
+// a street running east from (lon0, lat0), and bays d metres south of it, 20 m apart; the plan as live() makes it
+function laneCase(highway, d, tags = {}) {
+  reset();
+  const lat0 = 41.74, lon0 = -111.83, k = 111320 * Math.cos(lat0 * Math.PI / 180);
+  [0, 1, 2].forEach(i => { Roads.nodes[i + 1] = {id: i + 1, lat: lat0, lon: lon0 + i * 60 / k}; });
+  Roads.ways[10] = {id: 10, nodes: [1, 2, 3], tags: {highway, ...tags}};
+  const bays = [40, 60, 80].map((x, i) => ({id: 'n' + (100 + i), lat: lat0 - d / 110540, lon: lon0 + x / k, tags: {name: 'Bay ' + i}}));
+  const P = [1, 2, 3].map(n => [Roads.nodes[n].lon, Roads.nodes[n].lat]);
+  const plan = bays.map(o => { const nr = Station.nearestOn(P, [o.lon, o.lat]); return {bay: {o}, point: nr.point, wid: 10, d: nr.d}; });
+  return Station.lanes({bays: plan.map(y => y.bay)}, plan, []);
+}
+
+test('lanes: bays at a pull-out set back from a street get one, said to join that street; kerbside bays do not', () => {
+  const pull = laneCase('tertiary', 9.5, {lanes: '2', name: '500 North'});
+  assert.strictEqual(pull.length, 1);
+  assert.strictEqual(pull[0].bays.length, 3);
+  assert.strictEqual(pull[0].side, 'south');
+  assert.deepStrictEqual(pull[0].street, {name: '500 North', highway: 'tertiary'});
+  assert.deepStrictEqual(laneCase('tertiary', 6, {lanes: '2'}), []);       // on the pavement by the kerb: a plain stop
+  assert.deepStrictEqual(laneCase('primary', 9.5, {lanes: '5'}), []);      // a wide street's kerb is that far out
+});
+
+test("lanes: bays off the station's own roadway get one, with no street to warn of", () => {
+  const own = laneCase('service', 5);
+  assert.strictEqual(own.length, 1);
+  assert.strictEqual(own[0].street, undefined);
+  assert.deepStrictEqual(laneCase('service', 2), []);
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

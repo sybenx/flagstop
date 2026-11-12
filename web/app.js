@@ -779,6 +779,12 @@ function heading(g, i, u, kx, ky, reach = 15) {
   for (let rem = len(k) * (1 - f); ; ) { if (rem >= right || k === g.length - 2) { const L = len(k) || 1; fwd = at(k, Math.min(1, 1 - (rem - Math.min(right, rem)) / L)); break; } right -= rem; k++; rem = len(k); }
   return [(fwd[0] - back[0]) * kx, (fwd[1] - back[1]) * ky];
 }
+/** How wide a road is, centre to kerb (m): its width, its lanes, or what its kind usually is. */
+function roadHalf(t) {
+  const hw = String(t.highway || '').replace(/_link$/, '');
+  return parseFloat(t.width) > 0 ? parseFloat(t.width) / 2 : parseInt(t.lanes) > 0 ? parseInt(t.lanes) * 3.25 / 2 :
+    ({motorway: 7.5, trunk: 7, primary: 6, secondary: 5.5, tertiary: 4.5, unclassified: 3.5, residential: 4, living_street: 3, service: 2.5, busway: 3.5}[hw] || 4);
+}
 /** A point beside the bus's road or in it: {at: [lon, lat], kerb: true if in it (at: the kerb beside it, on the side
  *  buses pull in at), d: metres from the middle of the road, half: centre to kerb (m)}. pats: itineraries to measure
  *  against, the first routed one. margin: how far inside the kerb counts as in the road (0.5 m past it, for a new
@@ -807,15 +813,13 @@ function kerbFor(pt, pats, margin = -0.5, ownSide = false, sid = null) {
   // the way the bus goes there, over 30 m of path (not one short piece at a junction)
   const [hx, hy] = heading(geom, bi, best.u, kx, ky), hl = Math.hypot(hx, hy) || 1;
   const L = best.L, dir = {vx: hx / hl * L, vy: hy / hl * L};
-  // how wide the road is: its width, its lanes, or what its kind usually is (centre to kerb, m)
+  // how wide the road is (centre to kerb)
   let road = null;
   for (const wid of rt.ways || []) {
     const w = q.graph.ways.get(wid);
     if (w) near(w.nodes.map(n => q.graph.coord.get(n)).filter(Boolean), x => { if (!road || x.d < road.d) road = {d: x.d, tags: w.tags || {}}; });
   }
-  const t = (road && road.tags) || {}, hw = String(t.highway || '').replace(/_link$/, '');
-  const half = parseFloat(t.width) > 0 ? parseFloat(t.width) / 2 : parseInt(t.lanes) > 0 ? parseInt(t.lanes) * 3.25 / 2 :
-    ({motorway: 7.5, trunk: 7, primary: 6, secondary: 5.5, tertiary: 4.5, unclassified: 3.5, residential: 4, living_street: 3, service: 2.5, busway: 3.5}[hw] || 4);
+  const half = roadHalf((road && road.tags) || {});
   const fx = (pt[0] - best.a[0]) * kx - best.u * best.vx, fy = (pt[1] - best.a[1]) * ky - best.u * best.vy;   // from the path to the point
   const isLeft = dir.vx * fy - dir.vy * fx > 0;
   if (best.d > half + margin) return {at: pt, d: best.d, half, left: isLeft};   // beside the road already

@@ -78,6 +78,7 @@ const Station = {
   SAME: 60,    // m: station points this close are one place
   SNAP: 30,    // m: furthest a stop position goes from its bay
   LANE: 4,     // m: a bay this far from the station's own roadway (service, busway) is at a curb of its own: a lane along it
+  PULLOUT: 5,  // m: a bay this far past a street's kerb (its width, its lanes) is at a pull-out set back from it: a lane too
   CURB: 2,     // m: a lane's middle from the curb (half a bus and a little)
 
   isStation: o => o.tags.amenity === 'bus_station' || o.tags.public_transport === 'station',
@@ -297,13 +298,19 @@ const Station = {
     return out;
   },
 
-  /** The bays at a curb of their own, off the station's roadway (a wide apron, buses along each side of it): per side,
-   *  a lane along that curb, joined to the roadway at both ends, for the bays' stop positions to be on. A draft:
-   *  along the island's edge if one's drawn, else along the bays; its points dragged on the map. */
+  /** The bays at a curb of their own, off the road drawn past them (a wide apron, buses along each side of it; a
+   *  pull-out set back from a street): per side, a lane along that curb, joined to the road at both ends, for the
+   *  bays' stop positions to be on. A draft: along the island's edge if one's drawn, else along the bays; its points
+   *  dragged on the map. */
   lanes(p, plan, islands) {
-    const cand = plan.filter(y => y.point && y.d >= this.LANE && /^(service|busway)$/.test((Roads.ways[y.wid].tags || {}).highway || ''));
+    const off = t => /^(service|busway)$/.test(t.highway || '') ? this.LANE : roadHalf(t) + this.PULLOUT;
+    const cand = plan.filter(y => y.point && y.d >= off(Roads.ways[y.wid].tags || {}));
     if (!cand.length) return [];
-    const chains = this.chains([...new Set(cand.map(y => y.wid))]);
+    // chained by kind: the station's own roadway apart from a street it meets (a ring and the street at its ends
+    // are one loop, and which side a bay is on means nothing round a loop)
+    const kind = wid => { const t = Roads.ways[wid].tags || {}; return /^(service|busway)$/.test(t.highway || '') ? 'own' : `${t.highway}|${t.name || ''}`; };
+    const wids = [...new Set(cand.map(y => y.wid))];
+    const chains = [...new Set(wids.map(kind))].flatMap(k => this.chains(wids.filter(w => kind(w) === k)));
     const curbs = [...islands.map(w => w.ring), ...Object.values(Roads.ways).filter(w => w.tags && (w.tags.highway === 'pedestrian' || w.tags.area === 'yes') && w.nodes.length >= 4 && w.nodes[0] === w.nodes[w.nodes.length - 1])
       .map(w => w.nodes.map(n => Roads.nodes[n]).filter(Boolean).map(n => [n.lon, n.lat]))];
     const out = [];
@@ -335,7 +342,10 @@ const Station = {
         if (!pts.length) continue;
         // the side, as a compass point: from the road to the bays' middle
         const mid = [g.reduce((a, y) => a + osmPos(y.bay.o)[0], 0) / g.length, g.reduce((a, y) => a + osmPos(y.bay.o)[1], 0) / g.length];
-        out.push({key: `${ch.ways[0]}-${side}`, side: compass(this.nearestOn(P, mid).point, mid), bays: g.map(y => y.bay.o), ways: ch.ways, pts: [at(lo - 15), ...pts, at(hi + 15)]});
+        // a street's (not the station's own roadway): it's joined to a road others drive, which the card says
+        const street = ch.ways.map(id => Roads.ways[id]).find(w => !/^(service|busway)$/.test((w.tags || {}).highway || ''));
+        out.push({key: `${ch.ways[0]}-${side}`, side: compass(this.nearestOn(P, mid).point, mid), bays: g.map(y => y.bay.o), ways: ch.ways, pts: [at(lo - 15), ...pts, at(hi + 15)],
+          street: street && {name: street.tags.name || `way ${street.id}`, highway: street.tags.highway}});
       }
     }
     return out;
@@ -675,11 +685,12 @@ const Station = {
     const live = x.live || {}, a = S.station.answers, A = a.lanes = a.lanes || {}, re = () => { this.syncMarkers(true); render(); draw(); syncHash(); };
     if (!(live.lanes || []).length) return null;
     const box = el('div', {class: 'fixstep'}, el('div', {class: 'k'}, 'The bays and the road to them'),
-      el('div', {class: 'why'}, `Buses here stop at the curbs of a wide paved area, off the one road drawn through it. A lane along each curb (highway=busway, one lane, either way), joined to that road at both ends, says where they drive and halt: each bay gets its stop position on it, and routes run along the lane their bay is on (each route as you review it).`));
+      el('div', {class: 'why'}, `Buses here stop at curbs of their own, off the road drawn past them: the sides of a wide paved area, or a pull-out set back from a street. A lane along each curb (highway=busway, one lane, either way), joined to that road at both ends, says where they drive and halt: each bay gets its stop position on it, and routes run along the lane their bay is on (each route as you review it).`));
     for (const L of live.lanes) {
       const st = A[L.key] = A[L.key] || {on: false, pts: null}, names = L.bays.map(b => (b.tags.name || b.id).replace(/^.* - /, '')).join(', ');
       box.append(el('div', {class: 'decide'}, el('label', {}, el('input', {type: 'checkbox', checked: st.on ? '' : null, onchange: e => { st.on = e.target.checked; if (st.on && !st.pts) st.pts = L.pts.map(q => [...q]); re(); }}),
         ` A lane along the ${L.bays.length} bays on the ${L.side} side: `, el('span', {class: 'muted'}, names)),
+        L.street ? el('div', {class: 'muted small'}, `It joins ${L.street.name} (highway=${L.street.highway}), a street others drive: a point added to it at each end, nothing split. Tick it only if the imagery shows the pull-out: a kerb set back from the street's, the bays on it.`) : null,
         st.on ? el('div', {class: 'muted small'}, `${st.pts.length} points on the map: drag them to the middle of the lane (imagery helps); the square ends go along the road it joins. Double-click the line for a point more, a point to remove it. `,
           el('a', {href: '#', onclick: e => { e.preventDefault(); st.pts = L.pts.map(q => [...q]); re(); }}, 'start again')) : null));
     }
