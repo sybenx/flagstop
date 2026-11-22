@@ -137,6 +137,9 @@ and nothing runs the JS edit basket at all. This is the code that, when wrong, g
 
 ## 4. Left-hand traffic
 
+*Done: `review.kerb_side` finds the side from OSM's coded stops (10-07), then the agency's time zone (`zone_side`);
+`--left`/`--right` override it; stored as `positions.kerb` in `review.json`.*
+
 **Why.** CVTD is right-hand traffic and so are the assumptions in "across the street" (`stops.py` sides/bearing),
 `review.stop_positions`, and relatify had the same gap (its fork added `driving_side.py`). The first non-US
 feed will match every stop to the wrong side.

@@ -665,6 +665,47 @@ class KerbSide(unittest.TestCase):
             review.KERB = 'right'
 
 
+class LeftHandTraffic(unittest.TestCase):
+    """Where traffic keeps left, Sides' cases mirrored give the mirrored answers; with too few coded stops in OSM to
+    tell, the agency's time zone says which (docs/relatify-review.md, item 4)."""
+    north = Sides.north
+
+    def setUp(self):
+        review.KERB = 'left'
+
+    def tearDown(self):
+        review.KERB = 'right'
+
+    def test_sides_mirrored(self):
+        self.assertEqual(review.side((-111.8301, 41.7405), self.north), 'right')    # ~8 m west: the kerb's side
+        self.assertEqual(review.side((-111.8299, 41.7405), self.north), 'left')     # ~8 m east: across
+        self.assertIsNone(review.side((-111.82998, 41.7405), self.north))           # ~2 m: on the line
+
+    def test_across_mirrored(self):
+        feed = Feed()
+        feed.stops = {'1': Stop('928 North 200 West', lat=41.7405, lon=-111.8301)}
+        across = review.across_fn(feed, {'1': [self.north]})
+        self.assertTrue(across('1', osm(lat=41.7405, lon=-111.8299)))        # 8 m east: across
+        self.assertFalse(across('1', osm(lat=41.7405, lon=-111.82996)))      # 3 m east: drawing noise
+        self.assertFalse(across('1', osm(lat=41.7406, lon=-111.8301)))       # same side
+
+    def test_time_zone_when_osm_cannot_tell(self):
+        for tz, want in (('Europe/London', 'left'), ('Australia/Sydney', 'left'), ('Asia/Tokyo', 'left'),
+                         ('America/Denver', 'right'), ('Europe/Paris', 'right'), ('', 'right')):
+            with self.subTest(tz=tz):
+                f = Feed()
+                f.agency['agency_timezone'] = tz
+                self.assertEqual(review.kerb_side(f, {}, {}), want)
+
+    def test_osm_outweighs_the_time_zone(self):
+        for east, want in ((True, 'right'), (False, 'left')):
+            for tz in ('Europe/London', 'America/Denver'):
+                with self.subTest(east=east, tz=tz):
+                    f, paths, os_ = KerbSide.setup(None, east)
+                    f.agency['agency_timezone'] = tz
+                    self.assertEqual(review.kerb_side(f, paths, os_), want)
+
+
 class Detours(unittest.TestCase):
     """An itinerary on a detour: temporary stops, and stops of OSM's relation it skips."""
 

@@ -61,9 +61,37 @@ def side(p, geom, kerb=3, geometric=False):
     return g if geometric or KERB == 'right' else {'left': 'right', 'right': 'left'}[g]
 
 
+# Where traffic keeps left, by the agency's time zone (agency_timezone, which GTFS requires): what the feed says
+# when OSM has too few of the agency's coded stops to tell by (a first review, an area with no refs mapped yet).
+LEFT_ZONES = {
+    'Europe/London', 'Europe/Dublin', 'Europe/Isle_of_Man', 'Europe/Jersey', 'Europe/Guernsey', 'Europe/Malta',
+    'Asia/Nicosia', 'Asia/Famagusta', 'Europe/Nicosia',
+    'Asia/Tokyo', 'Asia/Hong_Kong', 'Asia/Macau', 'Asia/Singapore', 'Asia/Kuala_Lumpur', 'Asia/Kuching',
+    'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Pontianak', 'Asia/Makassar', 'Asia/Jayapura', 'Asia/Dili', 'Asia/Brunei',
+    'Asia/Kolkata', 'Asia/Calcutta', 'Asia/Dhaka', 'Asia/Karachi', 'Asia/Colombo', 'Asia/Kathmandu', 'Asia/Thimphu',
+    'Indian/Maldives', 'Indian/Mauritius', 'Indian/Mahe',
+    'Pacific/Auckland', 'Pacific/Chatham', 'Pacific/Fiji', 'Pacific/Port_Moresby', 'Pacific/Tongatapu', 'Pacific/Apia',
+    'Pacific/Guadalcanal', 'Pacific/Rarotonga', 'Pacific/Niue', 'Pacific/Nauru', 'Pacific/Tarawa', 'Pacific/Funafuti',
+    'Africa/Johannesburg', 'Africa/Maseru', 'Africa/Mbabane', 'Africa/Gaborone', 'Africa/Windhoek', 'Africa/Harare',
+    'Africa/Lusaka', 'Africa/Blantyre', 'Africa/Maputo', 'Africa/Nairobi', 'Africa/Dar_es_Salaam', 'Africa/Kampala',
+    'America/Jamaica', 'America/Barbados', 'America/Nassau', 'America/Port_of_Spain', 'America/Guyana',
+    'America/Paramaribo', 'America/Antigua', 'America/St_Lucia', 'America/St_Vincent', 'America/Grenada',
+    'America/Dominica', 'America/St_Kitts', 'America/Anguilla', 'America/Montserrat', 'America/Tortola',
+    'America/St_Thomas', 'America/Cayman', 'America/Grand_Turk', 'Atlantic/Bermuda', 'Atlantic/Stanley',
+    'Atlantic/St_Helena',
+}
+
+
+def zone_side(feed):
+    """'left' where the agency's time zone is a country whose traffic keeps left, else 'right'."""
+    tz = ((getattr(feed, 'agency', None) or {}).get('agency_timezone') or '').strip()
+    return 'left' if tz in LEFT_ZONES or tz.startswith('Australia/') else 'right'
+
+
 def kerb_side(feed, paths, osm_stops, near=60):
     """Which side buses pull in at here: where OSM's stops carrying the agency's codes are, beside the buses' paths
-    (on the right where traffic keeps right; most of the world, not all). 'right' unless clearly 'left'."""
+    (on the right where traffic keeps right; most of the world, not all). When they don't clearly say, the agency's
+    time zone does (zone_side)."""
     by_ref = {}
     for o in osm_stops.values():
         if o['tags'].get('ref') and stopmatch.is_platform(o):
@@ -77,7 +105,11 @@ def kerb_side(feed, paths, osm_stops, near=60):
                     x = side((o['lon'], o['lat']), g, kerb=5, geometric=True)
                     if x:
                         n[x] += 1
-    return 'left' if n['left'] >= 10 and n['left'] > 2 * n['right'] else 'right'
+    if n['left'] >= 10 and n['left'] > 2 * n['right']:
+        return 'left'
+    if n['right'] >= 10 and n['right'] > 2 * n['left']:
+        return 'right'
+    return zone_side(feed)
 
 
 def stop_paths(feed, traced):
@@ -240,6 +272,9 @@ def main():
     ap.add_argument('--route-all', action='store_true', help='route every itinerary now, with all the roads (else each is routed when opened)')
     ap.add_argument('--no-overpass', action='store_true', help="OSM from the cache only, however old (what tool/extract.py wrote, or yesterday's): never Overpass")
     ap.add_argument('--roads-per-route', action='store_true', help="write each itinerary's roads to <out>/roads/: a published copy (no server) reads them instead of asking Overpass")
+    side = ap.add_mutually_exclusive_group()
+    side.add_argument('--left', dest='kerb', action='store_const', const='left', help='traffic keeps left here (else found from OSM, then the time zone)')
+    side.add_argument('--right', dest='kerb', action='store_const', const='right', help='traffic keeps right here')
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True); os.makedirs(a.cache, exist_ok=True)
@@ -276,7 +311,7 @@ def main():
     for o in osm_stops.values():
         o['served_by'] = sorted({x['agency'] for x in (other_stops[k] for k in ogrid.near(o['lat'], o['lon'], 20)) if stopmatch.dist(o['lat'], o['lon'], x['lat'], x['lon']) <= 20})
     global KERB
-    KERB = kerb_side(feed, paths, osm_stops)
+    KERB = a.kerb or kerb_side(feed, paths, osm_stops)
     if KERB == 'left':
         print('positions: buses pull in on the left here (traffic keeps left)', file=sys.stderr)
     match, extra = stopmatch.match(feed, osm_stops, across_fn(feed, paths))
