@@ -90,7 +90,7 @@ function patternGrade(p) {
   const r = rels[0];
   const n = r.stops.missing.length + r.stops.extra.length + r.ways.off_shape.length + r.ways.chain_breaks.length + (r.stops.out_of_order ? 1 : 0);
   if (n) return {chip: 'needs work', cls: 'warn', order: 3};
-  if (r.tag_issues.length) return {chip: 'tags', cls: 'info', order: 4};
+  if (r.tag_issues.length || (r.roundtrip && !r.roundtrip.agrees)) return {chip: 'tags', cls: 'info', order: 4};
   return {chip: 'ok', cls: 'good', order: 5};
 }
 // a route not routed yet (its roads load when it's opened): nothing to draw or say about the path
@@ -1104,6 +1104,9 @@ function renderAudit(a, p) {
   if (a.ways.off_shape.length) issues.push(el('li', {}, `${a.ways.off_shape.length} member way${a.ways.off_shape.length > 1 ? 's are' : ' is'} off the line: `, ...a.ways.off_shape.slice(0, 8).flatMap(w => [el('a', {href: '#', title: w.name, onclick: e => { e.preventDefault(); map.flyTo({center: [w.lon, w.lat], zoom: 16}); }}, `w${w.way}`), ' ']), a.ways.off_shape.length > 8 ? '…' : ''));
   // (a ref the agency writes with a qualifier, '16 AM' for OSM's '16', is kept as OSM has it: relationPlan's refKept)
   for (const t of a.tag_issues.filter(t => !(t.key === 'ref' && t.osm && t.gtfs && t.gtfs.startsWith(t.osm + ' ')))) issues.push(el('li', {}, el('code', {}, t.key), ': ', t.osm ? el('span', {}, el('span', {style: 'color:var(--rel)'}, t.osm), ' → ') : 'add ', el('span', {style: 'color:var(--shape)'}, t.gtfs)));
+  const rt = a.roundtrip;   // roundtrip=yes against where its ways begin and end (compare.roundtrip)
+  if (rt && !rt.agrees) issues.push(el('li', {}, rt.tagged ? `tagged roundtrip=yes, but its ways end ${rt.gap} m from where they begin`
+    : `its ways end where they begin (${rt.gap} m apart), but it isn't tagged roundtrip=yes`));
   box.append(issues.length ? el('ul', {style: 'margin:6px 0 0;padding-left:18px'}, ...issues) : el('div', {style: 'color:var(--ok)'}, 'Members and tags agree with the feed.'));
   if (!a.duplicate && !a.both_directions && !p.temporary) box.append(timetableLine(a, p, op));
   return box;

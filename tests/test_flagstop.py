@@ -635,6 +635,42 @@ class Lines(unittest.TestCase):
         self.assertEqual(stops.proposed_tags(f, s)['route_ref'], '16')
 
 
+class Roundtrip(unittest.TestCase):
+    """roundtrip=yes on a relation whose ways don't come back to where they begin, or a loop without it, is said."""
+    # a block 200 m a side, as four ways in travel order: east, north, west, south back to the start
+    coords = {1: (-111.8300, 41.7400), 2: (-111.8276, 41.7400), 3: (-111.8276, 41.7418), 4: (-111.8300, 41.7418)}
+    ways = {11: {'nodes': [1, 2]}, 12: {'nodes': [2, 3]}, 13: {'nodes': [4, 3]}, 14: {'nodes': [4, 1]}}   # 13 drawn backwards
+
+    def rel(self, way_ids, **tags):
+        return {'tags': tags, 'members': [{'type': 'way', 'ref': w, 'role': ''} for w in way_ids]}
+
+    def test_a_loop_tagged_roundtrip_agrees(self):
+        import compare
+        r = compare.roundtrip(self.rel([11, 12, 13, 14], roundtrip='yes'), self.ways, self.coords)
+        self.assertEqual((r['closes'], r['gap'], r['agrees']), (True, 0, True))
+
+    def test_tagged_roundtrip_but_open_is_said(self):
+        import compare
+        r = compare.roundtrip(self.rel([11, 12, 13], roundtrip='yes'), self.ways, self.coords)   # stops at the far corner
+        self.assertFalse(r['closes'])
+        self.assertFalse(r['agrees'])
+        self.assertGreater(r['gap'], compare.LOOP_GAP)
+
+    def test_a_loop_without_the_tag_is_said(self):
+        import compare
+        r = compare.roundtrip(self.rel([11, 12, 13, 14]), self.ways, self.coords)
+        self.assertEqual((r['tagged'], r['closes'], r['agrees']), (False, True, False))
+
+    def test_a_line_without_the_tag_agrees(self):
+        import compare
+        self.assertTrue(compare.roundtrip(self.rel([11, 12]), self.ways, self.coords)['agrees'])
+        self.assertTrue(compare.roundtrip(self.rel([12]), self.ways, self.coords)['agrees'])   # a lone way: its own ends
+
+    def test_no_ways_no_answer(self):
+        import compare
+        self.assertIsNone(compare.roundtrip(self.rel([99]), self.ways, self.coords))
+
+
 class KerbSide(unittest.TestCase):
     """Which side buses pull in at, from where OSM's stops with the agency's codes are: right, or left where traffic
     keeps left; and 'across the street' follows it."""

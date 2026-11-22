@@ -290,9 +290,43 @@ def audit(feed, p, rel, ways, coords, stop_match, traced, conv=None, siblings=No
                   'extra': extra, 'extra_other_direction': extra_other_dir, 'unmatched': [{'i': i, 'stop': sid} for i, sid in unmatched], 'out_of_order': out_of_order},
         'ways': {'in_relation': len(rel_ways), 'off_shape': off_ways, 'routed_not_in_relation': missing_ways, 'ids': rel_ways,
                  'chain_breaks': [{**x, 'lon': coords[x['node']][0], 'lat': coords[x['node']][1]} for x in breaks if x['node'] in coords]},
+        'roundtrip': roundtrip(rel, ways, coords),
         'members': [{'type': m['type'], 'ref': m['ref'], 'role': m['role']} for m in rel['members']],
-        'geometry': [pts for _, pts in relation_geometry(rel, ways, coords)],
+        'geometry':[pts for _, pts in relation_geometry(rel, ways, coords)],
     }
+
+
+LOOP_GAP = 50   # m: a relation whose ways end this close to where they begin goes round and back (roundtrip)
+
+
+def roundtrip(rel, ways, coords):
+    """Does the relation's roundtrip=yes agree with its ways? -> {'tagged', 'gap', 'closes', 'agrees'}, gap = metres
+    between where the way chain begins and where it ends; None when it has no ways to tell by. The chain begins at
+    the first way's end that the second way doesn't touch, and ends likewise (a lone way: its own two ends)."""
+    ids = [w for w in relation_way_ids(rel) if ways.get(w, {}).get('nodes')]
+    if not ids:
+        return None
+    first, last = ways[ids[0]]['nodes'], ways[ids[-1]]['nodes']
+
+    def outer(nodes, other):   # the end of `nodes` away from the way beside it
+        if other is None or nodes[0] == nodes[-1]:
+            return None
+        o = set(other)
+        return nodes[0] if nodes[-1] in o and nodes[0] not in o else nodes[-1] if nodes[0] in o and nodes[-1] not in o else None
+
+    if len(ids) == 1:
+        a, b = first[0], first[-1]
+    else:
+        a = outer(first, ways[ids[1]]['nodes'])
+        b = outer(last, ways[ids[-2]]['nodes'])
+        a = first[0] if a is None else a
+        b = last[-1] if b is None else b
+    if a not in coords or b not in coords:
+        return None
+    gap = metres(coords[a], coords[b])
+    tagged = rel['tags'].get('roundtrip') == 'yes'
+    closes = gap <= LOOP_GAP
+    return {'tagged': tagged, 'gap': round(gap), 'closes': closes, 'agrees': tagged == closes}
 
 
 def proposed_relation_tags(feed, p, stop_match, conv=None):

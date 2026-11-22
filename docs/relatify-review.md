@@ -173,7 +173,7 @@ block instead. The existing `test_no_right_turn_goes_round` / `test_except_bus` 
 
 ## Smaller borrowings
 
-- **Roundtrip sanity** (relatify `_check_for_roundtrip_not_roundtrip`): `compare.proposed_relation_tags` sets
+- **Roundtrip sanity** (done: `compare.roundtrip`, said in the relation card) (relatify `_check_for_roundtrip_not_roundtrip`): `compare.proposed_relation_tags` sets
   `roundtrip=yes` (l.278); add an audit line when a relation is tagged `roundtrip=yes` but its routed geometry
   doesn't close within 50 m, or vice versa.
 - **Unused member ways** (relatify `_check_for_unused_ways`): `compare.audit` reports member ways off the line;
