@@ -1,8 +1,8 @@
 # flagstop
 
-Review a transit agency's GTFS feed against OpenStreetMap, route by route, and hand each fix to JOSM.
+flagstop compares a transit agency's GTFS feed with OpenStreetMap, route by route, and writes each proposed fix as a file for JOSM.
 
-Nothing here uploads to OpenStreetMap. The tool compares, explains, and proposes; a person looks and decides.
+The comparison itself uploads nothing to OpenStreetMap. Every proposed change is reviewed by a person first (see "Uploading from the page" and "Before uploading much").
 
 ## What it does
 
